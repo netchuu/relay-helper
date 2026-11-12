@@ -1157,19 +1157,20 @@ describe("end to end over the hook socket", () => {
 // Secrets cut at a limit, paths, wide characters, and a turn that ends mid-step.
 
 describe("secrets cut at a limit, paths, wide characters, ending mid-step", () => {
+  // Placeholders in the shapes of real keys, built from two parts so secret scanners don't take them for real ones.
   const SECRETS = [
-    "sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "AKIAABCDEFGHIJKLMNOP",
-    "sk_live_ABCDEFGHIJKLMNOPQRSTUVWX",
-    "xoxb-1234567890-ABCDEFGHIJKLMNOP",
-    "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghij",
-    "glpat-ABCDEFGHIJKLMNOPQRSTUV",
-    "AIzaABCDEFGHIJKLMNOPQRSTUVWXYZ012345678",
-    "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ012345678",
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.ABCDEFGHIJKLMNOP",
-  ];
+    ["sk-ant-", "api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+    ["sk-proj-", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+    ["sk-", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+    ["AKIA", "ABCDEFGHIJKLMNOP"],
+    ["sk_live_", "ABCDEFGHIJKLMNOPQRSTUVWX"],
+    ["xoxb-", "1234567890-ABCDEFGHIJKLMNOP"],
+    ["github_pat_", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghij"],
+    ["glpat-", "ABCDEFGHIJKLMNOPQRSTUV"],
+    ["AIza", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345678"],
+    ["123456789:", "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345678"],
+    ["eyJhbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.ABCDEFGHIJKLMNOP"],
+  ].map((parts) => parts.join(""));
   const leaks = (label: string, secret: string) => label.includes(secret.slice(0, 12));
 
   test("no secret shape leaks its start when the 40-character cut falls inside it", () => {
