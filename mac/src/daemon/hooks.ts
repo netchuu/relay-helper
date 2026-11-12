@@ -15,7 +15,7 @@ import type { HookEnv, Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
-import { interruptedTurn, isSystemMessage } from "./transcript.ts";
+import { answeredBeforePrompt, interruptedTurn, isSystemMessage } from "./transcript.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
 export interface HookEnvelope {
@@ -316,6 +316,11 @@ export class HookHandler {
         "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND id != ? AND ended_at = ? AND full_text IS NULL AND stopped = 0 ORDER BY started_at DESC LIMIT 1",
       )
       .get(sessionId, picked.id, picked.started_at) as OpenTurn | null;
+    // A prompt sent while Claude was still answering (from the phone, or queued at the computer): its hook came
+    // before this Stop, but Claude Code starts on it only now, and in the transcript the answer stands before it.
+    // The answer is the earlier turn's (or nobody's prompt), and the new turn stays open: it was shown as done
+    // with the previous answer under it, and its own answer then landed under the next message.
+    if (answeredBeforePrompt(transcript, answer, picked.prompt, picked.started_at)) return before ?? null;
     if (!before?.started_at) return picked;
     // Only on positive evidence: the answer is the earlier turn's own last text, that turn wasn't interrupted
     // (Esc, then a new prompt), and the new turn hasn't written it. A lagging transcript or an API error keeps

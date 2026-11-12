@@ -145,6 +145,65 @@ function isInterruptMarker(entry: Entry): boolean {
 }
 
 /**
+ * Whether `answer` was written before `prompt` was submitted: the transcript has Claude's text `answer`, and after
+ * it the prompt's own user entry. A prompt sent while Claude is still answering is reported by its hook at once,
+ * but Claude Code starts on it only when that answer is done, so the answer isn't that prompt's. False when either
+ * isn't found (a lagging transcript): no evidence. Nor when the same words also stand before the answer as an
+ * entry written since `startedAt`, the time the prompt's hook came: that one is the turn's own prompt ("continue"
+ * sent twice), and the answer is its.
+ */
+export function answeredBeforePrompt(
+  path: string,
+  answer: string,
+  prompt: string | null,
+  startedAt: number,
+): boolean {
+  const wanted = answer.trim();
+  const asked = prompt ? comparable(prompt) : "";
+  if (!wanted || !asked) return false;
+  let entries: Entry[];
+  try {
+    entries = readTail(path)
+      .split("\n")
+      .flatMap((line) => {
+        try {
+          return line ? [JSON.parse(line) as Entry] : [];
+        } catch {
+          return [];
+        }
+      });
+  } catch {
+    return false;
+  }
+  const answerAt = entries.findLastIndex((entry) => {
+    if (entry.type !== "assistant" || entry.isSidechain || !Array.isArray(entry.message?.content))
+      return false;
+    return (entry.message.content as { type?: string; text?: string }[]).some(
+      (block) => block.type === "text" && block.text?.trim() === wanted,
+    );
+  });
+  if (answerAt < 0) return false;
+  const isThePrompt = (entry: Entry) => {
+    const text = promptText(entry);
+    if (text === null) return false;
+    const written = comparable(text);
+    // The hook's prompt and the entry's text are the same words; one may carry more (attached files' paths).
+    return (
+      written === asked ||
+      (asked.length >= 12 && written.startsWith(asked)) ||
+      (written.length >= 12 && asked.startsWith(written))
+    );
+  };
+  // Its own entry, written when its hook came (a few seconds of slack for the two clocks), or with no time at all.
+  const own = entries.slice(0, answerAt).some((entry) => {
+    if (!isThePrompt(entry)) return false;
+    const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+    return Number.isNaN(at) || at >= startedAt - 5000;
+  });
+  return !own && entries.slice(answerAt + 1).some(isThePrompt);
+}
+
+/**
  * What the turn that started at `since` (epoch ms) left in the transcript: whether it was interrupted, and
  * Claude's last text and stats so far. Null when the file can't be read.
  *

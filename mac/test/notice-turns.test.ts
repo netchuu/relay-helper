@@ -77,6 +77,7 @@ function setup() {
     hook,
     call,
     done,
+    status: () => registry.get("s1")?.status,
     prompt: (text: string) => write({ type: "user", message: { role: "user", content: text } }),
     notice: () =>
       write({
@@ -155,6 +156,73 @@ describe("a turn started by a notice", () => {
     t.says("Done.");
     await t.hook("Stop", { last_assistant_message: "Done." });
     expect(t.done[0]?.steps?.map((s) => s.label)).toEqual(["Read a.ts", "Read b.ts"]);
+  });
+});
+
+describe("a message sent while Claude is still answering", () => {
+  test("the answer under way stays with its own prompt, and the new message's turn stays open", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("first question");
+    await t.hook("UserPromptSubmit", { prompt: "first question" });
+    t.read("toolu_1", "a.ts");
+    // Sent now: its hook comes at once, but Claude Code starts on it only when the answer is done.
+    await t.hook("UserPromptSubmit", { prompt: "second question, sent meanwhile" });
+    t.says("Answer to the first.");
+    t.prompt("second question, sent meanwhile");
+    await t.hook("Stop", { last_assistant_message: "Answer to the first." });
+    expect(t.done).toHaveLength(1);
+    expect(t.done[0]).toMatchObject({ prompt: "first question", summary: "Answer to the first." });
+    expect(t.status()).toBe("working");
+
+    t.says("Answer to the second.");
+    await t.hook("Stop", { last_assistant_message: "Answer to the second." });
+    expect(t.done).toHaveLength(2);
+    expect(t.done[1]).toMatchObject({
+      prompt: "second question, sent meanwhile",
+      summary: "Answer to the second.",
+    });
+    expect(t.status()).toBe("idle");
+  });
+
+  test("messages taken in mid-turn share its answer; one still queued gets the next", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("run the flows");
+    await t.hook("UserPromptSubmit", { prompt: "run the flows" });
+    t.read("toolu_1", "a.ts");
+    // Two short messages Claude Code hands to the running turn (no prompt entries of their own in the transcript).
+    await t.hook("UserPromptSubmit", { prompt: "ok, continue" });
+    await t.hook("UserPromptSubmit", { prompt: "." });
+    // And one that waits in the queue until the answer is done.
+    await t.hook("UserPromptSubmit", { prompt: "what about these photos" });
+    t.says("Continuing: the flows are running.");
+    t.prompt("what about these photos");
+    await t.hook("Stop", { last_assistant_message: "Continuing: the flows are running." });
+    expect(t.done.map((x) => [x.prompt, x.summary])).toEqual([[".", "Continuing: the flows are running."]]);
+    expect(t.status()).toBe("working");
+
+    t.says("The photos show a bug.");
+    await t.hook("Stop", { last_assistant_message: "The photos show a bug." });
+    expect(t.done[1]).toMatchObject({ prompt: "what about these photos", summary: "The photos show a bug." });
+  });
+
+  test("a prompt that stands before its answer keeps it, as always", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("first");
+    await t.hook("UserPromptSubmit", { prompt: "first" });
+    t.says("One.");
+    await t.hook("Stop", { last_assistant_message: "One." });
+    t.prompt("second");
+    await t.hook("UserPromptSubmit", { prompt: "second" });
+    t.says("Two.");
+    await t.hook("Stop", { last_assistant_message: "Two." });
+    expect(t.done.map((x) => [x.prompt, x.summary])).toEqual([
+      ["first", "One."],
+      ["second", "Two."],
+    ]);
+    expect(t.status()).toBe("idle");
   });
 });
 
