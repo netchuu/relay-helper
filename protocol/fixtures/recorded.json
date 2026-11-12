@@ -1,0 +1,247 @@
+{
+  "plain": {
+    "about": "A plain prompt and its answer.",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-plain:7598f0fe-789c-4224-aeef-ac11ea66b53d",
+        "sessionId": "rec-plain",
+        "prompt": "Say hello in exactly five words.",
+        "summary": "Hello there, friendly neighbor!",
+        "fullLength": 31,
+        "truncated": false,
+        "stats": {
+          "durationMs": 1510,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400001,
+        "endedAt": 1794218401511
+      }
+    ]
+  },
+  "image": {
+    "about": "A prompt with an image: the prompt holds an [Image #1] token and an image block.",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-image:68c58f79-2ee5-4565-936f-2eaaf8433075",
+        "sessionId": "rec-image",
+        "prompt": "[Image #1] what colour is this? one word",
+        "summary": "Red.",
+        "fullLength": 4,
+        "truncated": false,
+        "stats": {
+          "durationMs": 2258,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400000,
+        "endedAt": 1794218402258,
+        "thoughts": [
+          {
+            "kind": "thinking",
+            "label": "Thought for 2s",
+            "at": 1794218402250,
+            "id": "5971631d-2f7e-4781-a044-5c66bacc7967",
+            "durationMs": 2250
+          }
+        ]
+      }
+    ]
+  },
+  "stop": {
+    "about": "Stop mid-answer (the interrupt marker), then a new prompt.",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-stop:30c45e20-c6e0-4dda-944d-8fdc2e813437",
+        "sessionId": "rec-stop",
+        "prompt": "Write a 1500 word story about a lighthouse keeper. Do not use any tools.",
+        "summary": "# The Keeper of Halden Rock\n\nThe light at Halden Rock had been burning for ninety-one years when Ingrid Solberg took over the tending of it from her father, who had taken it over from his. Nobody on the mainland thought much about the lamp anymore. Ships had radar now, and satellites, and a dozen automated beacons that blinked across the water without anyone needing to climb the stairs. The Maritime Authority had sent letters, politely at first and then less politely, suggesting the station be decommissioned and the tower left to the gulls. …",
+        "fullLength": 763,
+        "truncated": true,
+        "stats": {
+          "durationMs": 3176,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400001,
+        "endedAt": 1794218403177,
+        "stopped": true,
+        "thoughts": [
+          {
+            "kind": "thinking",
+            "label": "Thought for 1s",
+            "at": 1794218401355,
+            "id": "1361d5ca-89e6-4f6b-b1db-9cf4ec7c2b7f",
+            "durationMs": 1354
+          }
+        ]
+      },
+      {
+        "id": "tx:rec-stop:49a35a38-45bd-422d-a5db-0f282b406ab5",
+        "sessionId": "rec-stop",
+        "prompt": "Say OK.",
+        "summary": "OK.",
+        "fullLength": 3,
+        "truncated": false,
+        "stats": {
+          "durationMs": 1256,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218405643,
+        "endedAt": 1794218406899
+      }
+    ]
+  },
+  "subagent": {
+    "about": "A sub-agent: the Agent call in the transcript and the agent's own transcript beside it.",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-subagent:b7c210c1-228b-4ecb-bd6d-075f9e5b0480",
+        "sessionId": "rec-subagent",
+        "prompt": "Use the Agent tool once, with the general-purpose agent, to count the .txt files in this folder. Run the agent in the foreground and wait for it. Then tell me the number.",
+        "summary": "The count isn't back yet. The agent started in the background, even though you asked for foreground, so I don't have the number. I'll report it when the agent finishes.",
+        "fullLength": 168,
+        "truncated": false,
+        "stats": {
+          "durationMs": 8731,
+          "toolCalls": 1,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400001,
+        "endedAt": 1794218408732,
+        "steps": [
+          {
+            "kind": "agent",
+            "label": "Ran an agent: Count .txt files in folder",
+            "at": 1794218405219,
+            "id": "toolu_01C56DHEGY2caZhKxuSiVjtF",
+            "tool": "Agent",
+            "title": "Count .txt files in folder",
+            "durationMs": 3666,
+            "stepCount": 1,
+            "children": [
+              {
+                "kind": "run",
+                "label": "Ran ls -1 /Users/me/Projects/scratch/*.txt",
+                "at": 1794218408408,
+                "id": "toolu_018WRXcmtwdpP7CuoJC6Dtbe",
+                "tool": "Bash",
+                "title": "Count and list top-level .txt files in the folder"
+              }
+            ]
+          }
+        ],
+        "thoughts": [
+          {
+            "kind": "thinking",
+            "label": "Thought for 2s",
+            "at": 1794218408486,
+            "id": "ebdbb142-d8ee-4ab0-bdd7-751d58212cd5",
+            "durationMs": 2453
+          }
+        ]
+      }
+    ]
+  },
+  "background": {
+    "about": "A background shell, and the turn Claude Code starts itself when it ends (a task notification).",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-background:88ed6408-1e44-4902-b194-513747b37804",
+        "sessionId": "rec-background",
+        "prompt": "Run `sleep 12; echo finished` with the Bash tool in the background (run_in_background). Then tell me it started, and nothing more.",
+        "summary": "The background command finished with exit code 0 and printed \"finished\".",
+        "fullLength": 72,
+        "truncated": false,
+        "stats": {
+          "durationMs": 15374,
+          "toolCalls": 1,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400000,
+        "endedAt": 1794218415374,
+        "steps": [
+          {
+            "kind": "run",
+            "label": "Ran sleep 12",
+            "at": 1794218401610,
+            "id": "toolu_013eYDHzovvxmLG66oSTLnXo",
+            "tool": "Bash",
+            "title": "Sleep 12 seconds then echo finished",
+            "detail": "sleep 12; echo finished"
+          }
+        ],
+        "messages": [
+          {
+            "id": "34da688a-3b41-48cf-900a-af2cca823467",
+            "text": "The command is running in the background.",
+            "at": 1794218403160
+          }
+        ]
+      }
+    ]
+  },
+  "failed-tool": {
+    "about": "A tool that fails (a file that isn't there).",
+    "claudeVersion": "2.1.319",
+    "turns": [
+      {
+        "id": "tx:rec-failed-tool:9a1a841b-be97-4446-8ef3-b339989c325b",
+        "sessionId": "rec-failed-tool",
+        "prompt": "Read the file missing-file.txt in this folder and tell me what it says.",
+        "summary": "There's no file called `missing-file.txt` in this folder, so I can't read it. The folder is `/Users/me/Projects/scratch`, and a search for any filename containing \"missing\" found nothing.\n\nThe folder contains:\n- `ideas.txt`\n- `notes.txt`\n- `todo.txt`\n- `red.png`\n- `.claude/` and `.git/`\n\nIf the file has a different name or lives somewhere else, tell me the path and I'll read it.",
+        "fullLength": 381,
+        "truncated": false,
+        "stats": {
+          "durationMs": 7315,
+          "toolCalls": 2,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1794218400000,
+        "endedAt": 1794218407315,
+        "steps": [
+          {
+            "kind": "read",
+            "label": "Read missing-file.txt",
+            "at": 1794218401724,
+            "failed": true,
+            "id": "toolu_01VsP8yLEysmJnsdqhPCNHCW",
+            "tool": "Read",
+            "detail": "missing-file.txt"
+          },
+          {
+            "kind": "run",
+            "label": "Ran find /Users/me/Projects/scratch -iname…",
+            "at": 1794218404625,
+            "id": "toolu_01WHRJXXW8mtVR66bRTstoom",
+            "tool": "Bash",
+            "title": "Search working folder for a missing-file match and list contents",
+            "detail": "find /Users/me/Projects/scratch -iname '*missing*' 2>/dev/null; ls -la /Users/me/Projects/scratch"
+          }
+        ],
+        "thoughts": [
+          {
+            "kind": "thinking",
+            "label": "Thought for 2s",
+            "at": 1794218403981,
+            "id": "120f9938-a5f1-4936-ab1d-d5548a194857",
+            "durationMs": 2238
+          }
+        ]
+      }
+    ]
+  }
+}

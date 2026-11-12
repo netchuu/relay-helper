@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime exceptions for the Bun-compiled relay and relay-hook binaries. Keep this list minimal:
+  relay holds the Accessibility and Automation permissions, and every exception here is one other software
+  could use to run its own code with them. release/entitlements.test.ts guards it.
+
+  allow-jit                         JavaScriptCore's JIT.
+  allow-unsigned-executable-memory  bun:ffi compiles its call trampolines at run time (mac/src/platform/ax.ts);
+                                    without it the process is killed on the first FFI call.
+
+  Never add allow-dyld-environment-variables or disable-library-validation (they let DYLD_INSERT_LIBRARIES
+  load any dylib into relay), or disable-executable-page-protection (not needed).
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

@@ -1,0 +1,268 @@
+{
+  "limits": {
+    "attachmentsMax": 10,
+    "maxBytes": 52428800,
+    "chunkBytes": 131072
+  },
+  "begin": {
+    "params": {
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "name": "IMG_1234.HEIC",
+      "mime": "image/heic",
+      "size": 200000,
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    },
+    "result": {
+      "id": "3f9a1c2e5b7d9f01",
+      "chunkSize": 131072,
+      "chunks": 2
+    }
+  },
+  "chunk": {
+    "params": {
+      "id": "3f9a1c2e5b7d9f01",
+      "index": 1,
+      "data": "AAECAwQFBgc="
+    },
+    "result": {
+      "id": "3f9a1c2e5b7d9f01",
+      "index": 1,
+      "received": 2
+    }
+  },
+  "end": {
+    "params": {
+      "id": "3f9a1c2e5b7d9f01"
+    },
+    "result": {
+      "id": "3f9a1c2e5b7d9f01",
+      "name": "IMG_1234.HEIC",
+      "mime": "image/heic",
+      "size": 200000,
+      "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC"
+    }
+  },
+  "discard": {
+    "params": {
+      "id": "3f9a1c2e5b7d9f01"
+    },
+    "result": {
+      "id": "3f9a1c2e5b7d9f01",
+      "discarded": true
+    },
+    "resultNothing": {
+      "id": "0000000000000000",
+      "discarded": false
+    },
+    "olderHelper": {
+      "type": "rpc",
+      "id": 65,
+      "error": {
+        "code": "bad_request",
+        "message": "unknown method attachment.discard"
+      }
+    }
+  },
+  "send": {
+    "params": {
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "text": "Why is the total off here?",
+      "attachments": [
+        "3f9a1c2e5b7d9f01",
+        "b71d04aa66e2c3f5"
+      ]
+    },
+    "paramsNoText": {
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "text": "",
+      "attachments": [
+        "3f9a1c2e5b7d9f01"
+      ]
+    },
+    "result": {
+      "via": "tmux"
+    },
+    "typed": "Why is the total off here?\n/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC\n\"/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf\""
+  },
+  "get": {
+    "params": {
+      "id": "b71d04aa66e2c3f5",
+      "index": 0,
+      "thumbnail": false
+    },
+    "result": {
+      "id": "b71d04aa66e2c3f5",
+      "name": "Cart totals.pdf",
+      "mime": "application/pdf",
+      "size": 48213,
+      "sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+      "chunkSize": 131072,
+      "chunks": 1,
+      "index": 0,
+      "data": "JVBERi0xLjQK"
+    },
+    "thumbnailParams": {
+      "id": "3f9a1c2e5b7d9f01",
+      "index": 0,
+      "thumbnail": true
+    },
+    "thumbnail": {
+      "id": "3f9a1c2e5b7d9f01",
+      "name": "IMG_1234.HEIC",
+      "mime": "image/jpeg",
+      "size": 93,
+      "sha256": "0aeb869eee19deae9306ca9432011f483487f7ac69e64e14ab36a9cb08b938b1",
+      "chunkSize": 131072,
+      "chunks": 1,
+      "index": 0,
+      "data": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP////////////////////////////////////////////////////////////////////////////////////8AAP/Z",
+      "thumbnail": true
+    }
+  },
+  "events": [
+    {
+      "seq": 51,
+      "ts": 1793619940000,
+      "type": "turn.started",
+      "turnId": "t_attach",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "prompt": "Why is the total off here?\n/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC\n\"/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf\"",
+      "startedAt": 1793619940000,
+      "attachments": [
+        {
+          "id": "3f9a1c2e5b7d9f01",
+          "name": "IMG_1234.HEIC",
+          "mime": "image/heic",
+          "size": 200000,
+          "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC"
+        },
+        {
+          "id": "b71d04aa66e2c3f5",
+          "name": "Cart totals.pdf",
+          "mime": "application/pdf",
+          "size": 48213,
+          "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf"
+        }
+      ]
+    }
+  ],
+  "turn": {
+    "id": "t_attach",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "Why is the total off here?\n/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC\n\"/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf\"",
+    "summary": "Fixed the rounding. …",
+    "fullLength": 1840,
+    "truncated": true,
+    "stats": {
+      "durationMs": 241000,
+      "toolCalls": 14,
+      "filesEdited": [
+        "/src/cart.ts",
+        "/src/money.ts"
+      ]
+    },
+    "failed": false,
+    "startedAt": 1793619759000,
+    "endedAt": 1793620000000,
+    "attachments": [
+      {
+        "id": "3f9a1c2e5b7d9f01",
+        "name": "IMG_1234.HEIC",
+        "mime": "image/heic",
+        "size": 200000,
+        "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC"
+      },
+      {
+        "id": "b71d04aa66e2c3f5",
+        "name": "Cart totals.pdf",
+        "mime": "application/pdf",
+        "size": 48213,
+        "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf"
+      }
+    ]
+  },
+  "turnRemoved": {
+    "id": "t_attach_old",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC",
+    "summary": "Fixed the rounding. …",
+    "fullLength": 1840,
+    "truncated": true,
+    "stats": {
+      "durationMs": 241000,
+      "toolCalls": 14,
+      "filesEdited": [
+        "/src/cart.ts",
+        "/src/money.ts"
+      ]
+    },
+    "failed": false,
+    "startedAt": 1793619759000,
+    "endedAt": 1793620000000,
+    "attachments": [
+      {
+        "id": "3f9a1c2e5b7d9f01",
+        "name": "IMG_1234.HEIC",
+        "mime": "image/heic",
+        "size": 200000,
+        "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC",
+        "removed": true
+      }
+    ]
+  },
+  "live": {
+    "turnId": "t_attach",
+    "prompt": "Why is the total off here?\n/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC\n\"/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf\"",
+    "startedAt": 1793619940000,
+    "attachments": [
+      {
+        "id": "3f9a1c2e5b7d9f01",
+        "name": "IMG_1234.HEIC",
+        "mime": "image/heic",
+        "size": 200000,
+        "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/3f9a1c2e-IMG_1234.HEIC"
+      },
+      {
+        "id": "b71d04aa66e2c3f5",
+        "name": "Cart totals.pdf",
+        "mime": "application/pdf",
+        "size": 48213,
+        "path": "/Users/me/.relay/attachments/4375b77a-1111-2222-3333-444455556666/b71d04aa-Cart totals.pdf"
+      }
+    ]
+  },
+  "errors": [
+    {
+      "type": "rpc",
+      "id": 61,
+      "error": {
+        "code": "bad_request",
+        "message": "You can attach up to 10 files to one message."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 62,
+      "error": {
+        "code": "bad_request",
+        "message": "IMG_1234.MOV is too large. Files can be up to 50 MB."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 63,
+      "error": {
+        "code": "conflict",
+        "message": "IMG_1234.HEIC didn't arrive intact. Send it again."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 64,
+      "error": {
+        "code": "not_found",
+        "message": "This session has ended, so files can't be sent to it."
+      }
+    }
+  ]
+}

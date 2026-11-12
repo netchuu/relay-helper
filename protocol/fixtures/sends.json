@@ -1,0 +1,75 @@
+{
+  "params": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "text": "Ship it",
+    "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
+  },
+  "result": {
+    "via": "tmux"
+  },
+  "resultQueued": {
+    "via": "queued"
+  },
+  "resultQueuedLocked": {
+    "via": "queued",
+    "reason": "locked"
+  },
+  "resultQueuedTyping": {
+    "via": "queued",
+    "reason": "typing"
+  },
+  "resultQueuedDraft": {
+    "via": "queued",
+    "reason": "draft"
+  },
+  "waitingEvents": [
+    {
+      "seq": 50,
+      "ts": 1793620000000,
+      "type": "reply.waiting",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "reason": "draft"
+    },
+    {
+      "seq": 51,
+      "ts": 1793620000000,
+      "type": "reply.waiting",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "reason": "typing"
+    },
+    {
+      "seq": 52,
+      "ts": 1793620000000,
+      "type": "reply.waiting",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "reason": null
+    }
+  ],
+  "resultRepeat": {
+    "via": "tmux",
+    "repeat": true
+  },
+  "check": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
+  },
+  "delivered": {
+    "delivered": true,
+    "via": "tmux"
+  },
+  "deliveredQueued": {
+    "delivered": true,
+    "via": "queued"
+  },
+  "notDelivered": {
+    "delivered": false
+  },
+  "olderHelper": {
+    "type": "rpc",
+    "id": 71,
+    "error": {
+      "code": "bad_request",
+      "message": "unknown method session.delivered"
+    }
+  }
+}

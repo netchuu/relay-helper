@@ -1,0 +1,32 @@
+{
+  "plain": {
+    "about": "A plain prompt and its answer.",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  },
+  "image": {
+    "about": "A prompt with an image: the prompt holds an [Image #1] token and an image block.",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  },
+  "stop": {
+    "about": "Stop mid-answer (the interrupt marker), then a new prompt.",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  },
+  "subagent": {
+    "about": "A sub-agent: the Agent call in the transcript and the agent's own transcript beside it.",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  },
+  "background": {
+    "about": "A background shell, and the turn Claude Code starts itself when it ends (a task notification).",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  },
+  "failed-tool": {
+    "about": "A tool that fails (a file that isn't there).",
+    "claudeVersion": "2.1.319",
+    "recordedAt": "2026-11-09"
+  }
+}

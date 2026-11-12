@@ -1,0 +1,30 @@
+{
+  "name": "relay-helper",
+  "version": "0.10.6",
+  "private": true,
+  "type": "module",
+  "description": "Answer every Claude Code session on this computer from your phone",
+  "scripts": {
+    "daemon": "bun mac/src/cli.ts daemon",
+    "relay": "bun mac/src/cli.ts",
+    "build": "bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/hook/client.ts --outfile mac/bin/relay-hook && bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/cli.ts --outfile mac/bin/relay",
+    "test": "bun test && bun test ./release",
+    "record:transcripts": "bun mac/test/record/record.ts",
+    "test:linux": "docker build -q -f Dockerfile.test -t relay-test . && docker run --rm relay-test",
+    "test:linux:x64": "docker build -q --platform linux/amd64 -f Dockerfile.test -t relay-test-x64 . && docker run --rm --platform linux/amd64 relay-test-x64",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.4",
+    "@types/bun": "^1.4.4",
+    "@types/qrcode-terminal": "^0.12.2",
+    "typescript": "^7.0.2"
+  },
+  "license": "Apache-2.0"
+}

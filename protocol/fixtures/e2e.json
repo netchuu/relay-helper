@@ -1,0 +1,24 @@
+{
+  "phoneEphemeralPrivate": "ERERERERERERERERERERERERERERERERERERERERERE",
+  "macStaticPublic": "D6poTtKIZ7l_Smot7l34zpdOdrcBjj8iocTPJnhXDyA",
+  "macEphemeralPublic": "ew1H2TQn-DERYHgcfHM_2J-IlwrvSQ2KoO4ZpMuKGxQ",
+  "phoneToMacKey": "0a97iBrMIBN2njGT9buWRUFmtM1-R2zbRv5DAhCfslc",
+  "macToPhoneKey": "Lfvy_anny6k8zgQHhKc8WSaNnauq-86dqW6aGRhAsd0",
+  "macFrames": [
+    {
+      "counter": 0,
+      "text": "{\"type\":\"rpc\",\"id\":1,\"result\":{\"ok\":true}}",
+      "frame": "A3pefbibg1W6435H8S3OydxehqTTFvd52DXWeitR9muZ35m6RPjAnJV1GK3ewApVAQnLbivAPWJlazo"
+    },
+    {
+      "counter": 1,
+      "text": "héllo · 📱",
+      "frame": "A1N-JahFYDkbbnSopQ6--i9Iu7wEZ6joJGEV7jNeSQ"
+    }
+  ],
+  "phoneFrame": {
+    "counter": 0,
+    "text": "{\"id\":1,\"method\":\"hello\",\"params\":{\"token\":\"t\"}}",
+    "frame": "A9sgKN5XldEURUNOB1lDX7EWVnl-mKDSvq0n7_7NU4PY8e8Xp0zCmyoNfpiCAJAId45YBMTkgq2sOOQQ-PTpFOg"
+  }
+}

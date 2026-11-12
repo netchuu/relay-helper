@@ -1,0 +1,18 @@
+{
+  "paramsFirst": {
+    "turnId": "t_abc",
+    "offset": 0
+  },
+  "params": {
+    "turnId": "t_abc",
+    "offset": 1000
+  },
+  "middle": {
+    "text": "The first part of a long reply, ",
+    "more": true,
+    "nextOffset": 1000
+  },
+  "last": {
+    "text": "and its end."
+  }
+}

@@ -1,0 +1,14 @@
+# Only package files, protocol/, mac/ and the Worker go into the test image (see Dockerfile.test).
+*
+!package.json
+!bun.lock
+!bunfig.toml
+!tsconfig.json
+!protocol/
+!mac/src/
+!mac/test/
+!cloud/package.json
+!cloud/bun.lock
+!cloud/src/
+!cloud/wrangler.jsonc
+!cloud/tsconfig.json

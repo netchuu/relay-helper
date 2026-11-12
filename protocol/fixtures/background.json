@@ -1,0 +1,75 @@
+{
+  "events": [
+    {
+      "seq": 41,
+      "ts": 1793619996000,
+      "type": "session.background",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "tasks": [
+        {
+          "id": "bonwwqtte",
+          "kind": "shell",
+          "title": "Start the dev server",
+          "detail": "npm run dev -- --port 5180",
+          "startedAt": 1793617180000
+        },
+        {
+          "id": "a009ac2509eecfda6",
+          "kind": "agent",
+          "title": "Test the helper side",
+          "agentType": "general-purpose",
+          "startedAt": 1793619629000,
+          "activity": {
+            "kind": "run",
+            "label": "Running bun test",
+            "at": 1793619996000
+          }
+        }
+      ]
+    },
+    {
+      "seq": 42,
+      "ts": 1793620000000,
+      "type": "session.background",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "tasks": []
+    }
+  ],
+  "session": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "idle",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "background": [
+      {
+        "id": "bonwwqtte",
+        "kind": "shell",
+        "title": "Start the dev server",
+        "detail": "npm run dev -- --port 5180",
+        "startedAt": 1793617180000
+      },
+      {
+        "id": "a009ac2509eecfda6",
+        "kind": "agent",
+        "title": "Test the helper side",
+        "agentType": "general-purpose",
+        "startedAt": 1793619629000,
+        "activity": {
+          "kind": "run",
+          "label": "Running bun test",
+          "at": 1793619996000
+        }
+      }
+    ]
+  }
+}

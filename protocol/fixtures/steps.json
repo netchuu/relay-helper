@@ -1,0 +1,97 @@
+{
+  "events": [
+    {
+      "seq": 11,
+      "ts": 1793619970000,
+      "type": "turn.step",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "turnId": "t_live",
+      "step": {
+        "kind": "thinking",
+        "label": "Thinking",
+        "at": 1793619970000
+      }
+    },
+    {
+      "seq": 12,
+      "ts": 1793619980000,
+      "type": "turn.step",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "turnId": "t_live",
+      "step": {
+        "kind": "read",
+        "label": "Reading src/cart.ts",
+        "at": 1793619980000
+      }
+    }
+  ],
+  "turn": {
+    "id": "t_steps",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "Fix the cart total",
+    "summary": "Fixed the rounding. …",
+    "fullLength": 1840,
+    "truncated": true,
+    "stats": {
+      "durationMs": 241000,
+      "toolCalls": 14,
+      "filesEdited": [
+        "/src/cart.ts",
+        "/src/money.ts"
+      ]
+    },
+    "failed": false,
+    "startedAt": 1793619759000,
+    "endedAt": 1793620000000,
+    "steps": [
+      {
+        "kind": "read",
+        "label": "Read src/cart.ts",
+        "at": 1793619800000
+      },
+      {
+        "kind": "run",
+        "label": "Ran bun test",
+        "at": 1793619880000,
+        "failed": true
+      },
+      {
+        "kind": "agent",
+        "label": "Ran an agent: Check the totals",
+        "at": 1793619940000
+      }
+    ],
+    "stepsMore": 37
+  },
+  "session": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "working",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "step": {
+      "kind": "read",
+      "label": "Reading src/cart.ts",
+      "at": 1793619980000
+    }
+  },
+  "live": {
+    "turnId": "t_live",
+    "prompt": "Fix the cart total",
+    "startedAt": 1793619970000,
+    "step": {
+      "kind": "read",
+      "label": "Reading src/cart.ts",
+      "at": 1793619980000
+    }
+  }
+}

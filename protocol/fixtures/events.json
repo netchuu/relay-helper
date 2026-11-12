@@ -1,0 +1,186 @@
+[
+  {
+    "seq": 1,
+    "ts": 1793620000000,
+    "type": "session.upsert",
+    "session": {
+      "id": "4375b77a-1111-2222-3333-444455556666",
+      "name": "web-shop",
+      "cwd": "/Users/me/Projects/web-shop",
+      "project": "web-shop",
+      "branch": "fix/cart-total",
+      "kind": "interactive",
+      "status": "waiting",
+      "title": "The cart total is off by a cent sometimes",
+      "terminal": "iTerm.app",
+      "canReceive": true,
+      "replyRoute": "typed",
+      "startedAt": 1793619400000,
+      "updatedAt": 1793620000000,
+      "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+    }
+  },
+  {
+    "seq": 2,
+    "ts": 1793620000000,
+    "type": "session.upsert",
+    "session": {
+      "id": "s-min",
+      "name": null,
+      "cwd": "/tmp",
+      "project": "tmp",
+      "branch": null,
+      "kind": "unknown",
+      "status": "idle",
+      "title": null,
+      "terminal": null,
+      "canReceive": false,
+      "startedAt": 1793620000000,
+      "updatedAt": 1793620000000,
+      "lastSummary": null
+    }
+  },
+  {
+    "seq": 3,
+    "ts": 1793620000000,
+    "type": "prompt.opened",
+    "prompt": {
+      "id": "p_question",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "kind": "question",
+      "payload": {
+        "kind": "question",
+        "questions": [
+          {
+            "question": "Which storage should the health sync use?",
+            "header": "Storage",
+            "options": [
+              {
+                "label": "SwiftData",
+                "description": "Native"
+              },
+              {
+                "label": "SQLite"
+              }
+            ],
+            "multiSelect": false
+          },
+          {
+            "question": "Which data?",
+            "options": [
+              {
+                "label": "Steps"
+              },
+              {
+                "label": "Sleep"
+              }
+            ],
+            "multiSelect": true
+          }
+        ]
+      },
+      "status": "open",
+      "resolvedBy": null,
+      "createdAt": 1793620000000,
+      "resolvedAt": null
+    }
+  },
+  {
+    "seq": 4,
+    "ts": 1793620000000,
+    "type": "prompt.opened",
+    "prompt": {
+      "id": "p_plan",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "kind": "plan",
+      "payload": {
+        "kind": "plan",
+        "plan": "## Add Stripe checkout\n1. Route\n2. Webhook",
+        "planFilePath": null
+      },
+      "status": "open",
+      "resolvedBy": null,
+      "createdAt": 1793620000000,
+      "resolvedAt": null
+    }
+  },
+  {
+    "seq": 5,
+    "ts": 1793620000000,
+    "type": "prompt.opened",
+    "prompt": {
+      "id": "p_perm",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "kind": "permission",
+      "payload": {
+        "kind": "permission",
+        "toolName": "Bash",
+        "summary": "npm run migrate -- --env staging",
+        "detail": "{\n  \"command\": \"npm run migrate\"\n}",
+        "canAlwaysAllow": true
+      },
+      "status": "closed",
+      "resolvedBy": "phone",
+      "createdAt": 1793620000000,
+      "resolvedAt": 1793620005000,
+      "outcome": "Allowed"
+    }
+  },
+  {
+    "seq": 6,
+    "ts": 1793620000000,
+    "type": "prompt.closed",
+    "promptId": "p_question",
+    "resolvedBy": "mac",
+    "outcome": "Answered on the Mac"
+  },
+  {
+    "seq": 7,
+    "ts": 1793620000000,
+    "type": "turn.done",
+    "turn": {
+      "id": "t_abc",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "prompt": "Fix the cart total",
+      "summary": "Fixed the rounding. …",
+      "fullLength": 1840,
+      "truncated": true,
+      "stats": {
+        "durationMs": 241000,
+        "toolCalls": 14,
+        "filesEdited": [
+          "/src/cart.ts",
+          "/src/money.ts"
+        ]
+      },
+      "failed": false,
+      "startedAt": 1793619759000,
+      "endedAt": 1793620000000
+    }
+  },
+  {
+    "seq": 8,
+    "ts": 1793620000000,
+    "type": "presence.changed",
+    "presence": {
+      "mode": "auto",
+      "present": false,
+      "idleSeconds": 340,
+      "locked": true
+    }
+  },
+  {
+    "seq": 9,
+    "ts": 1793620000000,
+    "type": "session.notice",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "level": "error",
+    "text": "rate_limit: 429"
+  },
+  {
+    "seq": 10,
+    "ts": 1793620000000,
+    "type": "session.removed",
+    "sessionId": "s-min"
+  }
+]

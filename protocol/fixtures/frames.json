@@ -1,0 +1,233 @@
+[
+  {
+    "type": "event",
+    "event": {
+      "seq": 1,
+      "ts": 1793620000000,
+      "type": "session.upsert",
+      "session": {
+        "id": "4375b77a-1111-2222-3333-444455556666",
+        "name": "web-shop",
+        "cwd": "/Users/me/Projects/web-shop",
+        "project": "web-shop",
+        "branch": "fix/cart-total",
+        "kind": "interactive",
+        "status": "waiting",
+        "title": "The cart total is off by a cent sometimes",
+        "terminal": "iTerm.app",
+        "canReceive": true,
+        "replyRoute": "typed",
+        "startedAt": 1793619400000,
+        "updatedAt": 1793620000000,
+        "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+      }
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 1,
+    "result": {
+      "snapshot": {
+        "sessions": [
+          {
+            "id": "4375b77a-1111-2222-3333-444455556666",
+            "name": "web-shop",
+            "cwd": "/Users/me/Projects/web-shop",
+            "project": "web-shop",
+            "branch": "fix/cart-total",
+            "kind": "interactive",
+            "status": "waiting",
+            "title": "The cart total is off by a cent sometimes",
+            "terminal": "iTerm.app",
+            "canReceive": true,
+            "replyRoute": "typed",
+            "startedAt": 1793619400000,
+            "updatedAt": 1793620000000,
+            "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+          },
+          {
+            "id": "s-min",
+            "name": null,
+            "cwd": "/tmp",
+            "project": "tmp",
+            "branch": null,
+            "kind": "unknown",
+            "status": "idle",
+            "title": null,
+            "terminal": null,
+            "canReceive": false,
+            "startedAt": 1793620000000,
+            "updatedAt": 1793620000000,
+            "lastSummary": null
+          }
+        ],
+        "prompts": [
+          {
+            "id": "p_question",
+            "sessionId": "4375b77a-1111-2222-3333-444455556666",
+            "kind": "question",
+            "payload": {
+              "kind": "question",
+              "questions": [
+                {
+                  "question": "Which storage should the health sync use?",
+                  "header": "Storage",
+                  "options": [
+                    {
+                      "label": "SwiftData",
+                      "description": "Native"
+                    },
+                    {
+                      "label": "SQLite"
+                    }
+                  ],
+                  "multiSelect": false
+                },
+                {
+                  "question": "Which data?",
+                  "options": [
+                    {
+                      "label": "Steps"
+                    },
+                    {
+                      "label": "Sleep"
+                    }
+                  ],
+                  "multiSelect": true
+                }
+              ]
+            },
+            "status": "open",
+            "resolvedBy": null,
+            "createdAt": 1793620000000,
+            "resolvedAt": null
+          },
+          {
+            "id": "p_plan",
+            "sessionId": "4375b77a-1111-2222-3333-444455556666",
+            "kind": "plan",
+            "payload": {
+              "kind": "plan",
+              "plan": "## Add Stripe checkout\n1. Route\n2. Webhook",
+              "planFilePath": null
+            },
+            "status": "open",
+            "resolvedBy": null,
+            "createdAt": 1793620000000,
+            "resolvedAt": null
+          }
+        ],
+        "presence": {
+          "mode": "auto",
+          "present": false,
+          "idleSeconds": 340,
+          "locked": true
+        }
+      },
+      "events": [],
+      "latestSeq": 10,
+      "more": true
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 2,
+    "result": {
+      "ok": true
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 3,
+    "error": {
+      "code": "conflict",
+      "message": "already closed (mac)"
+    }
+  },
+  {
+    "type": "rpc",
+    "id": null,
+    "error": {
+      "code": "bad_request",
+      "message": "invalid JSON-RPC message"
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 4,
+    "result": {
+      "id": "4375b77a-1111-2222-3333-444455556666",
+      "name": "Cart bug",
+      "cwd": "/Users/me/Projects/web-shop",
+      "project": "web-shop",
+      "branch": "fix/cart-total",
+      "kind": "interactive",
+      "status": "waiting",
+      "title": "The cart total is off by a cent sometimes",
+      "terminal": "iTerm.app",
+      "canReceive": true,
+      "replyRoute": "labelled",
+      "replyFix": "accessibility",
+      "startedAt": 1793619400000,
+      "updatedAt": 1793620000000,
+      "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+      "originalName": "web-shop"
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 5,
+    "result": {
+      "id": "4375b77a-1111-2222-3333-444455556666",
+      "name": "web-shop",
+      "cwd": "/Users/me/Projects/web-shop",
+      "project": "web-shop",
+      "branch": "fix/cart-total",
+      "kind": "interactive",
+      "status": "waiting",
+      "title": "The cart total is off by a cent sometimes",
+      "terminal": "iTerm.app",
+      "canReceive": true,
+      "replyRoute": "typed",
+      "startedAt": 1793619400000,
+      "updatedAt": 1793620000000,
+      "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+      "pinnedAt": 1762250000000
+    }
+  },
+  {
+    "type": "rpc",
+    "id": 6,
+    "result": {
+      "via": "tmux",
+      "turnId": "t_stop"
+    }
+  },
+  {
+    "type": "event",
+    "event": {
+      "seq": 11,
+      "ts": 1793620000000,
+      "type": "turn.done",
+      "turn": {
+        "id": "t_stop",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "prompt": "Rewrite the checkout in Svelte",
+        "summary": "Starting with the cart page.",
+        "fullLength": 27,
+        "truncated": false,
+        "stats": {
+          "durationMs": 38000,
+          "toolCalls": 3,
+          "filesEdited": [
+            "/src/cart.svelte"
+          ]
+        },
+        "failed": false,
+        "startedAt": 1793619962000,
+        "endedAt": 1793620000000,
+        "stopped": true
+      }
+    }
+  }
+]

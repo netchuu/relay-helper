@@ -1,0 +1,9 @@
+node_modules/
+mac/bin/
+release/dist/
+cloud/.wrangler/
+*.log
+.DS_Store
+.env
+.env.*
+*.p8

@@ -1,0 +1,11 @@
+{
+  "agentType": "general-purpose",
+  "isBuiltIn": true,
+  "launchedWithDefaults": true,
+  "description": "Count .txt files in folder",
+  "toolUseId": "toolu_01C56DHEGY2caZhKxuSiVjtF",
+  "spawnDepth": 1,
+  "requestShape": "background",
+  "requestNonInteractive": true,
+  "pickedEffortModel": "claude-haiku-5-5"
+}

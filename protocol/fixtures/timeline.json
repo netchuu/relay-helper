@@ -1,0 +1,299 @@
+{
+  "events": [
+    {
+      "seq": 31,
+      "ts": 1793619974000,
+      "type": "turn.action",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "turnId": "t_live",
+      "step": {
+        "kind": "thinking",
+        "label": "Thought for 4s",
+        "at": 1793619974000,
+        "id": "0f2c1d4e-0000-4000-8000-00000000a001",
+        "durationMs": 4200
+      }
+    },
+    {
+      "seq": 32,
+      "ts": 1793619978000,
+      "type": "turn.action",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "turnId": "t_live",
+      "step": {
+        "kind": "run",
+        "label": "Ran swift build",
+        "at": 1793619978000,
+        "id": "toolu_01TimelineBuild",
+        "tool": "Bash",
+        "title": "Update settings/README and rebuild",
+        "detail": "cd ios && swift build 2>&1 | tail -3\necho done"
+      }
+    },
+    {
+      "seq": 33,
+      "ts": 1793619982000,
+      "type": "turn.action",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "turnId": "t_live",
+      "step": {
+        "kind": "run",
+        "label": "Ran swift build",
+        "at": 1793619978000,
+        "failed": true,
+        "id": "toolu_01TimelineBuild",
+        "tool": "Bash",
+        "title": "Update settings/README and rebuild",
+        "detail": "cd ios && swift build 2>&1 | tail -3\necho done"
+      }
+    }
+  ],
+  "turn": {
+    "id": "t_timeline",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "Fix the cart total",
+    "summary": "Fixed the rounding. …",
+    "fullLength": 1840,
+    "truncated": true,
+    "stats": {
+      "durationMs": 241000,
+      "toolCalls": 14,
+      "filesEdited": [
+        "/src/cart.ts",
+        "/src/money.ts"
+      ]
+    },
+    "failed": false,
+    "startedAt": 1793619759000,
+    "endedAt": 1793620000000,
+    "steps": [
+      {
+        "kind": "run",
+        "label": "Ran swift build",
+        "at": 1793619978000,
+        "failed": true,
+        "id": "toolu_01TimelineBuild",
+        "tool": "Bash",
+        "title": "Update settings/README and rebuild",
+        "detail": "cd ios && swift build 2>&1 | tail -3\necho done"
+      },
+      {
+        "kind": "read",
+        "label": "Read src/cart.ts",
+        "at": 1793619980000,
+        "id": "toolu_01TimelineRead",
+        "tool": "Read",
+        "detail": "src/cart.ts"
+      }
+    ],
+    "thoughts": [
+      {
+        "kind": "thinking",
+        "label": "Thought for 4s",
+        "at": 1793619974000,
+        "id": "0f2c1d4e-0000-4000-8000-00000000a001",
+        "durationMs": 4200
+      }
+    ]
+  },
+  "live": {
+    "turnId": "t_live",
+    "prompt": "Fix the cart total",
+    "startedAt": 1793619970000,
+    "actions": [
+      {
+        "kind": "thinking",
+        "label": "Thought for 4s",
+        "at": 1793619974000,
+        "id": "0f2c1d4e-0000-4000-8000-00000000a001",
+        "durationMs": 4200
+      },
+      {
+        "kind": "run",
+        "label": "Ran swift build",
+        "at": 1793619978000,
+        "id": "toolu_01TimelineBuild",
+        "tool": "Bash",
+        "title": "Update settings/README and rebuild",
+        "detail": "cd ios && swift build 2>&1 | tail -3\necho done",
+        "failed": true
+      }
+    ]
+  },
+  "agent": {
+    "events": [
+      {
+        "seq": 35,
+        "ts": 1793619930000,
+        "type": "turn.action",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "turnId": "t_agent",
+        "step": {
+          "kind": "agent",
+          "label": "Running an agent: Review PR #30",
+          "at": 1793619920000,
+          "id": "toolu_01AgentReview",
+          "tool": "Agent",
+          "title": "Review PR #30",
+          "running": true,
+          "stepCount": 12,
+          "current": "Reading lib.ts",
+          "children": [
+            {
+              "kind": "read",
+              "label": "Read lib.ts",
+              "at": 1793619930000,
+              "id": "toolu_01AgentR1",
+              "tool": "Read"
+            },
+            {
+              "kind": "run",
+              "label": "Ran bun test",
+              "at": 1793619940000,
+              "failed": true,
+              "id": "toolu_01AgentR2",
+              "tool": "Bash"
+            },
+            {
+              "kind": "read",
+              "label": "Read app.ts",
+              "at": 1793619950000,
+              "id": "toolu_01AgentR3",
+              "tool": "Read"
+            }
+          ],
+          "childrenMore": 9
+        }
+      },
+      {
+        "seq": 36,
+        "ts": 1793619990000,
+        "type": "turn.action",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "turnId": "t_agent",
+        "step": {
+          "kind": "agent",
+          "label": "Ran an agent: Review PR #30",
+          "at": 1793619920000,
+          "id": "toolu_01AgentReview",
+          "tool": "Agent",
+          "title": "Review PR #30",
+          "durationMs": 240000,
+          "stepCount": 34,
+          "children": [
+            {
+              "kind": "read",
+              "label": "Read lib.ts",
+              "at": 1793619930000,
+              "id": "toolu_01AgentR1",
+              "tool": "Read"
+            },
+            {
+              "kind": "run",
+              "label": "Ran bun test",
+              "at": 1793619940000,
+              "failed": true,
+              "id": "toolu_01AgentR2",
+              "tool": "Bash"
+            },
+            {
+              "kind": "read",
+              "label": "Read app.ts",
+              "at": 1793619950000,
+              "id": "toolu_01AgentR3",
+              "tool": "Read"
+            }
+          ],
+          "childrenMore": 31
+        }
+      }
+    ],
+    "turn": {
+      "id": "t_agent",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "prompt": "Fix the cart total",
+      "summary": "Fixed the rounding. …",
+      "fullLength": 1840,
+      "truncated": true,
+      "stats": {
+        "durationMs": 241000,
+        "toolCalls": 14,
+        "filesEdited": [
+          "/src/cart.ts",
+          "/src/money.ts"
+        ]
+      },
+      "failed": false,
+      "startedAt": 1793619759000,
+      "endedAt": 1793620000000,
+      "steps": [
+        {
+          "kind": "agent",
+          "label": "Ran an agent: Review PR #30",
+          "at": 1793619920000,
+          "id": "toolu_01AgentReview",
+          "tool": "Agent",
+          "title": "Review PR #30",
+          "durationMs": 240000,
+          "stepCount": 34,
+          "children": [
+            {
+              "kind": "read",
+              "label": "Read lib.ts",
+              "at": 1793619930000,
+              "id": "toolu_01AgentR1",
+              "tool": "Read"
+            },
+            {
+              "kind": "run",
+              "label": "Ran bun test",
+              "at": 1793619940000,
+              "failed": true,
+              "id": "toolu_01AgentR2",
+              "tool": "Bash"
+            },
+            {
+              "kind": "read",
+              "label": "Read app.ts",
+              "at": 1793619950000,
+              "id": "toolu_01AgentR3",
+              "tool": "Read"
+            }
+          ],
+          "childrenMore": 31
+        },
+        {
+          "kind": "agent",
+          "label": "Ran the deploy workflow",
+          "at": 1793619910000,
+          "id": "toolu_01WorkflowDeploy",
+          "tool": "Workflow",
+          "durationMs": 600000,
+          "children": [
+            {
+              "kind": "agent",
+              "label": "Build the site",
+              "at": 1793619915000,
+              "id": "agent-a1",
+              "state": "done"
+            },
+            {
+              "kind": "agent",
+              "label": "Run the tests",
+              "at": 1793619916000,
+              "id": "agent-a2",
+              "state": "running"
+            },
+            {
+              "kind": "agent",
+              "label": "Upload the release",
+              "at": 1793619917000,
+              "id": "agent-a3",
+              "state": "failed"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

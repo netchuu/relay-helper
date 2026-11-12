@@ -1,0 +1,21 @@
+[
+  {
+    "id": "t_abc",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "Fix the cart total",
+    "summary": "Fixed the rounding. …",
+    "fullLength": 1840,
+    "truncated": true,
+    "stats": {
+      "durationMs": 241000,
+      "toolCalls": 14,
+      "filesEdited": [
+        "/src/cart.ts",
+        "/src/money.ts"
+      ]
+    },
+    "failed": false,
+    "startedAt": 1793619759000,
+    "endedAt": 1793620000000
+  }
+]

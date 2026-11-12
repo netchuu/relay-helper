@@ -1,0 +1,15 @@
+{
+  "key": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "enc": "0iMwwVONcqVpFFGig7gQEVXPwdjWJsw8/bmffIzJo8LGmcAHgVp1H/GZ4h33/UNnNEO+mCvxwBon5khuE7eBuS6y7da+htGqfgbuUw9ZANqmtcz4MqZ6tFcbxMsO0UMUOz1C564jPk2oumS/XxhBY8ztWx43YGguWmHR+3VdJiwGVQikNBL3dI9XqlGyabSL3Dc3OBII2vOLbjj/bFEEVILCbBr0buvucLUX2x/Q6IBu8qJG6iy929l8BSuT07j3vB8B6L5YUoi9TViETZk1Yb0Hq8srLJXJJYD7Inxz3zGoPYOKMBNwByx+7Q/w7R0MN7xcLHezfpzrBgEvJO8uFoGJm7uhTdn9f0LuEdiSOu4sjkABmAgHZs5H9L4ZoVdylA9z",
+  "plaintext": {
+    "title": "checkout-redesign asks",
+    "body": "Which payment provider should the new checkout use?",
+    "data": {
+      "promptId": "p_fixture",
+      "sessionId": "s_fixture",
+      "kind": "question",
+      "question": "Which payment provider should the new checkout use?",
+      "options": ["Stripe", "Adyen"]
+    }
+  }
+}
