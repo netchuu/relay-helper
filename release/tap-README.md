@@ -59,6 +59,8 @@ alone, and `relay uninstall` undoes it. To pair another phone later, run `relay 
 ## Requirements and notes
 
 - macOS or Linux (x64 or arm64; WSL counts) and Claude Code 2.1.316 or later.
+- The helper is open source under the Apache License 2.0: [netchuu/relay-helper](https://github.com/netchuu/relay-helper).
+  Everything between it and the app is end-to-end encrypted.
 - The macOS binaries are signed and notarized by Apple. The Linux ones are checked against `SHA256SUMS` by the
   installer and by Homebrew.
 - On Linux the helper runs as a systemd user service. On a server, run `sudo loginctl enable-linger $USER` so it
