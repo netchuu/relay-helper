@@ -144,6 +144,9 @@ export function turnFromTranscript(
       continue;
     }
     if (isUserPrompt(entry)) break;
+    // No turn known to be open: Claude Code began this one by itself, on a notice (a background task finishing).
+    // It starts at that notice, not at your last prompt, whose steps belong to the turn that already ended.
+    if (startedAt === null && isNotice(entry)) break;
     entries.push(entry);
   }
   const files = new Set<string>();
@@ -184,6 +187,13 @@ function isUserPrompt(entry: Record<string, unknown>): boolean {
   // end the turn being read.
   if (typeof content === "string") return !isSystemMessage(content);
   return Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "text");
+}
+
+/** A notice Claude Code wrote into the session itself, as a user entry of plain text (not a tool's result). */
+function isNotice(entry: Record<string, unknown>): boolean {
+  if (entry.type !== "user" || entry.isMeta || entry.isSidechain) return false;
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  return typeof content === "string" && isSystemMessage(content);
 }
 
 /**
