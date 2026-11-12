@@ -208,8 +208,10 @@ describe("session-pin: state", () => {
     ];
     for (const r of [pinned, unpinned]) {
       const text = JSON.stringify(r);
-      for (const secret of ["secret-token", "/tmp/s.sock", "x.jsonl", "4242", "%1", "/tmp/tmux"])
+      for (const secret of ["secret-token", "/tmp/s.sock", "x.jsonl", "%1", "/tmp/tmux"])
         expect(text).not.toContain(secret);
+      // The pid as a value of its own: "4242" alone also turns up inside a millisecond timestamp now and then.
+      expect(text).not.toMatch(/[:"]4242[,"}]/);
       for (const key of forbidden) expect(r).not.toHaveProperty(key);
       // Every key is one the protocol's Session declares.
       for (const key of Object.keys(r)) expect(Object.keys(SessionSchema.shape)).toContain(key);
