@@ -145,23 +145,23 @@ function isInterruptMarker(entry: Entry): boolean {
 }
 
 /**
- * Whether `answer` was written before `prompt` was submitted: the transcript has Claude's text `answer`, and after
- * it the prompt's own user entry. A prompt sent while Claude is still answering is reported by its hook at once,
- * but Claude Code starts on it only when that answer is done, so the answer isn't that prompt's. False when either
- * isn't found (a lagging transcript): no evidence. Nor when the same words also stand before the answer as an
- * entry written since `startedAt`, the time the prompt's hook came: that one is the turn's own prompt ("continue"
- * sent twice), and the answer is its.
+ * Which of `turns` the text `answer` answers, by where it stands in the transcript. `turns` are the session's
+ * unanswered turns, oldest first, the open one last: a prompt sent while Claude is still answering is reported by
+ * its hook at once (and closes the turn before it), but Claude Code starts on it only when that answer is done, or
+ * hands it to the running turn. The answer is for the newest turn whose prompt stands before it; a prompt whose
+ * entry comes after it is still waiting. Returns that turn's id; null when the answer has no prompt among them
+ * (all are still waiting); undefined without evidence (the answer isn't in the transcript yet, or no waiting
+ * prompt's entry is), and then the open turn keeps the answer as before.
  */
-export function answeredBeforePrompt(
+export function answerOwner(
   path: string,
   answer: string,
-  prompt: string | null,
-  startedAt: number,
-): boolean {
+  turns: { id: string; prompt: string | null; startedAt: number }[],
+): string | null | undefined {
   const wanted = answer.trim();
-  const asked = prompt ? comparable(prompt) : "";
-  if (!wanted || !asked) return false;
-  let entries: Entry[];
+  const newest = turns.at(-1);
+  if (!wanted || !newest?.prompt) return undefined;
+  let entries: (Entry & { attachment?: { type?: string; prompt?: unknown } })[];
   try {
     entries = readTail(path)
       .split("\n")
@@ -173,7 +173,7 @@ export function answeredBeforePrompt(
         }
       });
   } catch {
-    return false;
+    return undefined;
   }
   const answerAt = entries.findLastIndex((entry) => {
     if (entry.type !== "assistant" || entry.isSidechain || !Array.isArray(entry.message?.content))
@@ -182,25 +182,63 @@ export function answeredBeforePrompt(
       (block) => block.type === "text" && block.text?.trim() === wanted,
     );
   });
-  if (answerAt < 0) return false;
-  const isThePrompt = (entry: Entry) => {
-    const text = promptText(entry);
-    if (text === null) return false;
-    const written = comparable(text);
-    // The hook's prompt and the entry's text are the same words; one may carry more (attached files' paths).
-    return (
-      written === asked ||
-      (asked.length >= 12 && written.startsWith(asked)) ||
-      (written.length >= 12 && asked.startsWith(written))
-    );
+  if (answerAt < 0) return undefined;
+  // A prompt as the transcript holds it: its own user entry, or, for one handed to the running turn, the queued
+  // command Claude Code attaches there.
+  const written = (entry: (typeof entries)[number]): string | null => {
+    const queued = entry.type === "attachment" && entry.attachment?.type === "queued_command";
+    const text = queued ? entry.attachment?.prompt : promptText(entry);
+    if (typeof text !== "string" || (queued && isSystemMessage(text.trim()))) return null;
+    return sameWords(text);
   };
-  // Its own entry, written when its hook came (a few seconds of slack for the two clocks), or with no time at all.
-  const own = entries.slice(0, answerAt).some((entry) => {
-    if (!isThePrompt(entry)) return false;
-    const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
-    return Number.isNaN(at) || at >= startedAt - 5000;
-  });
-  return !own && entries.slice(answerAt + 1).some(isThePrompt);
+  // The hook's prompt and the entry's text are the same words; one may carry more after them (attached files'
+  // paths on lines of their own).
+  const matches = (asked: string, text: string) =>
+    text === asked || text.startsWith(`${asked} `) || asked.startsWith(`${text} `);
+  // Oldest first, each turn takes the first entry before the answer that is its prompt and no other turn's: one
+  // written since its hook came (a few seconds of slack for the two clocks), or with no time at all.
+  const taken = new Set<number>();
+  let owner: string | null = null;
+  let queued = false;
+  for (const turn of turns) {
+    const asked = turn.prompt ? sameWords(turn.prompt) : "";
+    if (!asked) {
+      // A turn begun on a notice has no prompt to look for: it was running before any prompt that still waits.
+      if (!queued) owner = turn.id;
+      continue;
+    }
+    const own = entries.findIndex((entry, i) => {
+      if (i >= answerAt || taken.has(i)) return false;
+      const text = written(entry);
+      if (text === null || !matches(asked, text)) return false;
+      const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+      return Number.isNaN(at) || at >= turn.startedAt - 5000;
+    });
+    if (own >= 0) {
+      taken.add(own);
+      owner = turn.id;
+    } else if (
+      entries.slice(answerAt + 1).some((entry) => {
+        const text = promptText(entry);
+        return text !== null && matches(asked, sameWords(text));
+      })
+    ) {
+      queued = true;
+    }
+  }
+  if (owner === newest.id) return owner;
+  // Only with a waiting prompt's entry after the answer: otherwise the transcript may just be behind.
+  return queued ? owner : undefined;
+}
+
+/** A prompt for comparing the hook's text with the transcript's: `comparable`, without image markers. */
+function sameWords(text: string): string {
+  const plain = comparable(text);
+  const words = plain
+    .replace(/\[Image[^\]]*\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return words || plain;
 }
 
 /**
@@ -472,6 +510,24 @@ function toTurn(sessionId: string, d: Draft, previewChars: number): Turn {
     ...timeline,
     ...messages,
   };
+}
+
+/**
+ * Turns read from the transcript, without those the helper already recorded with no start time (`startless`: their
+ * answer and when they ended). Such a record can't keep its own transcript copy out by time, as the others do with
+ * their start: the copy ends a moment before the record. It is told by the same answer ending within ten seconds
+ * before it, and was otherwise shown twice.
+ */
+export function withoutRecordedCopies(
+  turns: Turn[],
+  startless: { summary: string | null; ended_at: number }[],
+): Turn[] {
+  return turns.filter(
+    (t) =>
+      !startless.some(
+        (r) => r.summary === t.summary && r.ended_at >= t.endedAt && r.ended_at - t.endedAt < 10_000,
+      ),
+  );
 }
 
 /**

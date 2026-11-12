@@ -12,6 +12,7 @@ import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
+import { withoutRecordedCopies } from "../src/daemon/transcript.ts";
 
 // A turn Claude Code starts by itself (a background task's notice, no prompt from you) has only its own steps, and
 // a long history is read a page at a time.
@@ -88,6 +89,17 @@ function setup() {
             "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
         },
       }),
+    /** The notice's own hook, as Claude Code fires it when the notice starts a turn. */
+    noticeHook: () =>
+      hook("UserPromptSubmit", {
+        prompt:
+          "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
+      }),
+    /** Claude Code's bookkeeping entries at the end of a turn. */
+    closes: () => {
+      write({ type: "system", subtype: "stop_hook_summary" });
+      write({ type: "system", subtype: "turn_duration" });
+    },
     read: (id: string, file: string) => {
       write({
         type: "assistant",
@@ -101,6 +113,9 @@ function setup() {
       });
     },
     says: (text: string) => write({ type: "assistant", message: { content: [{ type: "text", text }] } }),
+    /** A message Claude Code hands to the running turn: no prompt entry, a queued command attached there. */
+    takenIn: (text: string) =>
+      write({ type: "attachment", attachment: { type: "queued_command", prompt: text } }),
   };
 }
 
@@ -143,6 +158,77 @@ describe("a turn started by a notice", () => {
     t.says("The task finished; I read its report.");
     await t.hook("Stop", { last_assistant_message: "The task finished; I read its report." });
     expect(t.done[1]?.steps?.map((s) => s.label)).toEqual(["Read report.md"]);
+  });
+
+  test("with the notice's own hook (as Claude Code fires it) it still has only its own steps", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("go");
+    await t.hook("UserPromptSubmit", { prompt: "go" });
+    t.read("toolu_1", "a.ts");
+    t.read("toolu_2", "b.ts");
+    t.says("Started both.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Started both." });
+
+    t.notice();
+    await t.noticeHook();
+    t.says("First.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "First." });
+    expect(t.done[1]?.steps).toBeUndefined();
+    expect(t.done[1]?.summary).toBe("First.");
+
+    t.notice();
+    await t.noticeHook();
+    t.read("toolu_3", "r.md");
+    t.says("Second.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Second." });
+    expect(t.done[2]?.steps?.map((s) => s.label)).toEqual(["Read r.md"]);
+  });
+
+  test("another notice taken in while it runs doesn't cut it", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("go");
+    await t.hook("UserPromptSubmit", { prompt: "go" });
+    t.read("toolu_1", "a.ts");
+    t.says("Started it.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Started it." });
+
+    t.notice();
+    await t.noticeHook();
+    t.read("toolu_2", "r1.md");
+    // A second task finishes meanwhile: its notice joins the running turn.
+    t.notice();
+    await t.noticeHook();
+    t.read("toolu_3", "r2.md");
+    t.says("Both reports read.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Both reports read." });
+    expect(t.done[1]?.steps?.map((s) => s.label)).toEqual(["Read r1.md", "Read r2.md"]);
+  });
+
+  test("without any hook, two notices in one turn keep the steps between them", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("go");
+    await t.hook("UserPromptSubmit", { prompt: "go" });
+    t.read("toolu_1", "a.ts");
+    t.says("Started it.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Started it." });
+
+    t.notice();
+    t.read("toolu_2", "r1.md");
+    t.notice();
+    t.read("toolu_3", "r2.md");
+    t.says("Both reports read.");
+    t.closes();
+    await t.hook("Stop", { last_assistant_message: "Both reports read." });
+    expect(t.done[1]?.steps?.map((s) => s.label)).toEqual(["Read r1.md", "Read r2.md"]);
   });
 
   test("a notice in the middle of your turn doesn't cut that turn's steps", async () => {
@@ -191,9 +277,11 @@ describe("a message sent while Claude is still answering", () => {
     t.prompt("run the flows");
     await t.hook("UserPromptSubmit", { prompt: "run the flows" });
     t.read("toolu_1", "a.ts");
-    // Two short messages Claude Code hands to the running turn (no prompt entries of their own in the transcript).
+    // Two short messages Claude Code hands to the running turn (queued commands attached to it in the transcript).
     await t.hook("UserPromptSubmit", { prompt: "ok, continue" });
     await t.hook("UserPromptSubmit", { prompt: "." });
+    t.takenIn("ok, continue");
+    t.takenIn(".");
     // And one that waits in the queue until the answer is done.
     await t.hook("UserPromptSubmit", { prompt: "what about these photos" });
     t.says("Continuing: the flows are running.");
@@ -205,6 +293,68 @@ describe("a message sent while Claude is still answering", () => {
     t.says("The photos show a bug.");
     await t.hook("Stop", { last_assistant_message: "The photos show a bug." });
     expect(t.done[1]).toMatchObject({ prompt: "what about these photos", summary: "The photos show a bug." });
+  });
+
+  test("three sent in a row: each answer goes to the prompt Claude Code was on", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("question A");
+    await t.hook("UserPromptSubmit", { prompt: "question A" });
+    t.read("toolu_1", "a.ts");
+    for (const q of ["question B", "question C", "question D"])
+      await t.hook("UserPromptSubmit", { prompt: q });
+    // Claude Code takes them from its queue one at a time: only B's entry is there when A's answer ends.
+    t.says("Answer A.");
+    t.prompt("question B");
+    await t.hook("Stop", { last_assistant_message: "Answer A." });
+    t.says("Answer B.");
+    t.prompt("question C");
+    await t.hook("Stop", { last_assistant_message: "Answer B." });
+    t.says("Answer C.");
+    t.prompt("question D");
+    await t.hook("Stop", { last_assistant_message: "Answer C." });
+    expect(t.status()).toBe("working");
+    t.says("Answer D.");
+    await t.hook("Stop", { last_assistant_message: "Answer D." });
+    expect(t.done.map((x) => [x.prompt, x.summary])).toEqual([
+      ["question A", "Answer A."],
+      ["question B", "Answer B."],
+      ["question C", "Answer C."],
+      ["question D", "Answer D."],
+    ]);
+    expect(t.status()).toBe("idle");
+  });
+
+  test('the same words sent again a moment later ("ok", then "ok") wait their turn', async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("ok");
+    await t.hook("UserPromptSubmit", { prompt: "ok" });
+    t.read("toolu_1", "a.ts");
+    await t.hook("UserPromptSubmit", { prompt: "ok" });
+    t.says("First ok done.");
+    t.prompt("ok");
+    await t.hook("Stop", { last_assistant_message: "First ok done." });
+    expect(t.done).toHaveLength(1);
+    expect(t.status()).toBe("working");
+    t.says("Second ok done.");
+    await t.hook("Stop", { last_assistant_message: "Second ok done." });
+    expect(t.done.map((x) => x.summary)).toEqual(["First ok done.", "Second ok done."]);
+    expect(t.done[0]?.id).not.toBe(t.done[1]?.id);
+  });
+
+  test("a short message with a file: the transcript's entry carries the path, the hook's prompt may not", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("first");
+    await t.hook("UserPromptSubmit", { prompt: "first" });
+    t.read("toolu_1", "a.ts");
+    await t.hook("UserPromptSubmit", { prompt: "look [Image #1]" });
+    t.says("First done.");
+    t.prompt("look\n/Users/me/shot one.png");
+    await t.hook("Stop", { last_assistant_message: "First done." });
+    expect(t.done.map((x) => [x.prompt, x.summary])).toEqual([["first", "First done."]]);
+    expect(t.status()).toBe("working");
   });
 
   test("a prompt that stands before its answer keeps it, as always", async () => {
@@ -235,26 +385,47 @@ describe("session.turns, a page at a time", () => {
       await t.hook("Stop", { last_assistant_message: `answer ${i}`, transcript_path: "/nonexistent.jsonl" });
       await Bun.sleep(3);
     }
+    // As the phone asks: before the time its oldest turn started.
+    const start = (turns: Turn[]) => Math.min(...turns.map((x) => x.startedAt ?? x.endedAt));
     const first = await t.call<Turn[]>("session.turns", { sessionId: "s1", limit: 2 });
     expect(first.map((x) => x.summary)).toEqual(["answer 5", "answer 4"]);
-    const second = await t.call<Turn[]>("session.turns", {
-      sessionId: "s1",
-      limit: 2,
-      before: Math.min(...first.map((x) => x.endedAt)),
-    });
+    const second = await t.call<Turn[]>("session.turns", { sessionId: "s1", limit: 2, before: start(first) });
     expect(second.map((x) => x.summary)).toEqual(["answer 3", "answer 2"]);
-    const third = await t.call<Turn[]>("session.turns", {
-      sessionId: "s1",
-      limit: 2,
-      before: Math.min(...second.map((x) => x.endedAt)),
-    });
+    const third = await t.call<Turn[]>("session.turns", { sessionId: "s1", limit: 2, before: start(second) });
     expect(third.map((x) => x.summary)).toEqual(["answer 1"]);
-    const none = await t.call<Turn[]>("session.turns", {
-      sessionId: "s1",
-      limit: 2,
-      before: third[0]?.endedAt,
-    });
+    const none = await t.call<Turn[]>("session.turns", { sessionId: "s1", limit: 2, before: start(third) });
     expect(none).toEqual([]);
+  });
+
+  test("a turn the next prompt closed (it ends the moment that one starts) isn't skipped", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    await t.hook("UserPromptSubmit", { prompt: "first, cut short", transcript_path: "/nonexistent.jsonl" });
+    await Bun.sleep(3);
+    await t.hook("UserPromptSubmit", { prompt: "second", transcript_path: "/nonexistent.jsonl" });
+    await t.hook("Stop", { last_assistant_message: "answer", transcript_path: "/nonexistent.jsonl" });
+    const newest = await t.call<Turn[]>("session.turns", { sessionId: "s1", limit: 1 });
+    expect(newest.map((x) => x.prompt)).toEqual(["second"]);
+    const earlier = await t.call<Turn[]>("session.turns", {
+      sessionId: "s1",
+      limit: 5,
+      before: newest[0]?.startedAt ?? 0,
+    });
+    expect(earlier.map((x) => x.prompt)).toEqual(["first, cut short"]);
+  });
+
+  test("a transcript copy of a turn recorded without its start is left out", () => {
+    const copy = (summary: string, endedAt: number) => ({ summary, endedAt }) as Turn;
+    const recorded = [{ summary: "Still waiting.", ended_at: 100_000 }];
+    const kept = withoutRecordedCopies(
+      [copy("Still waiting.", 99_600), copy("Still waiting.", 20_000), copy("Something else.", 99_700)],
+      recorded,
+    );
+    // The same answer ending just before the record is the record's copy; the same words a minute before aren't.
+    expect(kept.map((x) => [x.summary, x.endedAt])).toEqual([
+      ["Still waiting.", 20_000],
+      ["Something else.", 99_700],
+    ]);
   });
 
   test("without `before` it answers as it always did", async () => {

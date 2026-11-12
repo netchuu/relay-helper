@@ -41,6 +41,7 @@ import {
   transcriptPathFor,
   transcriptTurns,
   transcriptTurnText,
+  withoutRecordedCopies,
 } from "./transcript.ts";
 
 export interface RpcDeps {
@@ -180,9 +181,11 @@ export function createRpc(
     "sessions.list": ({ includeEnded }) => d.registry.list(includeEnded).map(publicSession),
 
     "session.turns": ({ sessionId, limit, before }) => {
+      // Up to and including `before`: a turn the next prompt closed ends at the very moment that one started, which
+      // is the time the phone gives. (A turn it already has may come along; it knows its turns by id.)
       const rows = d.db
         .query(
-          "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at < ? ORDER BY ended_at DESC LIMIT ?",
+          "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at <= ? ORDER BY ended_at DESC LIMIT ?",
         )
         .all(sessionId, before ?? Number.MAX_SAFE_INTEGER, limit) as TurnRow[];
       const recorded = rows.map((r) => ({ ...toTurn(r), ...attachmentFields(d.db, sessionId, r.prompt) }));
@@ -199,9 +202,19 @@ export function createRpc(
         before: oldest,
         cwd: session.cwd,
       });
+      // A recorded turn whose start isn't known (a Stop with no prompt before it) can't keep its own transcript
+      // copy out by time: the copy ends a moment before the record does. Told by its answer instead.
+      const startless = d.db
+        .query(
+          "SELECT summary, ended_at FROM turns WHERE session_id = ? AND started_at IS NULL AND ended_at IS NOT NULL",
+        )
+        .all(sessionId) as { summary: string | null; ended_at: number }[];
       return fitReply([
         ...recorded,
-        ...older.map((t) => ({ ...t, ...attachmentFields(d.db, sessionId, t.prompt) })),
+        ...withoutRecordedCopies(older, startless).map((t) => ({
+          ...t,
+          ...attachmentFields(d.db, sessionId, t.prompt),
+        })),
       ]);
     },
 

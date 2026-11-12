@@ -120,6 +120,11 @@ export function turnFromTranscript(
   transcriptPath: string,
   startedAt: number | null,
   cwd: string | null,
+  /**
+   * Claude Code began this turn by itself, on a notice (a background task finishing), not on a prompt of yours.
+   * Taken as true when no turn is known to be open (`startedAt` null).
+   */
+  noticeStarted = false,
 ): { stats: TurnStats; steps: TurnStep[]; thoughts: TurnStep[]; messages: RawMessage[] } | null {
   const stats: TurnStats = {
     durationMs: startedAt ? Date.now() - startedAt : null,
@@ -132,8 +137,16 @@ export function turnFromTranscript(
   } catch {
     return null;
   }
-  // Walk backwards to the last genuine user prompt.
+  // Walk backwards to the last genuine user prompt. A turn that began on a notice starts later than that: your
+  // last prompt's steps belong to the turn that already ended (every short answer to a notice repeated them).
+  // It starts after the earlier turn's closing entries, or at the notice written when it began; later notices,
+  // taken in while it ran, are part of it. With neither to go by, at the nearest notice.
+  const onNotice = noticeStarted || startedAt === null;
   const entries: unknown[] = [];
+  let nearestNotice = -1;
+  let startNotice = -1;
+  let bounded = false;
+  let sawWork = false;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line) continue;
@@ -144,11 +157,31 @@ export function turnFromTranscript(
       continue;
     }
     if (isUserPrompt(entry)) break;
-    // No turn known to be open: Claude Code began this one by itself, on a notice (a background task finishing).
-    // It starts at that notice, not at your last prompt, whose steps belong to the turn that already ended.
-    if (startedAt === null && isNotice(entry)) break;
+    if (onNotice) {
+      // This turn's own closing entries are the file's last lines by now; the earlier turn's come after some work.
+      if (closesTurn(entry)) {
+        if (sawWork) {
+          bounded = true;
+          break;
+        }
+      } else if (isNotice(entry)) {
+        const at = typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : Number.NaN;
+        // Older than the turn: the earlier turn's. Written as the turn began: where it starts (the earliest
+        // such one, when another came right after it). Later: taken in while it ran.
+        if (startedAt !== null && at < startedAt - NOTICE_SLACK_MS) {
+          bounded = true;
+          break;
+        }
+        if (startedAt !== null && (Number.isNaN(at) || at <= startedAt + NOTICE_SLACK_MS))
+          startNotice = entries.length;
+        if (nearestNotice < 0) nearestNotice = entries.length;
+      }
+    }
+    if (entry.type === "assistant" || entry.type === "user") sawWork = true;
     entries.push(entry);
   }
+  if (onNotice && startNotice >= 0) entries.length = startNotice;
+  else if (onNotice && !bounded && nearestNotice >= 0) entries.length = nearestNotice;
   const files = new Set<string>();
   const steps = new TranscriptSteps(cwd, startedAt, transcriptPath);
   const messages: RawMessage[] = [];
@@ -187,6 +220,16 @@ function isUserPrompt(entry: Record<string, unknown>): boolean {
   // end the turn being read.
   if (typeof content === "string") return !isSystemMessage(content);
   return Array.isArray(content) && content.some((b) => (b as { type?: string }).type === "text");
+}
+
+/** A notice's entry is written within this long of its hook (the turn's start); two clocks, so some slack. */
+const NOTICE_SLACK_MS = 5000;
+
+/** Claude Code's bookkeeping at the end of a turn. */
+function closesTurn(entry: Record<string, unknown>): boolean {
+  return (
+    entry.type === "system" && (entry.subtype === "turn_duration" || entry.subtype === "stop_hook_summary")
+  );
 }
 
 /** A notice Claude Code wrote into the session itself, as a user entry of plain text (not a tool's result). */

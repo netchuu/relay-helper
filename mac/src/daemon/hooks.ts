@@ -15,7 +15,7 @@ import type { HookEnv, Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
-import { answeredBeforePrompt, interruptedTurn, isSystemMessage } from "./transcript.ts";
+import { answerOwner, interruptedTurn, isSystemMessage } from "./transcript.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
 export interface HookEnvelope {
@@ -316,11 +316,18 @@ export class HookHandler {
         "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND id != ? AND ended_at = ? AND full_text IS NULL AND stopped = 0 ORDER BY started_at DESC LIMIT 1",
       )
       .get(sessionId, picked.id, picked.started_at) as OpenTurn | null;
-    // A prompt sent while Claude was still answering (from the phone, or queued at the computer): its hook came
-    // before this Stop, but Claude Code starts on it only now, and in the transcript the answer stands before it.
-    // The answer is the earlier turn's (or nobody's prompt), and the new turn stays open: it was shown as done
-    // with the previous answer under it, and its own answer then landed under the next message.
-    if (answeredBeforePrompt(transcript, answer, picked.prompt, picked.started_at)) return before ?? null;
+    // Prompts sent while Claude was still answering (from the phone, or queued at the computer): each one's hook
+    // came before this Stop and closed the turn before it, but Claude Code starts on them only now, and in the
+    // transcript the answer stands before them. The answer is for the newest of these turns whose prompt stands
+    // before it (or nobody's prompt), and the later ones wait: the new turn was shown as done with the previous
+    // answer under it, and its own answer then landed under the next message.
+    const waiting = this.unansweredUpTo(sessionId, picked);
+    const owner = answerOwner(
+      transcript,
+      answer,
+      waiting.map((t) => ({ id: t.id, prompt: t.prompt, startedAt: t.started_at ?? 0 })),
+    );
+    if (owner !== undefined) return waiting.find((t) => t.id === owner) ?? null;
     if (!before?.started_at) return picked;
     // Only on positive evidence: the answer is the earlier turn's own last text, that turn wasn't interrupted
     // (Esc, then a new prompt), and the new turn hasn't written it. A lagging transcript or an API error keeps
@@ -332,6 +339,26 @@ export class HookHandler {
     const own = interruptedTurn(transcript, picked.started_at, Number.POSITIVE_INFINITY, cwd, picked.prompt);
     if (own?.messages.some(same)) return picked;
     return before;
+  }
+
+  /**
+   * `open` and, before it, the turns each closed unanswered by the next one's prompt (a run of prompts sent while
+   * Claude was answering), oldest first.
+   */
+  private unansweredUpTo(sessionId: string, open: OpenTurn): OpenTurn[] {
+    const chain = [open];
+    // By the order they were recorded, not by time alone: several can arrive within one millisecond.
+    for (let last = open; last.started_at !== null && chain.length < 20; ) {
+      const before = this.d.db
+        .query(
+          "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND rowid < (SELECT rowid FROM turns WHERE id = ?) AND ended_at = ? AND full_text IS NULL AND stopped = 0 ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(sessionId, last.id, last.started_at) as OpenTurn | null;
+      if (!before) break;
+      chain.unshift(before);
+      last = before;
+    }
+    return chain;
   }
 
   private openTurn(sessionId: string): OpenTurn | null {
@@ -369,7 +396,8 @@ export class HookHandler {
               next.started_at ?? Number.POSITIVE_INFINITY,
               cwd,
             )
-          : turnFromTranscript(transcript, open?.started_at ?? null, cwd);
+          : // A turn begun on a notice was started with no prompt (UserPromptSubmit, above).
+            turnFromTranscript(transcript, open?.started_at ?? null, cwd, open?.prompt === "");
     const stats: TurnStats = fromTranscript?.stats ?? {
       durationMs: transcript && open?.started_at ? Date.now() - open.started_at : null,
       toolCalls: 0,
