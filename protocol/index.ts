@@ -560,7 +560,15 @@ export type RelayEvent = { seq: number; ts: number } & EventBody;
 export const RpcSchemas = {
   sync: z.object({ sinceSeq: z.number().int().nonnegative().default(0) }),
   "sessions.list": z.object({ includeEnded: z.boolean().default(false) }),
-  "session.turns": z.object({ sessionId: z.string(), limit: z.number().int().min(1).max(100).default(20) }),
+  /**
+   * A session's finished turns, newest first. `before` (optional): only turns that ended before this time, to
+   * page back through a long history from the oldest turn the phone has. Older helpers ignore the field.
+   */
+  "session.turns": z.object({
+    sessionId: z.string(),
+    limit: z.number().int().min(1).max(100).default(20),
+    before: z.number().int().nonnegative().optional(),
+  }),
   /**
    * Types a message into the session. With `attachments` (ids from `attachment.end`, at most ATTACHMENTS_MAX), the
    * text typed is the message (if any) followed by the files' paths, one per line, quoted when they have spaces;

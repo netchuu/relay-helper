@@ -179,19 +179,19 @@ export function createRpc(
 
     "sessions.list": ({ includeEnded }) => d.registry.list(includeEnded).map(publicSession),
 
-    "session.turns": ({ sessionId, limit }) => {
+    "session.turns": ({ sessionId, limit, before }) => {
       const rows = d.db
         .query(
-          "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT ?",
+          "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at < ? ORDER BY ended_at DESC LIMIT ?",
         )
-        .all(sessionId, limit) as TurnRow[];
+        .all(sessionId, before ?? Number.MAX_SAFE_INTEGER, limit) as TurnRow[];
       const recorded = rows.map((r) => ({ ...toTurn(r), ...attachmentFields(d.db, sessionId, r.prompt) }));
       if (recorded.length >= limit) return fitReply(recorded);
       // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
       const session = d.registry.get(sessionId);
       const path = session ? transcriptPathFor(session) : null;
       if (!session || !path) return fitReply(recorded);
-      const oldest = recorded.length ? Math.min(...recorded.map((t) => t.startedAt ?? t.endedAt)) : undefined;
+      const oldest = recorded.length ? Math.min(...recorded.map((t) => t.startedAt ?? t.endedAt)) : before;
       const older = transcriptTurns(sessionId, path, {
         limit: limit - recorded.length,
         previewChars: d.config.previewChars,
