@@ -69,6 +69,11 @@ export class HookHandler {
   private readonly stopping = new Map<string, number>();
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
   private readonly heldNotice = new Map<string, number>();
+  /**
+   * Turns whose answer came while later prompts were still waiting (stopOwner): everything in the transcript up
+   * to now is theirs, also what they did after those prompts' hooks came.
+   */
+  private readonly answeredAhead = new Set<string>();
 
   constructor(private readonly d: HookDeps) {
     this.steps = d.steps ?? new StepTracker(d.events);
@@ -327,7 +332,10 @@ export class HookHandler {
       answer,
       waiting.map((t) => ({ id: t.id, prompt: t.prompt, startedAt: t.started_at ?? 0 })),
     );
-    if (owner !== undefined) return waiting.find((t) => t.id === owner) ?? null;
+    if (owner !== undefined) {
+      if (owner !== null && owner !== picked.id) this.answeredAhead.add(owner);
+      return waiting.find((t) => t.id === owner) ?? null;
+    }
     if (!before?.started_at) return picked;
     // Only on positive evidence: the answer is the earlier turn's own last text, that turn wasn't interrupted
     // (Esc, then a new prompt), and the new turn hasn't written it. A lagging transcript or an API error keeps
@@ -393,7 +401,11 @@ export class HookHandler {
           ? boundedTurn(
               transcript,
               { ...open, started_at: open.started_at },
-              next.started_at ?? Number.POSITIVE_INFINITY,
+              // The next prompt's hook came while this turn still ran (it waits its turn): what was done after
+              // that hook is this turn's too.
+              this.answeredAhead.delete(open.id)
+                ? Number.POSITIVE_INFINITY
+                : (next.started_at ?? Number.POSITIVE_INFINITY),
               cwd,
             )
           : // A turn begun on a notice was started with no prompt (UserPromptSubmit, above).

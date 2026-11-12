@@ -183,6 +183,19 @@ export function answerOwner(
     );
   });
   if (answerAt < 0) return undefined;
+  // Only the turn this answer ends counts: from the last prompt before the answer (the one Claude Code was on),
+  // or from the end of an earlier turn if one closed since. Prompts further back were answered long ago; the same
+  // words queued again ("continue" three times) took those old entries for their own.
+  let from = 0;
+  for (let i = answerAt - 1; i >= 0; i--) {
+    const entry = entries[i] as Entry & { subtype?: string };
+    const closed =
+      entry.type === "system" && (entry.subtype === "turn_duration" || entry.subtype === "stop_hook_summary");
+    if (closed) from = i + 1;
+    else if (promptText(entry) !== null) from = i;
+    else continue;
+    break;
+  }
   // A prompt as the transcript holds it: its own user entry, or, for one handed to the running turn, the queued
   // command Claude Code attaches there.
   const written = (entry: (typeof entries)[number]): string | null => {
@@ -208,7 +221,7 @@ export function answerOwner(
       continue;
     }
     const own = entries.findIndex((entry, i) => {
-      if (i >= answerAt || taken.has(i)) return false;
+      if (i < from || i >= answerAt || taken.has(i)) return false;
       const text = written(entry);
       if (text === null || !matches(asked, text)) return false;
       const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;

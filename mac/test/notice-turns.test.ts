@@ -303,10 +303,13 @@ describe("a message sent while Claude is still answering", () => {
     t.read("toolu_1", "a.ts");
     for (const q of ["question B", "question C", "question D"])
       await t.hook("UserPromptSubmit", { prompt: q });
+    // A goes on working after their hooks came: that is still A's work.
+    t.read("toolu_2", "late.ts");
     // Claude Code takes them from its queue one at a time: only B's entry is there when A's answer ends.
     t.says("Answer A.");
     t.prompt("question B");
     await t.hook("Stop", { last_assistant_message: "Answer A." });
+    expect(t.done[0]?.steps?.map((s) => s.label)).toEqual(["Read a.ts", "Read late.ts"]);
     t.says("Answer B.");
     t.prompt("question C");
     await t.hook("Stop", { last_assistant_message: "Answer B." });
@@ -323,6 +326,46 @@ describe("a message sent while Claude is still answering", () => {
       ["question D", "Answer D."],
     ]);
     expect(t.status()).toBe("idle");
+  });
+
+  test('the same prompt queued three times ("continue") gets three answers in order', async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("start");
+    await t.hook("UserPromptSubmit", { prompt: "start" });
+    for (let i = 0; i < 3; i++) await t.hook("UserPromptSubmit", { prompt: "continue" });
+    for (const answer of ["Ans start.", "Ans c1.", "Ans c2."]) {
+      t.says(answer);
+      t.prompt("continue");
+      await t.hook("Stop", { last_assistant_message: answer });
+    }
+    t.says("Ans c3.");
+    await t.hook("Stop", { last_assistant_message: "Ans c3." });
+    expect(t.done.map((x) => [x.prompt, x.summary])).toEqual([
+      ["start", "Ans start."],
+      ["continue", "Ans c1."],
+      ["continue", "Ans c2."],
+      ["continue", "Ans c3."],
+    ]);
+    expect(new Set(t.done.map((x) => x.id)).size).toBe(4);
+    expect(t.status()).toBe("idle");
+  });
+
+  test("words that were a prompt answered a moment ago don't take the running turn's answer", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("continue");
+    await t.hook("UserPromptSubmit", { prompt: "continue" });
+    t.says("Continued.");
+    await t.hook("Stop", { last_assistant_message: "Continued." });
+    t.prompt("run the tests");
+    await t.hook("UserPromptSubmit", { prompt: "run the tests" });
+    await t.hook("UserPromptSubmit", { prompt: "continue" });
+    t.says("Tests ran.");
+    t.prompt("continue");
+    await t.hook("Stop", { last_assistant_message: "Tests ran." });
+    expect(t.done[1]).toMatchObject({ prompt: "run the tests", summary: "Tests ran." });
+    expect(t.status()).toBe("working");
   });
 
   test('the same words sent again a moment later ("ok", then "ok") wait their turn', async () => {
