@@ -562,12 +562,14 @@ export const RpcSchemas = {
   "sessions.list": z.object({ includeEnded: z.boolean().default(false) }),
   /**
    * A session's finished turns, newest first. `before` (optional): only turns that ended before this time, to
-   * page back through a long history from the oldest turn the phone has. Older helpers ignore the field.
+   * page back through a long history. The phone gives the time its oldest turn started (its end when the start
+   * isn't known), not when it ended: the same turn read from the transcript ends a moment earlier than in the
+   * helper's record and would come back again. Older helpers ignore the field.
    */
   "session.turns": z.object({
     sessionId: z.string(),
     limit: z.number().int().min(1).max(100).default(20),
-    before: z.number().int().nonnegative().optional(),
+    before: z.number().nonnegative().optional(),
   }),
   /**
    * Types a message into the session. With `attachments` (ids from `attachment.end`, at most ATTACHMENTS_MAX), the
