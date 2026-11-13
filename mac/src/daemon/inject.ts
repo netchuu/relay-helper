@@ -14,7 +14,7 @@ import { platform } from "../platform/index.ts";
 import type { TabView, TypingRoute } from "../platform/types.ts";
 import type { TypeReply, TypeRequest } from "../shell/ptyShell.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
-import { afterBreak, promptDraft } from "./promptLine.ts";
+import { afterBreak, noKeySincePrompt, promptDraft } from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
@@ -118,6 +118,8 @@ export interface TypeOps {
   tmuxEnter?(socket: string, pane: string): Promise<void>;
   enter?(route: TypingRoute, tty: string): Promise<boolean>;
   sleep?(ms: number): Promise<void>;
+  /** Whether no key was pressed at this Mac since the session's prompt was last submitted. Absent: false. */
+  noKeySincePrompt?(sessionId: string): boolean;
 }
 
 export const defaultTypeOps: TypeOps = {
@@ -134,6 +136,7 @@ export const defaultTypeOps: TypeOps = {
   tmuxEnter,
   enter: (route, tty) => platform.typing.key(route, tty, "enter"),
   sleep: (ms) => Bun.sleep(ms),
+  noKeySincePrompt: (sessionId) => noKeySincePrompt(sessionId, platform.typing.keyIdleSeconds?.() ?? null),
 };
 
 /**
@@ -339,7 +342,12 @@ async function typeIntoTerminal(
   if (!found) return null;
   const { app, tty, tab } = found;
   if (!(await claudeIsInFront(session, tty, ops))) return null;
-  const draft = tab.screen === null ? null : promptDraft(tab.screen);
+  // The tab's text has no attributes: with no key pressed here since the prompt was submitted, what it shows in
+  // the prompt is Claude Code's grey suggestion, not typing.
+  const draft =
+    tab.screen === null
+      ? null
+      : promptDraft(tab.screen, { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true });
   if (!anyway && (draft || (tab.front && active))) throw new WaitForPause(app, draft ? "draft" : "typing");
   if (await ops.type(app, tty, draft ? afterBreak(text) : text)) return app;
   log.info("typing failed, no route left", { sessionId: session.id, app, tty });
@@ -650,9 +658,9 @@ export function postToInbox(
   });
 }
 
-/** The pane's visible text (`capture-pane -p`), or null when tmux can't read it. */
+/** The pane's visible text with its escape codes (`capture-pane -p -e`: the dim attribute marks a suggestion), or null when tmux can't read it. */
 async function tmuxScreen(socket: string, pane: string): Promise<string | null> {
-  const proc = Bun.spawn(["tmux", "-S", socket, "capture-pane", "-p", "-t", pane], {
+  const proc = Bun.spawn(["tmux", "-S", socket, "capture-pane", "-p", "-e", "-t", pane], {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",

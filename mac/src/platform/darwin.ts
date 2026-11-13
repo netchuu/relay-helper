@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../log.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
 import { type Runner, run } from "./exec.ts";
+import { readKeyIdleSeconds } from "./keyIdle.ts";
 import type {
   Platform,
   PresenceReading,
@@ -382,6 +383,7 @@ export const darwin: Platform = {
     peek: peekTerminalApp,
     type: typeIntoTerminalApp,
     key: keyIntoTerminalApp,
+    keyIdleSeconds: readKeyIdleSeconds,
   },
   async computerName() {
     const res = await run(["scutil", "--get", "ComputerName"]);

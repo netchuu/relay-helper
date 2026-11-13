@@ -88,6 +88,12 @@ export interface Platform {
      * submit a message that sat typed in the prompt). Nothing else follows. Returns false when it couldn't.
      */
     key(route: TypingRoute, tty: string, key: "escape" | "enter"): Promise<boolean>;
+    /**
+     * Seconds since a key was last pressed on this computer's keyboard (not the mouse); null when unknown. With
+     * the time the prompt was last submitted, it tells Claude Code's grey suggestion from typing in a terminal
+     * that shows no text attributes.
+     */
+    keyIdleSeconds?(): number | null;
   };
   /** The name people know this computer by, e.g. "Ana's MacBook Pro" or "build-server". */
   computerName(): Promise<string>;

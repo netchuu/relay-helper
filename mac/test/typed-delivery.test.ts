@@ -16,7 +16,7 @@ import {
   WaitForPause,
   WaitForUnlock,
 } from "../src/daemon/inject.ts";
-import { afterBreak, promptDraft } from "../src/daemon/promptLine.ts";
+import { afterBreak, noKeySincePrompt, notePromptSubmitted, promptDraft } from "../src/daemon/promptLine.ts";
 import { type HookEnv, Registry, type SessionRecord } from "../src/daemon/registry.ts";
 import { deliverQueued, ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
@@ -51,6 +51,29 @@ describe("the prompt line (promptDraft)", () => {
     expect(promptDraft(EMPTY)).toBeNull();
     expect(promptDraft(PLACEHOLDER)).toBeNull();
     expect(promptDraft(claudeScreen("❯"))).toBeNull();
+  });
+
+  test("with escape codes, an all-dim prompt is a suggestion and normal text is a draft", () => {
+    const dim = (s: string) => `\u001b[2m${s}\u001b[22m`;
+    expect(promptDraft(claudeScreen(`❯ ${dim("continue, but use edit tool")}`))).toBeNull();
+    // the cursor is drawn reversed over the suggestion's first letter
+    expect(promptDraft(claudeScreen(`❯ \u001b[7mc\u001b[0m${dim("ontinue")}`))).toBeNull();
+    expect(promptDraft(claudeScreen(`❯ also check the signup${dim(" now")}`))).toBe(
+      "also check the signup now",
+    );
+    expect(promptDraft(claudeScreen("❯ \u001b[39mplain typing\u001b[0m"))).toBe("plain typing");
+  });
+
+  test("no key pressed since the prompt was submitted: its text is a suggestion", () => {
+    expect(promptDraft(DRAFT, { noKeySincePrompt: true })).toBeNull();
+    expect(promptDraft(DRAFT, { noKeySincePrompt: false })).toBe("also check the signup");
+    notePromptSubmitted("k1", 10_000);
+    // the last key (the Enter that submitted it) was 12 s ago, the prompt 10 s ago: none since
+    expect(noKeySincePrompt("k1", 12, 20_000)).toBe(true);
+    // a key 3 s ago is after the submit
+    expect(noKeySincePrompt("k1", 3, 20_000)).toBe(false);
+    expect(noKeySincePrompt("k1", null, 20_000)).toBe(false);
+    expect(noKeySincePrompt("never-submitted", 999, 20_000)).toBe(false);
   });
 
   test("text in the prompt is a draft, over several lines too", () => {
@@ -215,6 +238,22 @@ describe("deliver: typed into the terminal, or waiting for a pause", () => {
     expect(t.typed).toEqual(["iterm:\n\ndeploy it"]);
   });
 
+  test("iTerm2: text in the prompt with no key pressed since the prompt was submitted is a suggestion, typed at once", async () => {
+    const s = setup(ITERM);
+    const t = fakeTerminals({ tab: { front: false, screen: DRAFT } });
+    let noKey = true;
+    t.ops.noKeySincePrompt = () => noKey;
+    expect(await deliver(s.session(), "deploy it", opts(600), t.ops)).toEqual({ via: "iterm" });
+    expect(t.typed).toEqual(["iterm:deploy it"]);
+    // A key was pressed since: that text is typing, and waits as before.
+    noKey = false;
+    await expect(deliver(s.session(), "deploy it", opts(600), t.ops)).rejects.toMatchObject({
+      route: "iterm",
+      reason: "draft",
+    });
+    expect(t.typed).toEqual(["iterm:deploy it"]);
+  });
+
   test("an unknown idle time doesn't count as typing", async () => {
     const s = setup(ITERM);
     const t = fakeTerminals({ tab: { front: true, screen: null } });
@@ -240,6 +279,15 @@ describe("deliver: typed into the terminal, or waiting for a pause", () => {
     });
     t.state.tmuxScreen = EMPTY;
     expect(await deliver(s.session(), "x", opts(60), t.ops)).toEqual({ via: "tmux" });
+    // Claude Code's dimmed suggestion is not a draft; real typed text on the same screen still is.
+    t.state.tmuxScreen = claudeScreen(`❯ \u001b[7mc\u001b[27m\u001b[2montinue, but use edit tool\u001b[22m`);
+    expect(await deliver(s.session(), "x", opts(60), t.ops)).toEqual({ via: "tmux" });
+    t.state.tmuxScreen = claudeScreen("❯ continue, but use edit tool\u001b[7m \u001b[27m");
+    await expect(deliver(s.session(), "x", opts(60), t.ops)).rejects.toMatchObject({
+      route: "tmux",
+      reason: "draft",
+    });
+    t.state.tmuxScreen = EMPTY;
     // The pane is gone: not a reason to wait, the next route gets its turn.
     t.state.tmuxScreen = null;
     await expect(deliver(s.session(), "x", opts(1), t.ops)).rejects.toBeInstanceOf(DeliveryError);

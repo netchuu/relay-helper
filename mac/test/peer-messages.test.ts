@@ -6,6 +6,7 @@ import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
 import { PHONE_PREFIX } from "../src/daemon/inject.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
+import { noKeySincePrompt } from "../src/daemon/promptLine.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { isSystemMessage } from "../src/daemon/transcript.ts";
 
@@ -50,4 +51,27 @@ test("a peer message starts a turn with no bubble, no title and no presence", as
   expect(started?.prompt).toBe("");
   expect(registry.get("s1")?.title ?? null).toBeNull();
   expect(presence).toBe(0);
+});
+
+test("a notice after a typed draft doesn't count as the prompt being submitted", async () => {
+  const db = openDb(":memory:");
+  const events = new EventLog(db);
+  const hooks = new HookHandler({
+    db,
+    events,
+    registry: new Registry(db, events),
+    broker: new Broker(db, events),
+    presence: { noteLocalActivity: () => {} } as unknown as PresenceMonitor,
+    config: { previewChars: 600 } as RelayConfig,
+  });
+  const submit = (prompt: string) =>
+    hooks.handle(
+      { payload: { hook_event_name: "UserPromptSubmit", session_id: "bg1", cwd: "/x", prompt }, env: {} },
+      new AbortController().signal,
+    );
+  await submit("earlier question");
+  await Bun.sleep(100);
+  // A key 70 ms ago (the person typing a draft) is after the real submit (about 100 ms ago): the text is theirs.
+  await submit("<task-notification>\n<task-id>b1</task-id>\n</task-notification>");
+  expect(noKeySincePrompt("bg1", 0.07, Date.now())).toBe(false);
 });

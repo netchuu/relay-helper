@@ -10,6 +10,7 @@ import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import type { PresenceMonitor } from "./presence.ts";
+import { notePromptSubmitted } from "./promptLine.ts";
 import { redact } from "./redact.ts";
 import type { HookEnv, Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
@@ -107,6 +108,8 @@ export class HookHandler {
         // nobody typed it: the phone shows no bubble for it, and it isn't presence at the computer.
         const raw = withoutIdeContext(str("prompt") ?? "");
         const system = isSystemMessage(raw);
+        // Only a real submit empties the input box; a notice leaves the typed draft where it was.
+        if (!system) notePromptSubmitted(sessionId);
         // A background task finished: Claude Code tells the session with a notification (background-work).
         if (system) this.background.notified(sessionId, raw);
         const prompt = system ? "" : raw;
