@@ -1,6 +1,6 @@
 {
   "name": "relay-helper",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "private": true,
   "type": "module",
   "description": "Answer every Claude Code session on this computer from your phone",
