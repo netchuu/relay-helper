@@ -1,5 +1,6 @@
 import type { Answer, PromptKind, PromptPayload, Question } from "../../../protocol/index.ts";
 import { redact, redactDeep } from "./redact.ts";
+import { head } from "./text.ts";
 
 /**
  * Pure translation between Claude Code's PermissionRequest hook contract and Relay prompts.
@@ -52,9 +53,8 @@ export function payloadFor(input: PermissionRequestInput): PromptPayload {
     toolName: input.tool_name,
     summary: permissionSummary(input.tool_name, ti),
     detail:
-      (full.length > 20_000
-        ? `${full.slice(0, 20_000)}\n… (${full.length - 20_000} more characters)`
-        : full) + rules,
+      (full.length > 20_000 ? `${head(full, 20_000)}\n… (${full.length - 20_000} more characters)` : full) +
+      rules,
     canAlwaysAllow: Array.isArray(input.permission_suggestions) && input.permission_suggestions.length > 0,
   };
 }

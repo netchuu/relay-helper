@@ -12,6 +12,7 @@ import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import { sealForPhone } from "./relayPush.ts";
 import { firstLine } from "./render.ts";
+import { head } from "./text.ts";
 
 /** Notification categories the iOS app registers; Android maps the same. */
 export const Category = {
@@ -68,7 +69,7 @@ export const contentFreeAlert = (): Alert => ({
   data: {},
 });
 
-const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+const clip = (s: string, n: number) => (s.length > n ? `${head(s, n - 1)}…` : s);
 
 /** Builds the alert for an event, or null when it isn't worth a push. Pure, so it is unit tested. */
 export function alertFor(event: RelayEvent, sessionName: (id: string) => string): Alert | null {

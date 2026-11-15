@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { TurnStats, TurnStep } from "../../../protocol/index.ts";
 import { messageFrom, type RawMessage } from "./messages.ts";
 import { TranscriptSteps } from "./steps.ts";
+import { head } from "./text.ts";
 import { isSystemMessage } from "./transcript.ts";
 
 export interface Compact {
@@ -30,7 +31,7 @@ export function compact(full: string, maxChars: number): Compact {
   if (!out) {
     // First block alone is too long: cut at a word boundary (close an open code fence if needed).
     const first = blocks[0] ?? text;
-    let cut = first.slice(0, maxChars);
+    let cut = head(first, maxChars);
     const lastSpace = cut.lastIndexOf(" ");
     if (lastSpace > maxChars * 0.6) cut = cut.slice(0, lastSpace);
     out = closeOpenFence(cut);
@@ -91,7 +92,7 @@ export function firstLine(text: string, max = 140): string {
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
+  return plain.length > max ? `${head(plain, max - 1)}…` : plain;
 }
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);

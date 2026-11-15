@@ -16,6 +16,7 @@ import type { HookEnv, Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
+import { head } from "./text.ts";
 import { answerOwner, interruptedTurn, isSystemMessage } from "./transcript.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
@@ -211,7 +212,7 @@ export class HookHandler {
               type: "session.notice",
               sessionId,
               level: "error",
-              text: `${str("error") ?? "error"}: ${str("error_details") ?? text}`.slice(0, 500),
+              text: head(`${str("error") ?? "error"}: ${str("error_details") ?? text}`, 500),
             });
           // A notice held back just before this Stop was the next turn after all: it starts now.
           const held = this.heldNotice.get(sessionId);
@@ -233,7 +234,7 @@ export class HookHandler {
             type: "session.notice",
             sessionId,
             level: type === "idle_prompt" || type === "agent_needs_input" ? "attention" : "info",
-            text: redact(str("message") ?? type).slice(0, 500),
+            text: head(redact(str("message") ?? type), 500),
           });
         }
         return NO_OUTPUT;
@@ -529,5 +530,5 @@ export function newId(prefix: string): string {
 
 function oneLine(text: string, max: number): string {
   const line = text.replace(/\s+/g, " ").trim();
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+  return line.length > max ? `${head(line, max - 1)}…` : line;
 }
