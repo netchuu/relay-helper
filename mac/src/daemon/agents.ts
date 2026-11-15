@@ -90,6 +90,18 @@ interface Peeked {
 }
 const PEEK_CACHE_MAX = 500;
 const peeked = new Map<string, Peeked>();
+/** The Agent/Task call ids of a transcript, by path: extended as the file grows. */
+const agentCalls = new Map<string, TranscriptCalls>();
+interface TranscriptCalls {
+  size: number;
+  /** Bytes read so far, always the end of a whole line. */
+  offset: number;
+  ids: Set<string>;
+  workflows: { id: string; at: number }[];
+}
+
+/** Bytes of the main transcript read for call ids (for tests: a growing file is read once). */
+export const transcriptReads = { bytes: 0 };
 
 /** How many other-subagent files were read whole (for tests: an Agent-only turn reads none). */
 export const orphanReads = { count: 0 };
@@ -100,6 +112,7 @@ export class AgentRuns {
   private readonly calls = new Map<string, string[]>();
   private readonly sideOwner = new Map<string, string>();
   private readonly dir: string | null;
+  private readonly transcriptPath: string | null;
   private readonly orphans = new Map<string, Orphan>();
   /** Subagents whose meta says finished: not read again. */
   private readonly settled = new Set<string>();
@@ -108,6 +121,7 @@ export class AgentRuns {
     private readonly cwd: string | null,
     transcriptPath: string | null,
   ) {
+    this.transcriptPath = transcriptPath;
     this.dir = transcriptPath
       ? join(dirname(transcriptPath), basename(transcriptPath, ".jsonl"), "subagents")
       : null;
@@ -154,7 +168,7 @@ export class AgentRuns {
     const run = this.runs.get(id);
     if (!run || run.resultAt !== null) return false;
     run.resultAt = Number.isNaN(at) ? Date.now() : at;
-    if (!run.workflow) run.launchedOnly = /Async agent launched/i.test(text);
+    if (!run.workflow) run.launchedOnly = /^\s*Async agent launched/i.test(text);
     return this.apply(run);
   }
 
@@ -231,7 +245,61 @@ export class AgentRuns {
   }
 
   // -------------------------------------------------------------------------------------------------
-
+  /** Every Agent/Task call id and Workflow start in the session's transcript; a grown file is read from where the last read stopped. */
+  private transcriptCalls(): TranscriptCalls {
+    const none: TranscriptCalls = { size: -1, offset: 0, ids: new Set(), workflows: [] };
+    if (!this.transcriptPath) return none;
+    let size = -1;
+    try {
+      size = statSync(this.transcriptPath).size;
+    } catch {
+      return none;
+    }
+    let found = agentCalls.get(this.transcriptPath);
+    if (found && found.size === size) return found;
+    // A file that shrank was rewritten: start over.
+    if (!found || size < found.offset) found = { size, offset: 0, ids: new Set(), workflows: [] };
+    let chunk: string;
+    let read = 0;
+    try {
+      const fd = openSync(this.transcriptPath, "r");
+      try {
+        const buf = Buffer.alloc(size - found.offset);
+        read = readSync(fd, buf, 0, buf.length, found.offset);
+        // Only whole lines: a half-written last line waits for the next read.
+        const end = buf.subarray(0, read).lastIndexOf(10);
+        read = end + 1;
+        chunk = buf.subarray(0, read).toString("utf8");
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return none;
+    }
+    transcriptReads.bytes += read;
+    for (const line of chunk.split("\n")) {
+      if (!line.includes('"tool_use"')) continue;
+      let entry: { timestamp?: string; message?: { content?: unknown } };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const content = entry.message?.content;
+      if (!Array.isArray(content)) continue;
+      const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+      for (const b of content as { type?: string; id?: string; name?: string }[]) {
+        if (b?.type !== "tool_use" || !b.id || !b.name) continue;
+        if (isAgentTool(b.name)) found.ids.add(b.id);
+        else if (b.name === "Workflow" && !Number.isNaN(at)) found.workflows.push({ id: b.id, at });
+      }
+    }
+    found.size = size;
+    found.offset += read;
+    if (!agentCalls.has(this.transcriptPath) && agentCalls.size >= PEEK_CACHE_MAX) agentCalls.clear();
+    agentCalls.set(this.transcriptPath, found);
+    return found;
+  }
   /** Finds new subagent files: the call's own, and a workflow's agents. */
   private scan(): void {
     if (!this.dir) return;
@@ -263,6 +331,11 @@ export class AgentRuns {
       }
       // Only a workflow's agents use the other subagents' files; an Agent call's turn never reads them.
       if (!hasWorkflow) continue;
+      // A subagent that belongs to an Agent call (of this turn or another) is no workflow's.
+      if (meta.toolUseId && this.transcriptCalls().ids.has(meta.toolUseId)) {
+        this.settled.add(id);
+        continue;
+      }
       let orphan = this.orphans.get(id);
       if (!orphan) {
         orphan = {
@@ -415,13 +488,16 @@ export class AgentRuns {
   }
 
   private workflowAgents(run: Run): Orphan[] {
-    const mine = [...this.runs.values()].filter((r) => r.workflow).sort((a, b) => a.step.at - b.step.at);
+    // Every workflow of the session, also the other turns': the latest one started before an agent owns it.
+    const all = new Map<string, number>();
+    for (const w of this.transcriptCalls().workflows) all.set(w.id, w.at);
+    for (const [id, r] of this.runs) if (r.workflow) all.set(id, r.step.at);
+    const starts = [...all].sort((a, b) => a[1] - b[1]);
     return [...this.orphans.values()]
       .filter((o) => {
         if (o.firstAt === null || o.firstAt < run.step.at - 1000) return false;
-        // The latest workflow started before the agent owns it.
-        const owner = [...mine].reverse().find((r) => r.step.at - 1000 <= (o.firstAt as number));
-        return owner === run;
+        const owner = [...starts].reverse().find(([, at]) => at - 1000 <= (o.firstAt as number));
+        return owner?.[0] === run.step.id;
       })
       .sort((a, b) => (a.firstAt ?? 0) - (b.firstAt ?? 0));
   }

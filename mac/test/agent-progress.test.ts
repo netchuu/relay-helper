@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type RelayEvent, TURN_STEP_CHILDREN_MAX, TurnStep } from "../../protocol/index.ts";
-import { orphanReads } from "../src/daemon/agents.ts";
+import { orphanReads, transcriptReads } from "../src/daemon/agents.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
 import { turnFromTranscript } from "../src/daemon/render.ts";
 import { stepFor } from "../src/daemon/steps.ts";
 import { TimelineReader } from "../src/daemon/timeline.ts";
+import { transcriptTurns } from "../src/daemon/transcript.ts";
 
 // Every tool says what it does; an agent's or workflow's step shows its progress.
 
@@ -397,5 +398,106 @@ describe("other subagents' transcripts", () => {
       expect(reader.actions[0]?.children?.length).toBe(5);
     }
     expect(orphanReads.count - before).toBe(5);
+  });
+
+  test("a growing transcript is read once, from where the last read stopped", () => {
+    const s = session();
+    s.main(call("u1", 0, "toolu_W", "Workflow", { scriptPath: "/x/deploy.js" }));
+    others(s, 2);
+    const scan = () => {
+      const reader = new TimelineReader(CWD, T0, { transcriptPath: s.path });
+      reader.add(JSON.parse(readLine(s.path, 0)));
+      reader.refreshAgents();
+    };
+    scan();
+    const first = statSync(s.path).size;
+    s.main(
+      { type: "user", uuid: "m1", timestamp: iso(5), message: { content: "x".repeat(5000) } },
+      call("u2", 6, "toolu_B", "Agent", { description: "B", prompt: "p" }),
+    );
+    // Only what was appended is read, once; the earlier lines are not read again.
+    const before = transcriptReads.bytes;
+    scan();
+    scan();
+    expect(transcriptReads.bytes - before).toBe(statSync(s.path).size - first);
+  });
+});
+
+describe("each step lists only its own agents", () => {
+  const text = (s: number, uuid: string, t: string) => ({
+    type: "assistant",
+    uuid,
+    timestamp: iso(s),
+    message: { content: [{ type: "text", text: t }] },
+  });
+  const prompt = (s: number, uuid: string, t: string) => ({
+    type: "user",
+    uuid,
+    timestamp: iso(s),
+    message: { content: t },
+  });
+  const agentFile = (
+    s: ReturnType<typeof session>,
+    id: string,
+    toolUseId: string,
+    desc: string,
+    at: number,
+  ) =>
+    s.sub(
+      id,
+      { toolUseId, description: desc, finished: true },
+      side(at, id, call(`${id}u`, at, `${id}r`, "Read", { file_path: `${CWD}/a` })),
+    );
+
+  test("old turns: a workflow step has no agents of a later Agent turn or workflow", () => {
+    const s = session();
+    s.main(
+      prompt(0, "p1", "deploy"),
+      call("u1", 1, "toolu_W1", "Workflow", { scriptPath: "/x/deploy.js" }),
+      result(2, "toolu_W1", "Workflow started. Task id: wf1"),
+      text(60, "t1", "Deployed."),
+      prompt(100, "p2", "review"),
+      call("u2", 101, "toolu_A", "Agent", { description: "Review PR #30", prompt: "p" }),
+      result(160, "toolu_A", "All good."),
+      text(161, "t2", "Reviewed."),
+      prompt(200, "p3", "deploy again"),
+      call("u3", 201, "toolu_W2", "Workflow", { scriptPath: "/x/deploy.js" }),
+      result(202, "toolu_W2", "Workflow started. Task id: wf2"),
+      text(300, "t3", "Deployed again."),
+    );
+    agentFile(s, "w1a", "inner-1", "Build #1", 10);
+    agentFile(s, "w1b", "inner-2", "Build #2", 20);
+    agentFile(s, "aa", "toolu_A", "Review PR #30", 110);
+    agentFile(s, "w2a", "inner-3", "Build #3", 210);
+    const turns = transcriptTurns("sess", s.path, { limit: 10, previewChars: 100, working: false, cwd: CWD });
+    const kids = (prompt: string) =>
+      turns
+        .find((t) => t.prompt === prompt)
+        ?.steps?.filter((x) => x.kind === "agent")
+        .map((x) => [x.label, x.children?.map((c) => c.label)]);
+    expect(kids("deploy")).toEqual([["Ran the deploy workflow", ["Build #1", "Build #2"]]]);
+    expect(kids("review")).toEqual([["Ran an agent: Review PR #30", ["Read a"]]]);
+    expect(kids("deploy again")).toEqual([["Ran the deploy workflow", ["Build #3"]]]);
+  });
+
+  test("a foreground agent whose report mentions the launch words is not running", () => {
+    const s = session();
+    s.main(
+      { type: "user", uuid: "p", timestamp: iso(-1), message: { content: "go" } },
+      call("u1", 0, "toolu_A", "Agent", { description: "Docs", prompt: "p" }),
+    );
+    const reader = new TimelineReader(CWD, T0, { transcriptPath: s.path });
+    reader.add(JSON.parse(readLine(s.path, 1)));
+    reader.add(result(90, "toolu_A", "The docs say: Async agent launched successfully. Done."));
+    const step = reader.actions[0] as TurnStep;
+    expect(step.running).toBeUndefined();
+    expect(step.durationMs).toBe(90_000);
+  });
+
+  test("a result that starts with the launch words is a background launch", () => {
+    const reader = new TimelineReader(CWD, T0);
+    reader.add(call("u1", 0, "toolu_B", "Agent", { description: "Dig", prompt: "p" }));
+    reader.add(result(1, "toolu_B", "Async agent launched successfully.\nagentId: b1"));
+    expect((reader.actions[0] as TurnStep).running).toBe(true);
   });
 });
