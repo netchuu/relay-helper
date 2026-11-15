@@ -12,6 +12,7 @@ import type {
   Session,
 } from "../../protocol/index.ts";
 import { PROTOCOL_VERSION } from "../../protocol/index.ts";
+import { isHelp, parseArgs } from "./cliArgs.ts";
 import { loadConfig, paths, resolveClaudeBin, saveConfig, VERSION } from "./config.ts";
 import { openDb } from "./daemon/db.ts";
 import { b64url, loadOrCreateIdentity } from "./daemon/e2e.ts";
@@ -114,6 +115,7 @@ function option(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   if (i < 0) return undefined;
   const value = args[i + 1];
+  if (value === undefined || value.startsWith("-")) throw new Error(`${name} needs a value`);
   args.splice(i, 2);
   return value;
 }
@@ -132,12 +134,16 @@ const ago = (ts: number) => {
 // ---------------------------------------------------------------------------------------------------
 
 async function install(args: string[]): Promise<void> {
-  const settingsPath = option(args, "--settings") ?? DEFAULT_SETTINGS;
+  const parsed = parseArgs(args, {
+    flags: ["--no-service", "--no-launchd", "--dry-run", "--from-update", "--from-pair", "--no-zed"],
+    options: ["--settings"],
+  });
+  const settingsPath = parsed.options.get("--settings") ?? DEFAULT_SETTINGS;
   // --no-launchd is the old name, kept so existing scripts keep working.
-  const noService = flag(args, "--no-service") || flag(args, "--no-launchd");
-  const dryRun = flag(args, "--dry-run");
+  const noService = parsed.flags.has("--no-service") || parsed.flags.has("--no-launchd");
+  const dryRun = parsed.flags.has("--dry-run");
   // Run by the daemon after a `brew upgrade` (daemon/selfUpdate.ts): keep the person's earlier choices.
-  const fromUpdate = flag(args, "--from-update");
+  const fromUpdate = parsed.flags.has("--from-update");
 
   // 1. Binaries: build from this checkout when running from source, then copy to ~/.relay/bin.
   const repoRoot = resolve(import.meta.dir, "../..");
@@ -195,7 +201,7 @@ async function install(args: string[]): Promise<void> {
 
   // 4. Zed's terminal has no outside way to type into it: start it through `relay shell` instead, so
   //    replies from the phone arrive as typed input there. New Zed terminal tabs pick it up.
-  const useZed = zedChoice(config.zed, { noZed: flag(args, "--no-zed"), fromUpdate });
+  const useZed = zedChoice(config.zed, { noZed: parsed.flags.has("--no-zed"), fromUpdate });
   if (!fromUpdate && config.zed !== useZed) saveConfig({ zed: useZed });
   for (const zedPath of useZed ? zedSettingsPaths() : []) {
     const name = zedLabel(zedPath);
@@ -221,11 +227,9 @@ async function install(args: string[]): Promise<void> {
   if (!noService) {
     const service = await platform.service.install(serviceContext());
     for (let i = 0; i < 20 && !(await daemonAlive()); i++) await Bun.sleep(250);
-    console.log(
-      (await daemonAlive())
-        ? `• daemon running (${service.mode})`
-        : `• daemon did not start; see ${paths.log}`,
-    );
+    const started = await daemonAlive();
+    console.log(started ? `• daemon running (${service.mode})` : `• daemon did not start; see ${paths.log}`);
+    if (!started) process.exitCode = 1;
     for (const note of service.notes) console.log(`${note.level === "ok" ? "•" : "⚠️ "} ${note.text}`);
     if (claudeApp) {
       // Ask now, even if asked before: the person is right here.
@@ -243,14 +247,18 @@ async function install(args: string[]): Promise<void> {
       );
     }
   }
-  if (!flag(args, "--from-pair") && !fromUpdate)
+  if (!parsed.flags.has("--from-pair") && !fromUpdate)
     console.log("\nNext: `relay pair`, and scan the code with the Relay app.");
 }
 
 async function uninstall(args: string[]): Promise<void> {
-  const settingsPath = option(args, "--settings") ?? DEFAULT_SETTINGS;
-  const noService = flag(args, "--no-service") || flag(args, "--no-launchd");
-  const purge = flag(args, "--purge");
+  const parsed = parseArgs(args, {
+    flags: ["--no-service", "--no-launchd", "--purge"],
+    options: ["--settings"],
+  });
+  const settingsPath = parsed.options.get("--settings") ?? DEFAULT_SETTINGS;
+  const noService = parsed.flags.has("--no-service") || parsed.flags.has("--no-launchd");
+  const purge = parsed.flags.has("--purge");
   // A daemon left running would keep using the data and write it again.
   if (purge && noService) throw new Error("--purge stops the helper too, so it can't go with --no-service");
   const backup = writeSettings(settingsPath, removeHooks(readSettings(settingsPath)));
@@ -675,6 +683,11 @@ async function tail(args: string[]): Promise<void> {
 
 async function main(argv: string[]): Promise<void> {
   const [cmd, ...args] = argv;
+  // `relay install --help` shows the usage and changes nothing.
+  if ((cmd === "install" || cmd === "uninstall" || cmd === "restart") && isHelp(args)) {
+    console.log(USAGE);
+    return;
+  }
   switch (cmd) {
     case "daemon":
       return runDaemon();
@@ -688,7 +701,8 @@ async function main(argv: string[]): Promise<void> {
     case "restart":
       await platform.service.restart(serviceContext());
       for (let i = 0; i < 20 && !(await daemonAlive()); i++) await Bun.sleep(250);
-      console.log((await daemonAlive()) ? "daemon running" : `daemon did not start; see ${paths.log}`);
+      if (await daemonAlive()) console.log("daemon running");
+      else throw new Error(`daemon did not start; see ${paths.log}`);
       return;
     case "doctor":
       return doctor();
@@ -726,8 +740,15 @@ async function main(argv: string[]): Promise<void> {
     case "--version":
       console.log(`relay ${VERSION} (protocol ${PROTOCOL_VERSION})`);
       return;
-    default:
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
       console.log(USAGE);
+      return;
+    default:
+      console.error(USAGE);
+      throw new Error(`unknown command ${cmd}`);
   }
 }
 
