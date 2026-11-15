@@ -709,10 +709,12 @@ async function tail(args: string[]): Promise<void> {
 async function main(argv: string[]): Promise<void> {
   const [cmd, ...args] = argv;
   // `relay install --help` shows the usage and changes nothing.
-  if ((cmd === "install" || cmd === "uninstall" || cmd === "restart") && isHelp(args)) {
+  if ((cmd === "install" || cmd === "uninstall" || cmd === "restart" || cmd === "pair") && isHelp(args)) {
     console.log(USAGE);
     return;
   }
+  // These two take no arguments: a typo stops here, before anything is set up or restarted.
+  if (cmd === "pair" || cmd === "restart") parseArgs(args, {});
   switch (cmd) {
     case "daemon":
       return runDaemon();
