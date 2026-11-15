@@ -98,6 +98,8 @@ interface TranscriptCalls {
   offset: number;
   ids: Set<string>;
   workflows: { id: string; at: number }[];
+  /** Call ids whose tool_result is an error: they started nothing. */
+  failed: Set<string>;
 }
 
 /** Bytes of the main transcript read for call ids (for tests: a growing file is read once). */
@@ -247,7 +249,7 @@ export class AgentRuns {
   // -------------------------------------------------------------------------------------------------
   /** Every Agent/Task call id and Workflow start in the session's transcript; a grown file is read from where the last read stopped. */
   private transcriptCalls(): TranscriptCalls {
-    const none: TranscriptCalls = { size: -1, offset: 0, ids: new Set(), workflows: [] };
+    const none: TranscriptCalls = { size: -1, offset: 0, ids: new Set(), workflows: [], failed: new Set() };
     if (!this.transcriptPath) return none;
     let size = -1;
     try {
@@ -258,7 +260,8 @@ export class AgentRuns {
     let found = agentCalls.get(this.transcriptPath);
     if (found && found.size === size) return found;
     // A file that shrank was rewritten: start over.
-    if (!found || size < found.offset) found = { size, offset: 0, ids: new Set(), workflows: [] };
+    if (!found || size < found.offset)
+      found = { size, offset: 0, ids: new Set(), workflows: [], failed: new Set() };
     let chunk: string;
     let read = 0;
     try {
@@ -278,7 +281,8 @@ export class AgentRuns {
     }
     transcriptReads.bytes += read;
     for (const line of chunk.split("\n")) {
-      if (!line.includes('"tool_use"')) continue;
+      const isCall = line.includes('"tool_use"');
+      if (!isCall && !(line.includes('"tool_result"') && line.includes('"is_error"'))) continue;
       let entry: { timestamp?: string; message?: { content?: unknown } };
       try {
         entry = JSON.parse(line);
@@ -288,7 +292,15 @@ export class AgentRuns {
       const content = entry.message?.content;
       if (!Array.isArray(content)) continue;
       const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
-      for (const b of content as { type?: string; id?: string; name?: string }[]) {
+      for (const b of content as {
+        type?: string;
+        id?: string;
+        name?: string;
+        tool_use_id?: string;
+        is_error?: boolean;
+      }[]) {
+        if (b?.type === "tool_result" && b.is_error === true && b.tool_use_id)
+          found.failed.add(b.tool_use_id);
         if (b?.type !== "tool_use" || !b.id || !b.name) continue;
         if (isAgentTool(b.name)) found.ids.add(b.id);
         else if (b.name === "Workflow" && !Number.isNaN(at)) found.workflows.push({ id: b.id, at });
@@ -490,8 +502,11 @@ export class AgentRuns {
   private workflowAgents(run: Run): Orphan[] {
     // Every workflow of the session, also the other turns': the latest one started before an agent owns it.
     const all = new Map<string, number>();
-    for (const w of this.transcriptCalls().workflows) all.set(w.id, w.at);
-    for (const [id, r] of this.runs) if (r.workflow) all.set(id, r.step.at);
+    // A call whose result is an error started nothing and owns no agents.
+    const calls = this.transcriptCalls();
+    for (const w of calls.workflows) if (!calls.failed.has(w.id)) all.set(w.id, w.at);
+    for (const [id, r] of this.runs)
+      if (r.workflow && !r.step.failed && !calls.failed.has(id)) all.set(id, r.step.at);
     const starts = [...all].sort((a, b) => a[1] - b[1]);
     return [...this.orphans.values()]
       .filter((o) => {

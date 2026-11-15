@@ -480,6 +480,58 @@ describe("each step lists only its own agents", () => {
     expect(kids("deploy again")).toEqual([["Ran the deploy workflow", ["Build #3"]]]);
   });
 
+  function failedSecond(secondFails: boolean) {
+    const s = session();
+    s.main(
+      prompt(0, "p1", "deploy"),
+      call("u1", 1, "toolu_W1", "Workflow", { scriptPath: "/x/deploy.js" }),
+      result(2, "toolu_W1", "Workflow started. Task id: wf1"),
+      text(60, "t1", "Deployed."),
+      prompt(100, "p2", "again"),
+    );
+    if (secondFails)
+      s.main(
+        call("u2", 101, "toolu_W2", "Workflow", { scriptPath: "/x/deploy.js" }),
+        result(102, "toolu_W2", "Error: script not found", true),
+      );
+    s.main(text(103, "t2", "Failed."));
+    agentFile(s, "w1a", "inner-1", "Build #1", 10);
+    agentFile(s, "w1b", "inner-2", "Build #2", 150);
+    const turns = transcriptTurns("sess", s.path, { limit: 10, previewChars: 100, working: false, cwd: CWD });
+    return (p: string) =>
+      turns
+        .find((t) => t.prompt === p)
+        ?.steps?.filter((x) => x.kind === "agent")
+        .map((x) => x.children?.map((c) => c.label));
+  }
+
+  test("control: without a second Workflow call, the first keeps its late agent", () => {
+    expect(failedSecond(false)("deploy")?.[0]).toEqual(["Build #1", "Build #2"]);
+  });
+
+  test("a failed later Workflow call takes no agents of the running workflow", () => {
+    const kids = failedSecond(true);
+    expect(kids("deploy")?.[0]).toEqual(["Build #1", "Build #2"]);
+    expect(kids("again")?.[0]).toBeUndefined();
+  });
+
+  test("live: a failed Workflow call takes no agents of the running workflow", () => {
+    const s = session();
+    s.main(
+      call("u1", 1, "toolu_W1", "Workflow", { scriptPath: "/x/deploy.js" }),
+      result(2, "toolu_W1", "Workflow started. Task id: wf1"),
+      call("u2", 101, "toolu_W2", "Workflow", { scriptPath: "/x/deploy.js" }),
+      result(102, "toolu_W2", "Error: script not found", true),
+    );
+    agentFile(s, "w1a", "inner-1", "Build #1", 10);
+    agentFile(s, "w1b", "inner-2", "Build #2", 150);
+    const reader = new TimelineReader(CWD, T0, { transcriptPath: s.path });
+    for (let i = 0; i < 4; i++) reader.add(JSON.parse(readLine(s.path, i)));
+    reader.refreshAgents();
+    expect(reader.actions[0]?.children?.map((c) => c.label)).toEqual(["Build #1", "Build #2"]);
+    expect(reader.actions[1]?.children).toBeUndefined();
+  });
+
   test("a foreground agent whose report mentions the launch words is not running", () => {
     const s = session();
     s.main(
