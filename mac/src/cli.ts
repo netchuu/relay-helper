@@ -25,6 +25,7 @@ import { loadApnsConfig } from "./daemon/push.ts";
 import { pinnedFirst, Registry } from "./daemon/registry.ts";
 import {
   BIN_DIR,
+  chooseSettingsPath,
   countHooks,
   DEFAULT_SETTINGS,
   HOOK_BIN,
@@ -138,12 +139,18 @@ async function install(args: string[]): Promise<void> {
     flags: ["--no-service", "--no-launchd", "--dry-run", "--from-update", "--from-pair", "--no-zed"],
     options: ["--settings"],
   });
-  const settingsPath = parsed.options.get("--settings") ?? DEFAULT_SETTINGS;
   // --no-launchd is the old name, kept so existing scripts keep working.
   const noService = parsed.flags.has("--no-service") || parsed.flags.has("--no-launchd");
   const dryRun = parsed.flags.has("--dry-run");
-  // Run by the daemon after a `brew upgrade` (daemon/selfUpdate.ts): keep the person's earlier choices.
+  // Run by the daemon after a `brew upgrade` (daemon/selfUpdate.ts) or by `relay pair`: keep the person's
+  // earlier choices (Zed, settings file).
   const fromUpdate = parsed.flags.has("--from-update");
+  const fromPair = parsed.flags.has("--from-pair");
+  const settingsPath = chooseSettingsPath({
+    flag: parsed.options.get("--settings"),
+    saved: loadConfig().settingsPath,
+    byHelper: fromUpdate || fromPair,
+  });
 
   // 1. Binaries: build from this checkout when running from source, then copy to ~/.relay/bin.
   const repoRoot = resolve(import.meta.dir, "../..");
@@ -187,6 +194,9 @@ async function install(args: string[]): Promise<void> {
   if (!dryRun && claudeBin) saveConfig({ claudeBin });
   // New installs use the hosted relay, so the phone reaches the Mac from any network.
   if (!dryRun && !config.relayUrl) saveConfig({ relayUrl: DEFAULT_RELAY_URL });
+  // A person's install decides which settings file later updates and `relay pair` use.
+  if (!dryRun && !fromUpdate && !fromPair)
+    saveConfig({ settingsPath: settingsPath === DEFAULT_SETTINGS ? undefined : settingsPath });
 
   // 3. Hooks.
   const before = readSettings(settingsPath);
@@ -201,8 +211,8 @@ async function install(args: string[]): Promise<void> {
 
   // 4. Zed's terminal has no outside way to type into it: start it through `relay shell` instead, so
   //    replies from the phone arrive as typed input there. New Zed terminal tabs pick it up.
-  const useZed = zedChoice(config.zed, { noZed: parsed.flags.has("--no-zed"), fromUpdate });
-  if (!fromUpdate && config.zed !== useZed) saveConfig({ zed: useZed });
+  const useZed = zedChoice(config.zed, { noZed: parsed.flags.has("--no-zed"), fromUpdate, fromPair });
+  if (!dryRun && !fromUpdate && !fromPair && config.zed !== useZed) saveConfig({ zed: useZed });
   for (const zedPath of useZed ? zedSettingsPaths() : []) {
     const name = zedLabel(zedPath);
     try {
@@ -247,8 +257,7 @@ async function install(args: string[]): Promise<void> {
       );
     }
   }
-  if (!parsed.flags.has("--from-pair") && !fromUpdate)
-    console.log("\nNext: `relay pair`, and scan the code with the Relay app.");
+  if (!fromPair && !fromUpdate) console.log("\nNext: `relay pair`, and scan the code with the Relay app.");
 }
 
 async function uninstall(args: string[]): Promise<void> {
@@ -476,7 +485,8 @@ async function pair(): Promise<void> {
     );
   }
   // One command for new users: set everything up first if it isn't yet (hooks, helper at login).
-  if (countHooks(readSettings(DEFAULT_SETTINGS)) === 0 || !(await daemonAlive())) {
+  const settingsPath = loadConfig().settingsPath ?? DEFAULT_SETTINGS;
+  if (countHooks(readSettings(settingsPath)) === 0 || !(await daemonAlive())) {
     console.log("Setting up Relay first.\n");
     await install(["--from-pair"]);
     for (let i = 0; i < 20 && !(await daemonAlive()); i++) await Bun.sleep(250);

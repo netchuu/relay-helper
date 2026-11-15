@@ -87,11 +87,15 @@ export function flatpakNoEscape(settingsPath: string, e: ZedEnv = realEnv()): bo
 export type ZedState = "ours" | "custom" | "none";
 
 /**
- * Whether install sets up Zed's terminal. An update run by the daemon (`--from-update`) keeps the saved
- * choice, so `relay install --no-zed` stays off; a plain `relay install` sets the choice again.
+ * Whether install sets up Zed's terminal. An install the helper runs itself (`--from-update` by the daemon,
+ * `--from-pair` by `relay pair`) keeps the saved choice, so `relay install --no-zed` stays off; a plain
+ * `relay install` run by the person sets the choice again.
  */
-export function zedChoice(saved: boolean, opts: { noZed: boolean; fromUpdate: boolean }): boolean {
-  return opts.fromUpdate ? saved : !opts.noZed;
+export function zedChoice(
+  saved: boolean,
+  opts: { noZed: boolean; fromUpdate: boolean; fromPair?: boolean },
+): boolean {
+  return opts.fromUpdate || opts.fromPair ? saved : !opts.noZed;
 }
 
 export interface ZedEdit {

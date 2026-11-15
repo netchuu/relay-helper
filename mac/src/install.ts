@@ -11,6 +11,14 @@ export const RELAY_BIN = join(BIN_DIR, "relay");
 export const DEFAULT_SETTINGS = join(homedir(), ".claude", "settings.json");
 
 /**
+ * Which Claude Code settings file install writes. `--settings` wins; an install the helper runs itself
+ * (update, pair) keeps the file the person chose earlier; otherwise the default.
+ */
+export function chooseSettingsPath(opts: { flag?: string; saved?: string; byHelper: boolean }): string {
+  return opts.flag ?? (opts.byHelper ? opts.saved : undefined) ?? DEFAULT_SETTINGS;
+}
+
+/**
  * Recognises Relay's own entries (idempotent install/uninstall): a command whose program is a file named
  * exactly `relay-hook`, wherever it lives (older installs used other paths), optionally quoted or with
  * arguments. Someone else's `slack-relay-hook.sh` is not Relay's.

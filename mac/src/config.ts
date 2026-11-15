@@ -65,6 +65,8 @@ const ConfigSchema = z.object({
   preferTyping: z.boolean().default(true),
   /** Start Zed's terminal through `relay shell`. `relay install --no-zed` turns it off, and updates keep that. */
   zed: z.boolean().default(true),
+  /** The Claude Code settings file `relay install --settings` chose. Updates and `relay pair` keep using it. */
+  settingsPath: z.string().optional(),
 });
 export type RelayConfig = z.infer<typeof ConfigSchema>;
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { chooseSettingsPath, DEFAULT_SETTINGS } from "../src/install.ts";
 import {
   addRelayShell,
   flatpakNoEscape,
@@ -30,6 +31,9 @@ describe("Zed settings", () => {
     expect(zedChoice(false, { noZed: false, fromUpdate: true })).toBe(false);
     expect(zedChoice(true, { noZed: false, fromUpdate: true })).toBe(true);
     expect(zedChoice(false, { noZed: false, fromUpdate: false })).toBe(true);
+    // `relay pair` runs an install by itself: it keeps the saved choice too.
+    expect(zedChoice(false, { noZed: false, fromUpdate: false, fromPair: true })).toBe(false);
+    expect(zedChoice(true, { noZed: false, fromUpdate: false, fromPair: true })).toBe(true);
   });
 
   test("empty or missing file gets terminal.shell", () => {
@@ -229,5 +233,15 @@ describe("where Zed keeps its settings", () => {
     writeFileSync(join(overrides, "dev.zed.Zed"), "[Environment]\nZED_FLATPAK_NO_ESCAPE=1\n");
     expect(flatpakNoEscape(settings, e)).toBe(true);
     expect(flatpakNoEscape(join(home, ".config", "zed", "settings.json"), e)).toBe(false);
+  });
+});
+
+describe("install settings file", () => {
+  test("a person's install uses --settings or the default; the helper's own installs keep the saved file", () => {
+    expect(chooseSettingsPath({ byHelper: false })).toBe(DEFAULT_SETTINGS);
+    expect(chooseSettingsPath({ flag: "/x.json", saved: "/y.json", byHelper: false })).toBe("/x.json");
+    expect(chooseSettingsPath({ saved: "/y.json", byHelper: false })).toBe(DEFAULT_SETTINGS);
+    expect(chooseSettingsPath({ saved: "/y.json", byHelper: true })).toBe("/y.json");
+    expect(chooseSettingsPath({ byHelper: true })).toBe(DEFAULT_SETTINGS);
   });
 });
