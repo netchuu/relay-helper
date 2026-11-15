@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync, verify } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Prompt, RelayEvent } from "../../protocol/index.ts";
@@ -8,7 +8,7 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { alertFor, apnsPayload, Category, Notifier } from "../src/daemon/notifier.ts";
-import { Apns, isDeadToken } from "../src/daemon/push.ts";
+import { Apns, isDeadToken, loadApnsConfig } from "../src/daemon/push.ts";
 import { openSealed, TEST_PUSH_KEY as PUSH_KEY } from "./support/sealed.ts";
 
 const prompt = (payload: Prompt["payload"]): Prompt => ({
@@ -302,5 +302,30 @@ describe("waiting reminders", () => {
     await setPresent(true);
     await setPresent(false);
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("loadApnsConfig", () => {
+  const homeWith = (content?: string) => {
+    const home = mkdtempSync(join(tmpdir(), "apns-cfg-"));
+    if (content !== undefined) {
+      mkdirSync(join(home, "apns"));
+      writeFileSync(join(home, "apns", "apns.json"), content);
+    }
+    return home;
+  };
+  const valid = { keyPath: "/k.p8", keyId: "ABC1234567", teamId: "TEAM123456", bundleId: "app.relay" };
+
+  test("a truncated, empty or commented file gives no config instead of throwing", () => {
+    for (const bad of ['{"keyPath": "/k.p', "", '// my key\n{"keyPath":"/k.p8"}', "null", "[]"]) {
+      expect(loadApnsConfig(homeWith(bad))).toBeNull();
+    }
+  });
+  test("a missing file gives no config", () => {
+    expect(loadApnsConfig(homeWith())).toBeNull();
+  });
+  test("a valid file is read as before", () => {
+    const config = loadApnsConfig(homeWith(JSON.stringify(valid)));
+    expect(config?.keyId).toBe("ABC1234567");
   });
 });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { CHILD_PATH, RELAY_HOME } from "../config.ts";
+import { errMessage, log } from "../log.ts";
 
 const ApnsConfig = z.object({
   keyId: z.string().regex(/^[A-Z0-9]{10}$/),
@@ -24,8 +25,21 @@ export interface ApnsResult {
 export function loadApnsConfig(home = RELAY_HOME): ApnsConfig | null {
   const path = join(home, "apns", "apns.json");
   if (!existsSync(path)) return null;
-  const parsed = ApnsConfig.safeParse(JSON.parse(readFileSync(path, "utf8")));
-  return parsed.success ? parsed.data : null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    log.warn("apns.json is unreadable or not valid JSON; APNs push is off", { path, err: errMessage(err) });
+    return null;
+  }
+  const parsed = ApnsConfig.safeParse(raw);
+  if (!parsed.success) {
+    // Name the fields only; zod messages can quote the offending value.
+    const fields = [...new Set(parsed.error.issues.map((i) => i.path.join(".") || "(root)"))];
+    log.warn("apns.json has bad or missing fields; APNs push is off", { path, fields });
+    return null;
+  }
+  return parsed.data;
 }
 
 /**

@@ -429,3 +429,19 @@ test("time to reconnect: short blip, long outage, wake while connected, wake dur
   }
   if (process.env.RELAY_PRINT_TIMES) console.log(JSON.stringify(times));
 });
+
+test("a control frame that isn't a JSON object is ignored and the link stays connected", () => {
+  const { clock, sockets, link } = setup();
+  current = link;
+  link.start();
+  sockets[0]!.open();
+  for (const body of ["null", "7", '"text"', "[1,2]", "true", "{"]) {
+    const bytes = new TextEncoder().encode(body);
+    const frame = new Uint8Array(4 + bytes.length);
+    frame.set(bytes, 4);
+    expect(() => sockets[0]!.onmessage?.({ data: frame.buffer })).not.toThrow();
+  }
+  clock.advance(100);
+  expect(link.connected).toBe(true);
+  expect(sockets.length).toBe(1);
+});

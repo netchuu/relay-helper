@@ -375,7 +375,10 @@ export class RelayLink {
   private onControl(payload: Uint8Array): void {
     let msg: { type?: string; stream?: number };
     try {
-      msg = JSON.parse(new TextDecoder().decode(payload));
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));
+      // Only an object is a control frame: null, numbers, strings and arrays are ignored.
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return;
+      msg = parsed;
     } catch {
       return;
     }
