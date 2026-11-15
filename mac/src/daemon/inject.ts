@@ -382,7 +382,12 @@ async function typeIntoTerminal(
  * Whether the session's Claude Code is the program in front of its terminal (TypeOps.inFront). Logs when it isn't:
  * the message then goes on to the next route, the inbox at the latest.
  */
-async function claudeIsInFront(session: SessionRecord, tty: string | null, ops: TypeOps): Promise<boolean> {
+async function claudeIsInFront(
+  session: SessionRecord,
+  tty: string | null,
+  ops: Pick<TypeOps, "inFront" | "ttyOf" | "viewerTtyOf">,
+  what = "typing",
+): Promise<boolean> {
   let front = session.pid ? await ops.inFront(session.pid, tty, knownPids()).catch(() => false) : false;
   // A tab that isn't the process's own terminal (the one it was typed into before, or its viewer's) is this
   // session's only while its viewer is still there: another session may run in it now, in a background host too.
@@ -394,7 +399,7 @@ async function claudeIsInFront(session: SessionRecord, tty: string | null, ops: 
     }
   }
   if (!front)
-    log.info("not typing: Claude Code isn't the program in front of its terminal", {
+    log.info(`not ${what}: Claude Code isn't the program in front of its terminal`, {
       sessionId: session.id,
       pid: session.pid,
       tty,
@@ -511,7 +516,7 @@ export interface KeyOps {
   tmux(socket: string, pane: string): Promise<void>;
   /** As in TypeOps: when present, Esc goes to the pane only if Claude Code is in front there. */
   tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
-  inFront?(pid: number, tty: string | null): Promise<boolean>;
+  inFront?(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
   routes(termProgram: string | null): TypingRoute[];
   app(route: TypingRoute, tty: string): Promise<boolean>;
   ttyOf(pid: number | null): Promise<string | null>;
@@ -567,8 +572,17 @@ export async function pressEscape(
   const routes = ops.routes(session.terminal);
   if (routes.length) {
     const { ttys } = await candidateTtys(session, ops);
-    for (const { tty } of ttys)
+    const frontOps = {
+      inFront: ops.inFront ?? (async () => true),
+      ttyOf: ops.ttyOf,
+      viewerTtyOf: ops.viewerTtyOf,
+    };
+    for (const { tty } of ttys) {
+      // Esc goes only to a tab where this session's Claude Code is the program in front, as typing does: the
+      // remembered tab may run another session now, and a suspended Claude Code leaves the tab to vim or the shell.
+      if (!(await claudeIsInFront(session, tty, frontOps, "pressing Esc"))) continue;
       for (const app of routes) if (await ops.app(app, tty)) return pressed(session, app);
+    }
   }
   return null;
 }
