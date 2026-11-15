@@ -8,6 +8,7 @@ import {
   type PermissionRequestInput,
   payloadFor,
   promptKindFor,
+  resolveChoices,
   stopHookOutput,
   validateQuestionAnswer,
 } from "./decisions.ts";
@@ -187,10 +188,16 @@ export class Broker {
       return { ok: false, code: "conflict", message: `already closed (${row.resolved_by ?? "unknown"})` };
     }
 
+    // What the hook gets: a picked option's index (`choices`) stands for its full label.
+    let forHook: Answer = answer;
     if (answer.kind === "question") {
       const payload = JSON.parse(row.payload_json) as PromptPayload;
-      const problem =
-        payload.kind === "question" ? validateQuestionAnswer(payload.questions, answer.answers) : null;
+      const answers =
+        payload.kind === "question"
+          ? resolveChoices(payload.questions, answer.answers, answer.choices)
+          : answer.answers;
+      forHook = { kind: "question", answers };
+      const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };
     }
     let stdout: string;
@@ -199,7 +206,7 @@ export class Broker {
         row.kind,
         JSON.parse(row.tool_input) as Record<string, unknown>,
         row.suggestions ? (JSON.parse(row.suggestions) as unknown[]) : null,
-        answer,
+        forHook,
       );
     } catch (err) {
       if (err instanceof AnswerMismatchError) return { ok: false, code: "bad_request", message: err.message };

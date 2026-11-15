@@ -515,7 +515,16 @@ export type Prompt = z.infer<typeof Prompt>;
 
 export const Answer = z.discriminatedUnion("kind", [
   /** Maps each question's text to the chosen label(s) (multi-select joined with ", ") or free text. */
-  z.object({ kind: z.literal("question"), answers: z.record(z.string(), z.string()) }),
+  z.object({
+    kind: z.literal("question"),
+    answers: z.record(z.string(), z.string()),
+    /**
+     * Optional: question text to the index of the option picked (a button on a notification shows a short title,
+     * so the label in `answers` may be cut). When it names an option of that question, that option's full label is
+     * the answer. Older phones leave it out and `answers` counts alone.
+     */
+    choices: z.record(z.string(), z.number().int().min(0)).optional(),
+  }),
   z.object({
     kind: z.literal("plan"),
     action: z.enum(["approve", "approve_accept_edits", "revise", "reject"]),

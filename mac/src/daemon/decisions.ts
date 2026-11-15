@@ -206,6 +206,25 @@ export function originalAnswers(
   return out;
 }
 
+/**
+ * The answers with every question that came with a `choices` index answered by that option's full label.
+ * An index that names no option leaves the text in `answers`.
+ */
+export function resolveChoices(
+  questions: Question[],
+  answers: Record<string, string>,
+  choices: Record<string, number> | undefined,
+): Record<string, string> {
+  if (!choices) return answers;
+  const out = { ...answers };
+  for (const q of questions) {
+    const index = choices[q.question];
+    const label = index === undefined ? undefined : q.options?.[index]?.label;
+    if (typeof label === "string") out[q.question] = label;
+  }
+  return out;
+}
+
 /** Validates a question answer against the open prompt so typos from the client fail loudly. */
 export function validateQuestionAnswer(
   questions: Question[],
