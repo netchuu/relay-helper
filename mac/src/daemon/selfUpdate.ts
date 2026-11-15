@@ -72,6 +72,8 @@ export class SelfUpdater {
   /** Resolved paths already looked at, so `--version` runs only after Homebrew changed something. */
   private seen = new Map<string, string | null>();
   private updating = false;
+  /** Set once the new version is installed but the restart is still waiting for a prompt to be answered. */
+  private installed: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: SelfUpdateDeps) {}
@@ -113,6 +115,7 @@ export class SelfUpdater {
   /** Returns what happened, for logs and tests. */
   async check(): Promise<"none" | "busy" | "updated" | "failed"> {
     if (this.updating) return "busy";
+    if (this.installed) return this.restartWhenIdle(this.installed);
     const newer = await this.findNewer();
     if (!newer) return "none";
     if (this.deps.busy()) return "busy"; // try again on the next tick
@@ -129,7 +132,15 @@ export class SelfUpdater {
       });
       return "failed";
     }
-    log.info("helper updated; restarting on the new version", { to: newer.version });
+    this.installed = newer.version;
+    this.updating = false;
+    return this.restartWhenIdle(newer.version);
+  }
+
+  /** The new version is installed; restart only when no prompt waits (one may have opened during the install). */
+  private restartWhenIdle(version: string): "busy" | "updated" {
+    if (this.deps.busy()) return "busy"; // the next tick tries again
+    log.info("helper updated; restarting on the new version", { to: version });
     this.deps.exit();
     return "updated";
   }

@@ -102,6 +102,27 @@ describe("self-update from Homebrew", () => {
     expect(exited()).toBe(1);
   });
 
+  test("a prompt that opens during the install holds the restart until it is answered", async () => {
+    const brew = fakeRelay("midinstall", "0.6.0");
+    let open = false;
+    const { u, exited } = updater([brew], {
+      busy: () => open,
+      run: async (cmd) => {
+        const res = await runner(cmd);
+        if (cmd.includes("--from-update")) open = true; // a prompt arrives while the install runs
+        return res;
+      },
+    });
+    expect(await u.check()).toBe("busy");
+    expect(exited()).toBe(0);
+    expect(await u.check()).toBe("busy");
+    expect(exited()).toBe(0);
+    open = false;
+    expect(await u.check()).toBe("updated");
+    expect(exited()).toBe(1);
+    expect(calls(brew).filter((c) => c.startsWith("install"))).toHaveLength(1);
+  });
+
   test("a failed install keeps the daemon running and isn't retried every tick", async () => {
     const brew = fakeRelay("broken", "0.6.0", { failInstall: true });
     const { u, exited } = updater([brew]);
