@@ -201,6 +201,10 @@ export class Registry {
     private readonly events: EventLog,
   ) {}
 
+  /** Ticks when a session is set working and when a check starts: a report taken before a prompt is out of date. */
+  private tick = 0;
+  private readonly workingAt = new Map<string, number>();
+
   get(id: string): SessionRecord | null {
     const row = this.db.query("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow | null;
     return row ? toRecord(row) : null;
@@ -355,6 +359,7 @@ export class Registry {
     extra?: { title?: string; lastSummary?: string; keepUpdatedAt?: boolean },
   ): void {
     const now = Date.now();
+    if (status === "working") this.workingAt.set(id, ++this.tick);
     this.db
       .query(
         `UPDATE sessions SET
@@ -426,6 +431,7 @@ export class Registry {
    * including ones that started before Relay's hooks were installed.
    */
   async reconcile(claudeBin: string): Promise<void> {
+    const askedAt = ++this.tick;
     let live: {
       sessionId: string;
       pid?: number;
@@ -466,7 +472,10 @@ export class Registry {
       // Claude Code also says "busy" while background shells it started keep running after the turn ended (a dev
       // server, a watcher), with its prompt waiting for you. When the hooks recorded this session's turns and none
       // is open, it's idle; a background task finishing starts a turn of its own, which shows as working.
-      const status = reported === "working" && (stale || this.turnsAllEnded(s.sessionId)) ? "idle" : reported;
+      let status = reported === "working" && (stale || this.turnsAllEnded(s.sessionId)) ? "idle" : reported;
+      // A prompt that started while `claude agents` ran is newer than its idle report: applying it would clear the
+      // turn's live trackers. The next check sees the truth.
+      if (status === "idle" && (this.workingAt.get(s.sessionId) ?? 0) > askedAt) status = null;
       if (created || (status && session.status !== status && session.status !== "waiting")) {
         this.setStatus(s.sessionId, status ?? "idle", { keepUpdatedAt: true });
       } else if (times.changed) this.publish(s.sessionId);
