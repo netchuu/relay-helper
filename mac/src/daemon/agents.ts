@@ -81,6 +81,19 @@ interface Orphan {
   size: number;
 }
 
+/** What a peek found in another subagent's file, by path: shared by every reader, valid while the size stays. */
+interface Peeked {
+  size: number;
+  firstAt: number | null;
+  lastAt: number | null;
+  count: number;
+}
+const PEEK_CACHE_MAX = 500;
+const peeked = new Map<string, Peeked>();
+
+/** How many other-subagent files were read whole (for tests: an Agent-only turn reads none). */
+export const orphanReads = { count: 0 };
+
 export class AgentRuns {
   private readonly runs = new Map<string, Run>();
   /** Main-transcript entry uuid → the agent calls it made (older transcripts with sidechain entries). */
@@ -228,6 +241,7 @@ export class AgentRuns {
     } catch {
       return;
     }
+    const hasWorkflow = [...this.runs.values()].some((r) => r.workflow);
     for (const name of names) {
       const m = /^agent-(.+)\.meta\.json$/.exec(name);
       if (!m) continue;
@@ -247,6 +261,8 @@ export class AgentRuns {
         if (run.metaFinished) this.settled.add(id);
         continue;
       }
+      // Only a workflow's agents use the other subagents' files; an Agent call's turn never reads them.
+      if (!hasWorkflow) continue;
       let orphan = this.orphans.get(id);
       if (!orphan) {
         orphan = {
@@ -276,6 +292,14 @@ export class AgentRuns {
     } catch {}
     if (size === orphan.size) return;
     orphan.size = size;
+    const known = peeked.get(f.path);
+    if (known && known.size === size) {
+      orphan.firstAt = known.firstAt;
+      orphan.lastAt = known.lastAt;
+      orphan.count = known.count;
+      return;
+    }
+    orphanReads.count++;
     const reader = new TimelineReader(this.cwd, null, { sidechain: true });
     f.offset = 0;
     f.partial = Buffer.alloc(0);
@@ -287,6 +311,9 @@ export class AgentRuns {
       }
     });
     orphan.count = reader.actions.length;
+    peeked.delete(f.path);
+    peeked.set(f.path, { size, firstAt: orphan.firstAt, lastAt: orphan.lastAt, count: orphan.count });
+    if (peeked.size > PEEK_CACHE_MAX) peeked.delete(peeked.keys().next().value as string);
   }
 
   private readFile(f: FileState, into: TimelineReader, each?: (e: TimelineEntry) => void): void {

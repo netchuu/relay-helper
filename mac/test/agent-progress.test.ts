@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type RelayEvent, TURN_STEP_CHILDREN_MAX, TurnStep } from "../../protocol/index.ts";
+import { orphanReads } from "../src/daemon/agents.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
@@ -356,5 +357,45 @@ describe("live and finished", () => {
     expect(step).toMatchObject({ label: "Ran an agent: Gone", stepCount: 1 });
     expect(step.running).toBeUndefined();
     expect(step.current).toBeUndefined();
+  });
+});
+
+describe("other subagents' transcripts", () => {
+  const others = (s: ReturnType<typeof session>, n: number) => {
+    for (let i = 0; i < n; i++)
+      s.sub(
+        `o${i}`,
+        { toolUseId: `other-${i}`, description: `Other ${i}`, finished: i % 2 === 0 },
+        [side(2 + i, `o${i}`, call(`ou${i}`, 2 + i, `or${i}`, "Read", { file_path: `${CWD}/a` }))][0],
+      );
+  };
+
+  test("a turn with only an Agent call reads none of them", () => {
+    const s = session();
+    s.main(
+      { type: "user", uuid: "p", timestamp: iso(-1), message: { content: "go" } },
+      call("u1", 0, "toolu_A", "Agent", { description: "Mine", prompt: "p" }),
+    );
+    s.sub("a1", { toolUseId: "toolu_A", finished: false }, readCall(1, "s1", "r1", "a.ts"));
+    others(s, 20);
+    const before = orphanReads.count;
+    const turn = turnFromTranscript(s.path, T0 - 1000, CWD);
+    turnFromTranscript(s.path, T0 - 1000, CWD);
+    expect(orphanReads.count).toBe(before);
+    expect(turn?.steps[0]).toMatchObject({ label: "Ran an agent: Mine", stepCount: 1 });
+  });
+
+  test("a workflow reads each other file once while it is unchanged", () => {
+    const s = session();
+    s.main(call("u1", 0, "toolu_W", "Workflow", { scriptPath: "/x/deploy.js" }));
+    others(s, 5);
+    const before = orphanReads.count;
+    for (let i = 0; i < 3; i++) {
+      const reader = new TimelineReader(CWD, T0, { transcriptPath: s.path });
+      reader.add(JSON.parse(readLine(s.path, 0)));
+      reader.refreshAgents();
+      expect(reader.actions[0]?.children?.length).toBe(5);
+    }
+    expect(orphanReads.count - before).toBe(5);
   });
 });
