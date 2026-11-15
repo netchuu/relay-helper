@@ -58,9 +58,7 @@ const defaultDeps = (): LinuxDeps => ({
   },
 });
 
-// ---------------------------------------------------------------------------------------------------
 // Service: a systemd user unit, or a plain background process when there's no systemd user session.
-// ---------------------------------------------------------------------------------------------------
 
 /** The unit lives under $XDG_CONFIG_HOME, the one place Relay respects it. Everything else is ~/.relay. */
 export function unitPath(env: LinuxDeps["env"] = process.env): string {
@@ -99,10 +97,7 @@ export function systemdUnit(ctx: ServiceContext, env: LinuxDeps["env"] = process
   return lines.join("\n");
 }
 
-/**
- * `systemctl --user` needs a running user manager and a D-Bus session bus to reach it. Containers,
- * WSL without systemd and some `su` shells have neither.
- */
+/** `systemctl --user` needs a user manager and a D-Bus session bus; containers and some `su` shells have neither. */
 export async function hasSystemdUser(deps: Pick<LinuxDeps, "run">): Promise<boolean> {
   const res = await deps.run(["systemctl", "--user", "show-environment"]);
   return res.code === 0;
@@ -220,10 +215,7 @@ export function linuxService(deps: LinuxDeps): Platform["service"] {
       return { state: "running", mode: "background process", notes: [BACKGROUND_NOTE] };
     },
 
-    /**
-     * Stops the daemon and removes what starts it at login: the unit and its enable link, or the background
-     * process. The link goes too when `systemctl --user` doesn't work at the moment (no user bus).
-     */
+    /** Stops the daemon and removes what starts it at login; the enable link goes even without a user bus. */
     async uninstall(ctx) {
       const path = unitPath(deps.env);
       if (existsSync(path)) {
@@ -272,10 +264,7 @@ export function linuxService(deps: LinuxDeps): Platform["service"] {
   };
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Presence. Deciding "here" wrongly means a missed prompt, so when in doubt the answer is "can't tell",
-// which the daemon treats as away.
-// ---------------------------------------------------------------------------------------------------
+// Presence: deciding "here" wrongly misses a prompt, so when in doubt the answer is "can't tell" (away).
 
 /** Parses `loginctl show-session -p …` output (Key=Value lines). */
 export function parseProperties(text: string): Record<string, string> {
@@ -287,10 +276,7 @@ export function parseProperties(text: string): Record<string, string> {
   return out;
 }
 
-/**
- * Reads the person's local desktop session from logind. Returns null when there's no desktop session in
- * front, or when the desktop doesn't report idleness (logind then says "not idle" forever).
- */
+/** The local desktop session from logind; null with no desktop session or when it doesn't report idleness. */
 export async function desktopPresence(deps: LinuxDeps): Promise<PresenceReading | null> {
   const user = await deps.run(["loginctl", "show-user", String(deps.uid), "-p", "Sessions"]);
   if (user.code !== 0) return null;
@@ -367,11 +353,7 @@ export function loginTtys(whoOutput: string, user: string): string[] {
     .map((cols) => `/dev/${cols[1]}`);
 }
 
-/**
- * A terminal's access time moves when someone types into it, which is what `w` shows as IDLE. Only
- * login terminals count: tmux panes are read by the programs inside them, including when Relay itself
- * types a reply, so their times would make an away person look present.
- */
+/** Idle time from login terminals' access times; tmux panes don't count, Relay's own typing would touch them. */
 export async function ttyIdle(deps: LinuxDeps): Promise<number | null> {
   const who = await deps.run(["who"]);
   if (who.code !== 0) return null;
@@ -391,16 +373,13 @@ export async function readPresence(deps: LinuxDeps, ctx: PresenceContext = {}): 
   return { idleSeconds: null, locked: null, source: "none" };
 }
 
-// ---------------------------------------------------------------------------------------------------
-
 export function createLinux(deps: LinuxDeps = defaultDeps()): Platform {
   const home = homedir();
   return {
     name: "linux",
     service: linuxService(deps),
     presence: { read: (ctx) => readPresence(deps, ctx) },
-    // No typing outside tmux: TIOCSTI is off on current kernels, and X11 keystroke injection would go to
-    // whatever window has focus. Everything that isn't in tmux uses Claude Code's inbox.
+    // No typing outside tmux: TIOCSTI is off on current kernels, and X11 injection hits the focused window.
     typing: { routes: () => [], peek: async () => null, type: async () => false, key: async () => false },
     async afterCopy() {},
     // The short hostname: that's what people see in their shell prompt and SSH config.

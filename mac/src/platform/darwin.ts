@@ -14,9 +14,7 @@ import type {
   TypingRoute,
 } from "./types.ts";
 
-// ---------------------------------------------------------------------------------------------------
 // Service: a launchd agent in ~/Library/LaunchAgents.
-// ---------------------------------------------------------------------------------------------------
 
 export const LAUNCHD_LABEL = "dev.relay.daemon";
 export const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
@@ -83,10 +81,7 @@ export function launchdService(deps: LaunchdDeps): Platform["service"] {
       return { state: "running", mode: "launchd", notes: [] };
     },
 
-    /**
-     * Stops the daemon and removes the login item. Without the plist, RunAtLoad would start the daemon again at
-     * the next login, and phones paired with it would keep working.
-     */
+    /** Stops the daemon and removes the plist, or RunAtLoad would start it again at the next login. */
     async uninstall() {
       await deps.run(["launchctl", "bootout", target]);
       if (existsSync(deps.plistPath)) unlinkSync(deps.plistPath);
@@ -105,9 +100,7 @@ export function launchdService(deps: LaunchdDeps): Platform["service"] {
   };
 }
 
-// ---------------------------------------------------------------------------------------------------
 // Presence: idle time and screen lock from the I/O Registry.
-// ---------------------------------------------------------------------------------------------------
 
 /** Seconds since the last keyboard or mouse event, from IOHIDSystem's HIDIdleTime (nanoseconds). */
 export async function readIdleSeconds(): Promise<number> {
@@ -121,11 +114,7 @@ export async function readLocked(): Promise<boolean> {
   return /"IOConsoleLocked"\s*=\s*Yes/.test(out);
 }
 
-/**
- * A test helper (its own RELAY_HOME, never ~/.relay) may pin how long the Mac has been idle and say it isn't locked,
- * with RELAY_TEST_IDLE_SECONDS: an end-to-end run must not wait for the developer
- * typing at the Mac it runs on. The helper at ~/.relay ignores it.
- */
+/** RELAY_TEST_IDLE_SECONDS pins the idle time for a test helper (own RELAY_HOME); ~/.relay ignores it. */
 export function pinnedIdleSeconds(
   env: Record<string, string | undefined> = process.env,
   home = homedir(),
@@ -144,36 +133,22 @@ async function readPresence(): Promise<PresenceReading> {
   return { idleSeconds, locked, source: "keyboard and mouse" };
 }
 
-// ---------------------------------------------------------------------------------------------------
 // Typing into terminal apps.
-// ---------------------------------------------------------------------------------------------------
 
 /** Try the terminal the hook reported first; sessions found only by reconcile don't report one. */
 export function terminalOrder(termProgram: string | null): TypingRoute[] {
-  // Terminal.app's `do script` reports success but never reaches a program that is running in the tab
-  // (verified with Claude Code 2.1.316), so Terminal sessions use the inbox.
+  // Terminal.app's `do script` reports success but never reaches a program running in the tab: use the inbox.
   if (termProgram === "iTerm.app" || !termProgram) return ["iterm"];
   return []; // Terminal.app, VS Code, Warp, Ghostty…: no reliable typing route
 }
 
-/**
- * The text for `write text`: cleaned of control characters (shell/typedText.ts), so it can't press Enter, end the
- * paste or send keys, then wrapped in bracketed-paste markers when it has a newline or a tab, so they don't submit
- * the prompt early or press Tab.
- */
+/** The text for `write text`: cleaned, and a bracketed paste when it has a newline or tab. */
 export function asTyped(text: string): string {
   const clean = cleanTypedText(text);
   return /[\n\t]/.test(clean) ? `\u001b[200~${clean}\u001b[201~` : clean;
 }
 
-/**
- * AppleScript, with the tty and text passed as arguments (never interpolated into the script). The
- * apps are addressed by bundle id and only if already running, so nothing gets launched. The first use
- * asks once for permission to control the app (System Settings › Privacy & Security › Automation).
- *
- * Typing no longer steps aside when you're in that tab: the caller waits for a pause in your typing instead
- * (inject.ts), and looks first with PEEK_SCRIPTS.
- */
+/** AppleScript with tty and text passed as arguments, never interpolated; only for apps already running. */
 const SCRIPTS: Record<TypingRoute, string> = {
   iterm: `on run argv
   set targetTty to item 1 of argv
@@ -213,10 +188,7 @@ end run`,
 end run`,
 };
 
-/**
- * Looks at one tab: "front" or "back" on the first line (whether it's the tab in front of you), then its visible
- * text. "no-app" or "not-found" when there's no such tab.
- */
+/** Looks at one tab: "front" or "back" on the first line, then its visible text; "no-app" or "not-found". */
 export const PEEK_SCRIPTS: Record<TypingRoute, string> = {
   iterm: `on run argv
   set targetTty to item 1 of argv
@@ -297,11 +269,7 @@ export async function typeIntoTerminalApp(app: TypingRoute, tty: string, text: s
   return res.out === "ok";
 }
 
-/**
- * Esc for iTerm2: the ESC byte through `write text … newline no`, and none of the Enter that typing sends
- * after the text. Not skipped when you're in that tab: you asked for the stop on purpose, and Esc doesn't mix
- * into what you type. Terminal.app can't reach a running program at all (see terminalOrder).
- */
+/** Esc for iTerm2: the ESC byte through `write text … newline no`, with no Enter after. */
 export const ITERM_ESCAPE_SCRIPT = `on run argv
   set targetTty to item 1 of argv
   if application id "com.googlecode.iterm2" is not running then return "no-app"
@@ -320,10 +288,7 @@ export const ITERM_ESCAPE_SCRIPT = `on run argv
   return "not-found"
 end run`;
 
-/**
- * Enter alone, for when a typed message sat in the prompt unsent (inject.ts presses it once more): iTerm2's
- * `write text ""` is a bare Return, Terminal's `do script ""` too.
- */
+/** Enter alone, for a typed message that sat unsent: `write text ""` is a bare Return. */
 export const ENTER_SCRIPTS: Record<TypingRoute, string> = {
   iterm: `on run argv
   set targetTty to item 1 of argv
@@ -371,8 +336,6 @@ export async function keyIntoTerminalApp(
     log.info("key skipped", { app, key, result: res.out || null, error: res.err.slice(0, 200) || null });
   return res.out === "ok";
 }
-
-// ---------------------------------------------------------------------------------------------------
 
 export const darwin: Platform = {
   name: "darwin",

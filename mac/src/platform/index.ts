@@ -9,10 +9,7 @@ export const platform: Platform = process.platform === "linux" ? linux : darwin;
 
 let cachedHost: Promise<HostInfo> | null = null;
 
-/**
- * What the phone shows for the computer it's paired with ("Mac" or "computer", and its name). Sent in the
- * `pair` and `hello` replies; apps that don't know the field keep saying "Mac".
- */
+/** What the phone shows for the paired computer ("Mac" or "computer", and its name). */
 export async function hostInfo(): Promise<HostInfo> {
   cachedHost ??= platform
     .computerName()

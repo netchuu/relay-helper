@@ -1,10 +1,4 @@
-/**
- * Everything that differs between macOS and Linux sits behind this interface. The rest of the helper
- * calls `platform` (from ./index.ts) and never checks `process.platform` itself.
- *
- * The platform modules import nothing from the rest of the helper, so there are no import cycles:
- * whatever they need (paths, PATH) is passed in.
- */
+/** Everything that differs between macOS and Linux; platform modules import nothing from the helper. */
 
 /** What the background service needs to know to start the daemon. */
 export interface ServiceContext {
@@ -80,21 +74,11 @@ export interface Platform {
     routes(termProgram: string | null): TypingRoute[];
     /** Looks at the tab whose tty is `tty`. Null when the app isn't running or has no such tab. */
     peek(route: TypingRoute, tty: string): Promise<TabView | null>;
-    /**
-     * Types `text`, then Enter, into the tab whose tty is `tty`, whoever is in front: the caller decides when
-     * (inject.ts waits for a pause). Returns false when it couldn't.
-     */
+    /** Types `text`, then Enter, into the tab on `tty`, whoever is in front. False when it couldn't. */
     type(route: TypingRoute, tty: string, text: string): Promise<boolean>;
-    /**
-     * Presses a key in the tab whose tty is `tty` (Esc, to stop Claude's turn: session.interrupt; Enter, to
-     * submit a message that sat typed in the prompt). Nothing else follows. Returns false when it couldn't.
-     */
+    /** Presses one key (Esc to stop a turn, Enter to submit) in the tab on `tty`. False when it couldn't. */
     key(route: TypingRoute, tty: string, key: "escape" | "enter"): Promise<boolean>;
-    /**
-     * Seconds since a key was last pressed on this computer's keyboard (not the mouse); null when unknown. With
-     * the time the prompt was last submitted, it tells Claude Code's grey suggestion from typing in a terminal
-     * that shows no text attributes.
-     */
+    /** Seconds since a key was last pressed on this computer's keyboard (not the mouse); null when unknown. */
     keyIdleSeconds?(): number | null;
   };
   /** The name people know this computer by, e.g. "Ana's MacBook Pro" or "build-server". */

@@ -1,14 +1,6 @@
 import { run } from "./exec.ts";
 
-/**
- * Whether Claude Code is the program in front of a terminal, so a reply typed there reaches Claude and not a shell.
- * When Claude Code is suspended (Ctrl-Z), has exited, or another program runs in front of it, keys typed into the
- * terminal go to the shell or that program, outside Claude's permission prompts.
- *
- * A terminal has one foreground process group; the shell hands it to the job it starts in front. Claude Code's
- * own children (tools, MCP servers) stay in its group, so "Claude's group is the terminal's foreground group" is
- * the test. `relay shell` makes the same check for its own tab (shell/ptyShell.ts).
- */
+/** Whether Claude Code is in front of a terminal: its process group is the terminal's foreground group. */
 
 export interface Proc {
   pid: number;
@@ -43,15 +35,7 @@ export function parseProcs(out: string): Proc[] {
 /** How a `claude` program shows in `ps` (the same test viewerTtyOf uses for a session's viewer). */
 const CLAUDE_COMMAND = /^(\S*\/)?claude(\s|$)/;
 
-/**
- * Whether the Claude Code process `pid` is in front:
- * - without `tty` (tmux, where the pane is the process's own terminal): `pid`'s group is the foreground group of
- *   its own terminal;
- * - with `tty` (the tab Relay would type into): when `pid` runs on that terminal, the same; when it doesn't (a
- *   session Claude Code runs in a background host, shown in the tab by a `claude` viewer), the tab's foreground
- *   group is a `claude` program.
- * False when `pid` isn't running any more, or has no terminal.
- */
+/** Whether `pid` is in front of its terminal, or of `tty` when a `claude` viewer there stands in for it. */
 export function inFront(procs: Proc[], pid: number, tty: string | null, others: number[] = []): boolean {
   const me = procs.find((p) => p.pid === pid);
   if (!me) return false;

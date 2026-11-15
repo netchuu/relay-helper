@@ -1,10 +1,4 @@
-/**
- * A small binding to the macOS Accessibility API (ApplicationServices) through bun:ffi, for typing a reply into
- * the Claude desktop app and IDE panels while they stay in the background.
- * In-process, so the Accessibility permission belongs to the `relay` binary itself; nothing else to ship.
- *
- * Only loaded on macOS, and only when a delivery needs it. Every Core Foundation object copied here is released.
- */
+/** A small bun:ffi binding to the macOS Accessibility API, to type into background apps. */
 import { dlopen, FFIType, ptr } from "bun:ffi";
 
 const CF = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
@@ -12,10 +6,7 @@ const AS = "/System/Library/Frameworks/ApplicationServices.framework/Application
 const CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
 const UTF8 = 0x08000100;
 
-/**
- * A Core Foundation reference, as an exact 64-bit integer. Never a JS number: on Apple Silicon short CFStrings
- * are tagged pointers with the top bits set, which a double can't hold, and a rounded pointer crashes.
- */
+/** A Core Foundation reference as a bigint: tagged CFString pointers don't fit a JS number. */
 type Ref = bigint;
 const U64 = FFIType.u64;
 
@@ -132,11 +123,7 @@ export function trusted(): boolean {
   return L().ax.AXIsProcessTrusted();
 }
 
-/**
- * Asks macOS for Accessibility the system way: if this process isn't allowed yet, macOS shows its own dialog
- * ("relay" would like to control this computer…) with a button to System Settings, and lists relay there, so
- * the person only turns it on. Returns whether it's allowed now.
- */
+/** Asks macOS to show its Accessibility dialog if not yet allowed. Returns whether it's allowed now. */
 export function requestTrust(): boolean {
   const l = L();
   const keys = Buffer.alloc(8);
@@ -154,11 +141,7 @@ export function requestTrust(): boolean {
 const RETURN_KEY = 36;
 const SHIFT_FLAG = 0x20000n;
 
-/**
- * Types `text` into the app `pid` as keystrokes, followed by Return, without bringing it forward: the events go
- * to that process (CGEventPostToPid) and land in its focused element. Characters are sent as Unicode, so the
- * keyboard layout doesn't matter; a newline is Shift+Return, so it doesn't submit early.
- */
+/** Types `text` then Return into app `pid` without bringing it forward; a newline is Shift+Return. */
 export async function typeToPid(
   pid: number,
   text: string,

@@ -1,8 +1,4 @@
-/**
- * Seconds since the last key was pressed on this Mac's keyboard (mouse and trackpad don't count), from Core Graphics'
- * CGEventSourceSecondsSinceLastEventType on the hardware event state, so keys Relay itself posts don't count either.
- * Through bun:ffi, loaded on first use; null when it can't be read.
- */
+/** Seconds since the last real key press, via CGEventSource on the hardware state (null if unreadable). */
 import { dlopen, FFIType } from "bun:ffi";
 
 const CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";

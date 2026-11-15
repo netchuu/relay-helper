@@ -1,14 +1,4 @@
-/**
- * `relay shell`: the program Zed's terminal starts (see ../integrations/zed.ts). It runs your normal
- * login shell inside a pseudo-terminal that Relay owns and passes everything through untouched, so the
- * tab looks and behaves exactly as before. What it adds: a private socket the helper can use to type a
- * reply from the phone into this tab, as if you typed it. Claude Code then sees ordinary keyboard input
- * (no "another session" label, never held in bypass mode).
- *
- * Nothing here is specific to Claude: any agent CLI started in this tab can receive typed replies.
- *
- * Fail open: if anything goes wrong before the pseudo-terminal is up, the real shell runs directly.
- */
+/** `relay shell`: runs your login shell in a pty with a private socket for typing phone replies into the tab. */
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -23,18 +13,11 @@ export interface TypeRequest {
   token: string;
   /** Text to type, then Enter. Absent in a key request. */
   text?: string;
-  /**
-   * A key to press instead of typing (Esc stops Claude's turn: session.interrupt). Key requests carry no
-   * `text` on purpose: a `relay shell` from before keys existed answers `bad_request` instead of typing an
-   * empty line and Enter.
-   */
+  /** A key to press instead of typing. Carries no `text`, so an older `relay shell` answers `bad_request`. */
   key?: "escape" | "enter";
   /** The agent process the reply is for; Relay only types while it is in the foreground of this tab. */
   pid: number;
-  /**
-   * The message waited long enough for a pause (the helper's TYPE_ANYWAY_MS): type it now, without waiting for a
-   * quiet moment, and after a clean break when the prompt holds a draft.
-   */
+  /** The message waited long enough: type now, without a quiet moment, after a clean break if there's a draft. */
   force?: boolean;
 }
 
@@ -47,11 +30,7 @@ export function userShell(env: Record<string, string | undefined> = process.env)
   return env.SHELL?.startsWith("/") ? env.SHELL : process.platform === "darwin" ? "/bin/zsh" : "/bin/sh";
 }
 
-/**
- * Bytes to write so the text lands in the agent's input box. Control characters are dropped first
- * (./typedText.ts). With bracketed paste on (Claude Code turns it on), the text goes in as one paste, so
- * newlines don't submit early; Enter follows separately.
- */
+/** Bytes to write: the cleaned text (one bracketed paste when on, so newlines don't submit), then Enter. */
 export function typedBytes(text: string, bracketedPaste: boolean): { body: string; enter: string } {
   const clean = cleanTypedText(text);
   if (bracketedPaste) return { body: `\x1b[200~${clean}\x1b[201~`, enter: "\r" };
@@ -122,17 +101,9 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
   return { ok: true };
 }
 
-/**
- * Follows what you type into this tab closely enough to tell whether the agent's prompt holds a draft: text typed
- * or pasted since the last Enter, minus what you deleted. Ctrl+C, Ctrl+U and Esc Esc clear it, as in Claude Code.
- * Arrow keys and other sequences don't count; text recalled from history isn't seen.
- */
+/** Tracks whether the agent's prompt holds a draft: text typed since the last Enter; Ctrl+C, Ctrl+U, Esc Esc clear it. */
 export class DraftTracker {
-  /**
-   * A short run of keys (up to SHORT_CHARS, like `1`, `y`, `yes` with no Enter) that stopped this long ago no longer
-   * counts as a draft. The tracker can't see the screen, so a key that answered a dialog looks like draft text; it
-   * must not block phone messages for good.
-   */
+  /** A short run of keys (up to SHORT_CHARS) idle this long stops counting: it may have answered a dialog. */
   static readonly STALE_MS = 20_000;
   static readonly SHORT_CHARS = 3;
   /** A longer draft is real text you paused on: it stays for this long (an abandoned tab eventually frees up). */
@@ -227,10 +198,7 @@ export class PasteModeTracker {
   }
 }
 
-/**
- * Collects one request line from a socket's chunks. A request longer than a chunk (8 KB) arrives in
- * several, and a chunk can end inside a multi-byte character, so the bytes are decoded as a stream.
- */
+/** Collects one request line from socket chunks, decoding as a stream (a chunk can split a character). */
 export class RequestReader {
   static readonly MAX_CHARS = 1_000_000;
   private readonly decoder = new TextDecoder("utf-8");
