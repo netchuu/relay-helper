@@ -97,6 +97,8 @@ export interface TypeOps {
   /** The pane's visible text; null when the pane can't be read (it's gone). */
   tmuxScreen(socket: string, pane: string): Promise<string | null>;
   tmux(socket: string, pane: string, text: string): Promise<void>;
+  /** The tty of the pane's own terminal; null when tmux can't tell. Absent: the pane isn't checked against the process. */
+  tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null): Promise<string | null>;
   /**
@@ -126,6 +128,7 @@ export const defaultTypeOps: TypeOps = {
   pty: (socketPath, token, pid, text, force) => typeIntoPty(socketPath, token, pid, text, { force }),
   tmuxScreen,
   tmux: tmuxType,
+  tmuxPaneTty,
   routes: (t) => platform.typing.routes(t),
   ttyOf: (pid) => ttyOf(pid),
   viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
@@ -247,7 +250,7 @@ async function pressEnter(session: SessionRecord, route: TerminalRoute, ops: Typ
         : false;
     if (route === "tmux") {
       if (!session.tmuxSocket || !session.tmuxPane || !ops.tmuxEnter) return false;
-      if (!(await claudeIsInFront(session, null, ops))) return false;
+      if (!(await claudeIsInFrontInPane(session, ops))) return false;
       await ops.tmuxEnter(session.tmuxSocket, session.tmuxPane);
       return true;
     }
@@ -325,7 +328,7 @@ async function typeIntoTerminal(
   }
   if (session.tmuxPane && session.tmuxSocket) {
     const screen = await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane);
-    if (screen !== null && (await claudeIsInFront(session, null, ops))) {
+    if (screen !== null && (await claudeIsInFrontInPane(session, ops))) {
       const draft = promptDraft(screen);
       if (!anyway && (draft || active)) throw new WaitForPause("tmux", draft ? "draft" : "typing");
       try {
@@ -367,6 +370,34 @@ async function claudeIsInFront(session: SessionRecord, tty: string | null, ops: 
       tty,
     });
   return front;
+}
+
+/**
+ * Whether the session's Claude Code is in front in the tmux pane Relay has stored for it: the process runs on the
+ * pane's own terminal, and is the foreground program there. A session resumed in another terminal has a process
+ * on a different tty, and the pane may be a bare shell by now.
+ */
+async function claudeIsInFrontInPane(
+  session: SessionRecord,
+  ops: Pick<TypeOps, "tmuxPaneTty" | "ttyOf" | "inFront">,
+): Promise<boolean> {
+  if (!session.tmuxSocket || !session.tmuxPane || !session.pid) return false;
+  if (ops.tmuxPaneTty) {
+    const [paneTty, procTty] = await Promise.all([
+      ops.tmuxPaneTty(session.tmuxSocket, session.tmuxPane).catch(() => null),
+      ops.ttyOf(session.pid).catch(() => null),
+    ]);
+    if (!paneTty || paneTty !== procTty) {
+      log.info("not typing into tmux: Claude Code isn't running in that pane", {
+        sessionId: session.id,
+        pid: session.pid,
+        paneTty,
+        procTty,
+      });
+      return false;
+    }
+  }
+  return ops.inFront(session.pid, null).catch(() => false);
 }
 
 /** The tty a session's tab was last found by, so the follow-up checks (Enter, the prompt's text) use the same one. */
@@ -448,6 +479,9 @@ export type EscapeRoute = "pty" | "tmux" | TypingRoute;
 export interface KeyOps {
   pty(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmux(socket: string, pane: string): Promise<void>;
+  /** As in TypeOps: when present, Esc goes to the pane only if Claude Code is in front there. */
+  tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
+  inFront?(pid: number, tty: string | null): Promise<boolean>;
   routes(termProgram: string | null): TypingRoute[];
   app(route: TypingRoute, tty: string): Promise<boolean>;
   ttyOf(pid: number | null): Promise<string | null>;
@@ -457,6 +491,8 @@ export interface KeyOps {
 export const defaultKeyOps: KeyOps = {
   pty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
   tmux: tmuxEscape,
+  tmuxPaneTty,
+  inFront: claudeInFront,
   routes: (t) => platform.typing.routes(t),
   app: (route, tty) => platform.typing.key(route, tty, "escape"),
   ttyOf,
@@ -482,7 +518,15 @@ export async function pressEscape(
       // the tab is gone
     }
   }
-  if (session.tmuxPane && session.tmuxSocket) {
+  if (
+    session.tmuxPane &&
+    session.tmuxSocket &&
+    (await claudeIsInFrontInPane(session, {
+      tmuxPaneTty: ops.tmuxPaneTty,
+      ttyOf: ops.ttyOf,
+      inFront: ops.inFront ?? (async () => true),
+    }))
+  ) {
     try {
       await ops.tmux(session.tmuxSocket, session.tmuxPane);
       return pressed(session, "tmux");
@@ -668,6 +712,18 @@ async function tmuxScreen(socket: string, pane: string): Promise<string | null> 
   });
   const out = await new Response(proc.stdout).text();
   return (await proc.exited) === 0 ? out : null;
+}
+
+/** The tty of a pane's terminal (`#{pane_tty}`), or null when tmux can't tell. */
+async function tmuxPaneTty(socket: string, pane: string): Promise<string | null> {
+  const proc = Bun.spawn(["tmux", "-S", socket, "display-message", "-p", "-t", pane, "#{pane_tty}"], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const out = (await new Response(proc.stdout).text()).trim();
+  return (await proc.exited) === 0 && out ? out : null;
 }
 
 /**

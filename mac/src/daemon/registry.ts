@@ -262,7 +262,10 @@ export class Registry {
       void this.refreshGit(id, cwd);
       return { session: this.get(id) as SessionRecord, created: true };
     }
-    // Only overwrite connection details when the hook actually reported them.
+    // Only overwrite connection details when the hook actually reported them. A hook that reports no tmux pane
+    // (null, not absent) ran outside tmux: the session was resumed in a plain terminal, and the pane it had
+    // before no longer holds Claude Code, so it is forgotten.
+    const leftTmux = env.tmuxPane === null && !env.tmux;
     this.db
       .query(
         `UPDATE sessions SET
@@ -271,8 +274,8 @@ export class Registry {
            name = COALESCE(?, name),
            pid = COALESCE(?, pid),
            terminal = COALESCE(?, terminal),
-           tmux_pane = COALESCE(?, tmux_pane),
-           tmux_socket = COALESCE(?, tmux_socket),
+           tmux_pane = CASE WHEN ? THEN NULL ELSE COALESCE(?, tmux_pane) END,
+           tmux_socket = CASE WHEN ? THEN NULL ELSE COALESCE(?, tmux_socket) END,
            socket_path = COALESCE(?, socket_path),
            socket_token = COALESCE(?, socket_token),
            pty_socket = COALESCE(?, pty_socket),
@@ -288,7 +291,9 @@ export class Registry {
         fields.name ?? null,
         env.claudePid ?? null,
         env.termProgram ?? null,
+        leftTmux ? 1 : 0,
         env.tmuxPane ?? null,
+        leftTmux ? 1 : 0,
         tmuxSocket,
         env.socket ?? null,
         env.token ?? null,

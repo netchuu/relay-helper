@@ -161,7 +161,9 @@ appendFileSync(${JSON.stringify(RECORDED)}, "");
     await tmux("new-session", "-d", "-s", "relaytest", "-x", "80", "-y", "20", `${process.execPath} ${rec}`);
     pane = await tmux("display-message", "-p", "-t", "relaytest", "#{pane_id}");
     const pid = await tmux("display-message", "-p", "#{pid}");
-    tmuxEnv = { TMUX: `${TMUX_SOCK},${pid},0`, TMUX_PANE: pane };
+    // The hook reports the pane's program as Claude Code (CLAUDE_PID), which the daemon checks runs in that pane.
+    const panePid = await tmux("display-message", "-p", "-t", "relaytest", "#{pane_pid}");
+    tmuxEnv = { TMUX: `${TMUX_SOCK},${pid},0`, TMUX_PANE: pane, CLAUDE_PID: panePid };
     await waitFor(async () => existsSync(RECORDED));
   }
   await startDaemon();
