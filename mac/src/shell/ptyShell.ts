@@ -75,6 +75,8 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
   if (key !== undefined) {
     // A stop you asked for: no waiting for a quiet moment, and Esc doesn't mix into what you type.
     ctx.write(key);
+    // Enter sends whatever sits in the prompt; one Esc doesn't clear it.
+    if (req.key === "enter") ctx.sentEnter?.();
     return { ok: true };
   }
   const force = req.force === true;

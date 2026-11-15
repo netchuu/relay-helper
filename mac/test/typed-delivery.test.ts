@@ -903,3 +903,48 @@ describe("relay shell: drafts and typing anyway", () => {
     expect(d.pending).toBe(true);
   });
 });
+
+describe("the helper's own key requests and the draft", () => {
+  function setup() {
+    let t = 100_000;
+    const written: string[] = [];
+    const d = new DraftTracker(() => t);
+    const ctx: RequestContext = {
+      token: "tok",
+      shellPid: 1,
+      isForeground: async () => true,
+      lastInput: () => 0,
+      hasDraft: () => d.pending,
+      sentEnter: () => d.feed("\r"),
+      pasteOn: () => true,
+      write: (x: string) => void written.push(x),
+      sleep: async (ms: number) => {
+        t += ms;
+      },
+      now: () => t,
+    };
+    const ask = (r: object) => answerRequest(JSON.stringify({ token: "tok", pid: 7, ...r }), ctx);
+    return { d, written, ask, advance: (ms: number) => (t += ms) };
+  }
+
+  test("an Enter key request leaves no draft behind", async () => {
+    const { d, written, ask, advance } = setup();
+    expect(await ask({ text: "first" })).toEqual({ ok: true });
+    d.feed("and also");
+    advance(4000);
+    expect(await ask({ key: "enter" })).toEqual({ ok: true });
+    expect(written.at(-1)).toBe("\r");
+    advance(60_000);
+    expect(d.pending).toBe(false);
+    written.length = 0;
+    expect(await ask({ text: "second" })).toEqual({ ok: true });
+    expect(written[0]).toBe("\x1b[200~second\x1b[201~");
+  });
+
+  test("an Escape key request keeps the draft", async () => {
+    const { d, ask } = setup();
+    d.feed("typed");
+    expect(await ask({ key: "escape" })).toEqual({ ok: true });
+    expect(d.pending).toBe(true);
+  });
+});
