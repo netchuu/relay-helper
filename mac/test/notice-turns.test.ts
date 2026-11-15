@@ -271,6 +271,53 @@ describe("a message sent while Claude is still answering", () => {
     expect(t.status()).toBe("idle");
   });
 
+  test("a queued prompt with words the redactor rewrites still gets its own answer", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    t.prompt("first question");
+    await t.hook("UserPromptSubmit", { prompt: "first question" });
+    t.read("toolu_1", "a.ts");
+    await t.hook("UserPromptSubmit", { prompt: "second: why is token=undefined here" });
+    t.says("Answer to the first.");
+    t.prompt("second: why is token=undefined here");
+    await t.hook("Stop", { last_assistant_message: "Answer to the first." });
+    expect(t.done).toHaveLength(1);
+    expect(t.done[0]).toMatchObject({ prompt: "first question", summary: "Answer to the first." });
+    expect(t.status()).toBe("working");
+
+    t.says("Answer to the second.");
+    await t.hook("Stop", { last_assistant_message: "Answer to the second." });
+    expect(t.done).toHaveLength(2);
+    expect(t.done[1]?.summary).toBe("Answer to the second.");
+    expect(t.done[1]?.prompt).toContain("second");
+    expect(t.done.every((x) => x.prompt)).toBe(true);
+    expect(t.status()).toBe("idle");
+  });
+
+  test("the same when the first prompt has the rewritten words", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    const first = "fix the access-token: handling in login";
+    t.prompt(first);
+    await t.hook("UserPromptSubmit", { prompt: first });
+    t.read("toolu_1", "a.ts");
+    await t.hook("UserPromptSubmit", { prompt: "second question" });
+    t.says("Answer to the first.");
+    t.prompt("second question");
+    await t.hook("Stop", { last_assistant_message: "Answer to the first." });
+    expect(t.done).toHaveLength(1);
+    expect(t.done[0]).toMatchObject({
+      prompt: "fix the access-token: [redacted:secret-assignment] in login",
+      summary: "Answer to the first.",
+    });
+    expect(t.status()).toBe("working");
+    t.says("Answer to the second.");
+    await t.hook("Stop", { last_assistant_message: "Answer to the second." });
+    expect(t.done[1]).toMatchObject({ prompt: "second question", summary: "Answer to the second." });
+    expect(t.done.every((x) => x.prompt)).toBe(true);
+    expect(t.status()).toBe("idle");
+  });
+
   test("messages taken in mid-turn share its answer; one still queued gets the next", async () => {
     const t = setup();
     await t.hook("SessionStart");

@@ -202,7 +202,7 @@ export function answerOwner(
     const queued = entry.type === "attachment" && entry.attachment?.type === "queued_command";
     const text = queued ? entry.attachment?.prompt : promptText(entry);
     if (typeof text !== "string" || (queued && isSystemMessage(text.trim()))) return null;
-    return sameWords(text);
+    return sameWords(redact(text));
   };
   // The hook's prompt and the entry's text are the same words; one may carry more after them (attached files'
   // paths on lines of their own).
@@ -214,7 +214,7 @@ export function answerOwner(
   let owner: string | null = null;
   let queued = false;
   for (const turn of turns) {
-    const asked = turn.prompt ? sameWords(turn.prompt) : "";
+    const asked = turn.prompt ? sameWords(redact(turn.prompt)) : "";
     if (!asked) {
       // A turn begun on a notice has no prompt to look for: it was running before any prompt that still waits.
       if (!queued) owner = turn.id;
@@ -233,7 +233,7 @@ export function answerOwner(
     } else if (
       entries.slice(answerAt + 1).some((entry) => {
         const text = promptText(entry);
-        return text !== null && matches(asked, sameWords(text));
+        return text !== null && matches(asked, sameWords(redact(text)));
       })
     ) {
       queued = true;
