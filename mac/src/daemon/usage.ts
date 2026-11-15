@@ -8,6 +8,7 @@ import type { Usage, UsageLimit } from "../../../protocol/index.ts";
  */
 
 const perSession = new Map<string, Usage>();
+const lastLimits = new Map<string, Pick<Usage, "fiveHour" | "sevenDay">>();
 /** The plan's limits belong to the account, not a session: the newest ones seen, for a session that has none yet. */
 let accountLimits: Pick<Usage, "fiveHour" | "sevenDay"> = {};
 
@@ -50,11 +51,23 @@ export function parseUsage(payload: unknown): Usage | null {
  * window the higher percentage, since usage in a window only goes up. An idle session's stale reading, sent again
  * at every status line refresh, therefore changes nothing.
  */
-function newer(kept: UsageLimit | undefined, seen: UsageLimit | undefined): UsageLimit | undefined {
+function newer(
+  kept: UsageLimit | undefined,
+  seen: UsageLimit | undefined,
+  previous: UsageLimit | undefined,
+  now: number,
+): UsageLimit | undefined {
   if (!kept) return seen;
   if (!seen) return kept;
+  if (seen.resetsAt === undefined) {
+    // No reset time: arrival order says nothing about age. A session that sends the same reading again is idle;
+    // one whose reading changed is current, so it may go down. A kept reading whose reset has passed is stale.
+    if (kept.resetsAt !== undefined) return kept.resetsAt <= now ? seen : kept;
+    if (previous === undefined) return seen.usedPercent > kept.usedPercent ? seen : kept;
+    return previous.resetsAt === undefined && previous.usedPercent === seen.usedPercent ? kept : seen;
+  }
   const a = kept.resetsAt ?? 0;
-  const b = seen.resetsAt ?? 0;
+  const b = seen.resetsAt;
   if (b !== a) return b > a ? seen : kept;
   return seen.usedPercent > kept.usedPercent ? seen : kept;
 }
@@ -67,9 +80,16 @@ export function noteUsageAll(sessionId: string, usage: Usage | null): string[] {
   if (!usage) return [];
   const ids = new Set([...perSession.keys(), sessionId]);
   const before = new Map([...ids].map((id) => [id, JSON.stringify(usageOf(id) ?? null)]));
+  // The session's last reading per window: a payload without a limit (context only) keeps what it had.
+  const prev = lastLimits.get(sessionId) ?? {};
+  lastLimits.set(sessionId, {
+    ...((usage.fiveHour ?? prev.fiveHour) ? { fiveHour: usage.fiveHour ?? prev.fiveHour } : {}),
+    ...((usage.sevenDay ?? prev.sevenDay) ? { sevenDay: usage.sevenDay ?? prev.sevenDay } : {}),
+  });
   perSession.set(sessionId, usage);
-  const fiveHour = newer(accountLimits.fiveHour, usage.fiveHour);
-  const sevenDay = newer(accountLimits.sevenDay, usage.sevenDay);
+  const now = Date.now();
+  const fiveHour = newer(accountLimits.fiveHour, usage.fiveHour, prev.fiveHour, now);
+  const sevenDay = newer(accountLimits.sevenDay, usage.sevenDay, prev.sevenDay, now);
   accountLimits = { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}) };
   return [...ids].filter((id) => JSON.stringify(usageOf(id) ?? null) !== before.get(id));
 }
@@ -98,10 +118,12 @@ export function usageOf(sessionId: string, now = Date.now()): Usage | undefined 
 /** A session ended: nothing more to show for it. */
 export function forgetUsage(sessionId: string): void {
   perSession.delete(sessionId);
+  lastLimits.delete(sessionId);
 }
 
 /** Tests only. */
 export function resetUsage(): void {
   perSession.clear();
+  lastLimits.clear();
   accountLimits = {};
 }
