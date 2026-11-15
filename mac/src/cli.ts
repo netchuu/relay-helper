@@ -29,6 +29,7 @@ import {
   countHooks,
   DEFAULT_SETTINGS,
   HOOK_BIN,
+  hasRelayEntries,
   mergeHooks,
   mergeStatusLine,
   purgeData,
@@ -273,16 +274,37 @@ async function uninstall(args: string[]): Promise<void> {
     flags: ["--no-service", "--no-launchd", "--purge"],
     options: ["--settings"],
   });
-  const settingsPath = chooseSettingsPath({ flag: parsed.options.get("--settings"), byHelper: false });
+  // Without --settings: the file install wrote (saved in config) and the default one, where older installs wrote.
+  const flag = parsed.options.get("--settings");
+  const settingsPaths = [
+    ...new Set(
+      flag !== undefined
+        ? [chooseSettingsPath({ flag, byHelper: false })]
+        : [chooseSettingsPath({ saved: loadConfig().settingsPath, byHelper: true }), DEFAULT_SETTINGS],
+    ),
+  ];
   const noService = parsed.flags.has("--no-service") || parsed.flags.has("--no-launchd");
   const purge = parsed.flags.has("--purge");
   // A daemon left running would keep using the data and write it again.
   if (purge && noService) throw new Error("--purge stops the helper too, so it can't go with --no-service");
-  const backup = writeSettings(
-    settingsPath,
-    removeStatusLine(removeHooks(readSettings(settingsPath)), readSavedStatusLine()),
-  );
-  console.log(`• hooks removed from ${settingsPath}${backup ? ` (backup: ${backup})` : ""}`);
+  // A file that can't be written must not stop the other steps: say what to remove by hand, fail at the end.
+  const failures: string[] = [];
+  for (const settingsPath of settingsPaths) {
+    try {
+      const before = readSettings(settingsPath);
+      if (!hasRelayEntries(before)) continue;
+      const backup = writeSettings(
+        settingsPath,
+        removeStatusLine(removeHooks(before), readSavedStatusLine()),
+      );
+      console.log(`• hooks removed from ${settingsPath}${backup ? ` (backup: ${backup})` : ""}`);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      failures.push(
+        `Relay's hooks are still in ${settingsPath}: ${reason}\n  Remove by hand the hook entries whose command ends in relay-hook, and the statusLine if it runs "relay-hook statusline".`,
+      );
+    }
+  }
   for (const zedPath of zedSettingsPaths()) {
     try {
       const zed = writeZedSettings(zedPath, removeRelayShell);
@@ -308,6 +330,10 @@ async function uninstall(args: string[]): Promise<void> {
     );
   } else if (!noService) {
     console.log("  To also delete the data and unpair every phone: `relay uninstall --purge`");
+  }
+  if (failures.length > 0) {
+    for (const f of failures) console.error(`relay: ${f}`);
+    process.exitCode = 1;
   }
 }
 

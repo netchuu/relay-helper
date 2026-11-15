@@ -135,6 +135,11 @@ export function mergeStatusLine(
   return { settings: { ...settings, statusLine: ours }, saved: { previous } };
 }
 
+/** True when the settings hold a Relay hook or Relay's status line: what uninstall has to take out. */
+export function hasRelayEntries(settings: Record<string, unknown>): boolean {
+  return countHooks(settings) > 0 || isRelayStatusLine(settings.statusLine);
+}
+
 /** Pure: gives the person's own status line back, or removes Relay's when there was none. Others' are left alone. */
 export function removeStatusLine(
   settings: Record<string, unknown>,
