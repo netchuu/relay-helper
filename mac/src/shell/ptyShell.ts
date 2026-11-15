@@ -227,6 +227,26 @@ export class PasteModeTracker {
   }
 }
 
+/**
+ * Collects one request line from a socket's chunks. A request longer than a chunk (8 KB) arrives in
+ * several, and a chunk can end inside a multi-byte character, so the bytes are decoded as a stream.
+ */
+export class RequestReader {
+  static readonly MAX_CHARS = 1_000_000;
+  private readonly decoder = new TextDecoder("utf-8");
+  private buf = "";
+
+  /** Feeds a chunk. Returns the request line once its newline arrived, "overflow" when it grows too big, else null. */
+  push(chunk: Uint8Array): string | "overflow" | null {
+    this.buf += this.decoder.decode(chunk, { stream: true });
+    const nl = this.buf.indexOf("\n");
+    if (nl === -1) return this.buf.length > RequestReader.MAX_CHARS ? "overflow" : null;
+    const line = this.buf.slice(0, nl);
+    this.buf = "";
+    return line;
+  }
+}
+
 export async function runShell(args: string[]): Promise<number> {
   const shell = userShell();
   // Zed passes extra arguments for tasks (`-c <command>`), and a non-interactive start has no terminal:
@@ -287,21 +307,19 @@ async function runInPty(shell: string): Promise<number> {
   // The tab closed: pass it on to the shell, which ends everything running in it.
   for (const sig of ["SIGHUP", "SIGTERM"] as const) process.on(sig, () => proc.kill(sig));
 
-  const server = Bun.listen<{ buf: string }>({
+  const server = Bun.listen<{ reader: RequestReader }>({
     unix: socketPath,
     socket: {
       open(sock) {
-        sock.data = { buf: "" };
+        sock.data = { reader: new RequestReader() };
       },
       async data(sock, chunk) {
-        sock.data.buf += Buffer.from(chunk).toString("utf8");
-        const nl = sock.data.buf.indexOf("\n");
-        if (nl === -1) {
-          if (sock.data.buf.length > 1_000_000) sock.end();
+        const line = sock.data.reader.push(chunk);
+        if (line === null) return;
+        if (line === "overflow") {
+          sock.end();
           return;
         }
-        const line = sock.data.buf.slice(0, nl);
-        sock.data.buf = "";
         const reply = await answerRequest(line, {
           token,
           shellPid: proc.pid,
