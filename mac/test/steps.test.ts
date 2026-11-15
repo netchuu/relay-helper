@@ -174,10 +174,10 @@ function setup(opts: { throttleMs?: number; thinkingDelayMs?: number } = {}) {
   const seen: RelayEvent[] = [];
   events.subscribe((e) => seen.push(e));
   const signal = new AbortController().signal;
-  const hook = (event: string, fields: Record<string, unknown> = {}) =>
+  const hook = (event: string, fields: Record<string, unknown> = {}, hookSignal = signal) =>
     hooks.handle(
       { payload: { hook_event_name: event, session_id: "s1", cwd: CWD, ...fields }, env: {} },
-      signal,
+      hookSignal,
     );
   const tool = (event: string, id: string, name: string, input: Record<string, unknown> = {}, extra = {}) =>
     hook(event, { tool_use_id: id, tool_name: name, tool_input: input, ...extra });
@@ -225,6 +225,101 @@ describe("live steps", () => {
     expect(t.session().step?.label).toBe("Reading b.ts");
     await t.tool("PostToolUse", "b", "Read", { file_path: `${CWD}/b.ts` });
     expect(t.session().step?.label).toBe("Reading a.ts");
+  });
+
+  // Real Claude Code (2.1.325, claude --model haiku): after "No, and tell Claude what to do differently" the
+  // hooks were PreToolUse(Bash, id A), PermissionRequest (no tool_use_id), then the next tool's PreToolUse and
+  // PostToolUseFailure. No end hook ever carried id A.
+  test("a tool denied at the terminal stops showing as running", async () => {
+    const t = setup({ thinkingDelayMs: 20 });
+    const bash = { command: "rm -rf build" };
+    await t.hook("UserPromptSubmit", { prompt: "x" });
+    await t.tool("PreToolUse", "den", "Bash", bash);
+    const dialog = new AbortController();
+    const prompt = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog.signal);
+    expect(t.session().status).toBe("waiting");
+    dialog.abort();
+    await prompt;
+    await t.tool("PreToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    expect(t.session().status).toBe("working");
+    expect(t.session().step?.label).toBe("Reading a.ts");
+    await t.tool("PostToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await Bun.sleep(60);
+    expect(t.session().step?.label).toBe("Thinking");
+    expect(t.session().status).toBe("working");
+  });
+
+  test("two same-label tools, the first denied at the terminal, the second allowed: Thinking returns", async () => {
+    const t = setup({ thinkingDelayMs: 20 });
+    const bash = { command: "grep -rn hello" };
+    await t.hook("UserPromptSubmit", { prompt: "x" });
+    await t.tool("PreToolUse", "d1", "Bash", bash);
+    const dialog1 = new AbortController();
+    const p1 = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog1.signal);
+    await t.tool("PreToolUse", "d2", "Bash", bash);
+    const dialog2 = new AbortController();
+    const p2 = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog2.signal);
+    dialog1.abort();
+    await p1;
+    dialog2.abort();
+    await p2;
+    await t.tool("PostToolUse", "d2", "Bash", bash);
+    await t.tool("PreToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await t.tool("PostToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await Bun.sleep(60);
+    expect(t.session().step?.label).toBe("Thinking");
+  });
+
+  test("two prompted same-label tools, the first allowed elsewhere, the second denied at the terminal: Thinking returns", async () => {
+    const t = setup({ thinkingDelayMs: 20 });
+    const bash = { command: "grep -rn hello" };
+    await t.hook("UserPromptSubmit", { prompt: "x" });
+    await t.tool("PreToolUse", "d1", "Bash", bash);
+    const dialog1 = new AbortController();
+    const p1 = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog1.signal);
+    await t.tool("PreToolUse", "d2", "Bash", bash);
+    const dialog2 = new AbortController();
+    const p2 = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog2.signal);
+    dialog2.abort();
+    await p2;
+    await t.tool("PostToolUse", "d1", "Bash", bash);
+    await t.tool("PreToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await t.tool("PostToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await Bun.sleep(60);
+    expect(t.session().step?.label).toBe("Thinking");
+    dialog1.abort();
+    await p1;
+  });
+
+  test("a same-label tool run without a prompt is not marked when another one's prompt closes", async () => {
+    const t = setup({ thinkingDelayMs: 20 });
+    const bash = { command: "grep -rn hello" };
+    await t.hook("UserPromptSubmit", { prompt: "x" });
+    await t.tool("PreToolUse", "d1", "Bash", bash);
+    await t.tool("PreToolUse", "d2", "Bash", bash);
+    const dialog2 = new AbortController();
+    const p2 = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog2.signal);
+    dialog2.abort();
+    await p2;
+    await t.tool("PostToolUse", "d1", "Bash", bash);
+    await t.tool("PreToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await t.tool("PostToolUse", "rd", "Read", { file_path: `${CWD}/a.ts` });
+    await Bun.sleep(60);
+    expect(t.session().step?.label).toBe("Thinking");
+  });
+
+  test("a tool answered Yes at the terminal still ends normally", async () => {
+    const t = setup({ thinkingDelayMs: 20 });
+    const bash = { command: "ls" };
+    await t.hook("UserPromptSubmit", { prompt: "x" });
+    await t.tool("PreToolUse", "yes", "Bash", bash);
+    const dialog = new AbortController();
+    const prompt = t.hook("PermissionRequest", { tool_name: "Bash", tool_input: bash }, dialog.signal);
+    dialog.abort();
+    await prompt;
+    await t.tool("PostToolUse", "yes", "Bash", bash);
+    await Bun.sleep(60);
+    expect(t.session().step?.label).toBe("Thinking");
   });
 
   test("throttled: at most one a second, the newest wins, the same label never twice", async () => {

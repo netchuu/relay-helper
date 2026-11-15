@@ -318,6 +318,10 @@ export interface ToolCall {
 interface TurnState {
   turnId: string;
   running: Map<string, TurnStep>;
+  /** Tools whose permission prompt closed at the terminal: after a No no end hook follows, so the next tool to start drops them. */
+  unresolved: Set<string>;
+  /** Running tools a permission prompt is tied to. */
+  prompted: Set<string>;
   ended: Set<string>;
   sawPre: boolean;
   current: TurnStep;
@@ -374,6 +378,8 @@ export class StepTracker {
     const state: TurnState = {
       turnId,
       running: new Map(),
+      unresolved: new Set(),
+      prompted: new Set(),
       ended: new Set(),
       sawPre: false,
       current: { kind: "thinking", label: THINKING_LABEL, at: Date.now() },
@@ -393,10 +399,46 @@ export class StepTracker {
     state.sawPre = true;
     const id = call.toolUseId ?? `anon-${Date.now()}-${Math.random()}`;
     if (state.ended.has(id)) return;
+    // Claude Code asks about one tool at a time: a new tool starting means the one whose prompt closed
+    // at the terminal was answered. After Yes its end hook still comes (and is recorded); after No none does.
+    for (const stale of state.unresolved) state.running.delete(stale);
+    state.unresolved.clear();
     const step = { ...stepFor(call.toolName, call.input, call.cwd, "live"), at: Date.now() };
     state.running.set(id, step);
     this.cancelThinking(state);
     this.show(sessionId, state, step);
+  }
+
+  /**
+   * A permission prompt opened. The hook carries no tool_use_id, but its PreToolUse comes right before it, so
+   * the prompt belongs to the newest running tool of the same name and input that has no prompt yet.
+   * Returns that tool's id (null when there is none).
+   */
+  promptOpened(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown> | undefined,
+    cwd: string | null,
+  ): string | null {
+    const state = this.turns.get(sessionId);
+    if (!state) return null;
+    const label = stepFor(toolName, input, cwd, "live").label;
+    const match = [...state.running]
+      .reverse()
+      .find(([id, step]) => step.label === label && !state.prompted.has(id));
+    if (!match) return null;
+    state.prompted.add(match[0]);
+    return match[0];
+  }
+
+  /**
+   * A permission prompt closed without the phone answering it (answered or dismissed at the terminal):
+   * marks the tool it was tied to, if that is still running.
+   */
+  promptClosed(sessionId: string, toolId: string | null): void {
+    const state = this.turns.get(sessionId);
+    if (!state || !toolId || !state.running.has(toolId)) return;
+    state.unresolved.add(toolId);
   }
 
   toolEnded(sessionId: string, call: ToolCall, failed: boolean): void {

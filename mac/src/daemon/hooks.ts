@@ -144,6 +144,9 @@ export class HookHandler {
         const call = toolCall(p, session.cwd);
         this.steps.toolStarted(sessionId, call);
         this.messages.poll(sessionId);
+        // A denied tool has no end hook, so the next tool starting is the first sign Claude went on.
+        if (!call.agentId && session.status === "waiting" && !this.d.broker.hasOpen(sessionId))
+          this.d.registry.setStatus(sessionId, "working");
         // A background agent's tool call: what that agent is doing now (background-work).
         if (call.agentId)
           this.background.agentTool(sessionId, call.agentId, call.toolName, call.input ?? {}, session.cwd);
@@ -261,9 +264,22 @@ export class HookHandler {
     // feedback), the turn is interrupted or Claude exits. After No, Esc or feedback no other hook event
     // follows, so this is the only sign: close the prompt, or the phone keeps showing it, reminders
     // repeat it, and an answer from the phone goes nowhere. (Its own timeout is 24 h, like the prompt's.)
+    // Tie the prompt to its tool now: PreToolUse(dN) comes right before PermissionRequest(dN).
+    const toolId = this.steps.promptOpened(
+      input.session_id,
+      input.tool_name,
+      input.tool_input as Record<string, unknown> | undefined,
+      this.d.registry.get(input.session_id)?.cwd ?? null,
+    );
+    // A phone answer marks nothing: the tool runs or its end hook follows.
+    let answered = false;
+    void reply.then(() => {
+      answered = true;
+    });
     const aborted = new Promise<HookReply>((resolve) =>
       signal.addEventListener("abort", () => {
         this.d.broker.close(prompt.id, "mac");
+        if (!answered) this.steps.promptClosed(input.session_id, toolId);
         resolve(NO_OUTPUT);
       }),
     );
