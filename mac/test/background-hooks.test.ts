@@ -25,8 +25,6 @@ const AGENT = {
   description: "Count to three slowly",
   agent_type: "general-purpose",
 };
-const NOTE = (id: string, status = "completed") =>
-  `<task-notification>\n<task-id>${id}</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>${status}</status>\n<summary>Done</summary>\n</task-notification>`;
 afterEach(() => resetBackground());
 function setup() {
   const db = openDb(":memory:");

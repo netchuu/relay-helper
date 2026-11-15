@@ -9,10 +9,9 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
-import { MessageTracker, resetLiveMessages, shownMessage } from "../src/daemon/messages.ts";
+import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
-import { compact } from "../src/daemon/render.ts";
 import { StepTracker } from "../src/daemon/steps.ts";
 
 const CWD = "/Users/me/Projects/my-app";
@@ -68,38 +67,6 @@ function setup() {
   const dones = () => seen.flatMap((e) => (e.type === "turn.done" ? [e.turn] : [])) as Turn[];
   return { db, hook, msgs, turnIds, dones, registry };
 }
-
-function openFenceAt(textIn: string): string | null {
-  const body = textIn.replace(/ …$/, "");
-  let open: string | null = null;
-  for (const line of body.split("\n")) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!m) continue;
-    const fence = m[1] as string;
-    const info = m[2] as string;
-    if (open === null) {
-      if (fence.startsWith("`") && info.includes("`")) continue;
-      open = fence;
-    } else if (fence[0] === open[0] && fence.length >= open.length && !info.trim()) open = null;
-  }
-  return open;
-}
-
-const toolUse = (id: string, at = Date.now() + 5) => ({
-  type: "assistant",
-  uuid: `tu-${id}`,
-  timestamp: iso(at),
-  message: {
-    model: "claude-opus-5-5",
-    content: [{ type: "tool_use", id, name: "Bash", input: { command: "ls" } }],
-  },
-});
-const interrupt = (at = Date.now() + 2) => ({
-  type: "user",
-  uuid: "u-int",
-  timestamp: iso(at),
-  message: { content: [{ type: "text", text: "[Request interrupted by user]" }] },
-});
 
 const note = "<task-notification> <task-id>b1</task-id> <status>completed</status> </task-notification>";
 const status = (t: ReturnType<typeof setup>) => t.registry.get("s1")?.status;

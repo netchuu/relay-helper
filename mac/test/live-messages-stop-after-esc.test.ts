@@ -12,7 +12,6 @@ import { HookHandler } from "../src/daemon/hooks.ts";
 import { MessageTracker, resetLiveMessages, shownMessage } from "../src/daemon/messages.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
-import { compact } from "../src/daemon/render.ts";
 import { StepTracker } from "../src/daemon/steps.ts";
 
 const CWD = "/Users/me/Projects/my-app";
@@ -67,22 +66,6 @@ function setup() {
   const turnIds = () => seen.flatMap((e) => (e.type === "turn.started" ? [e.turnId] : []));
   const dones = () => seen.flatMap((e) => (e.type === "turn.done" ? [e.turn] : [])) as Turn[];
   return { db, hook, msgs, turnIds, dones, registry };
-}
-
-function openFenceAt(textIn: string): string | null {
-  const body = textIn.replace(/ …$/, "");
-  let open: string | null = null;
-  for (const line of body.split("\n")) {
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!m) continue;
-    const fence = m[1] as string;
-    const info = m[2] as string;
-    if (open === null) {
-      if (fence.startsWith("`") && info.includes("`")) continue;
-      open = fence;
-    } else if (fence[0] === open[0] && fence.length >= open.length && !info.trim()) open = null;
-  }
-  return open;
 }
 
 const toolUse = (id: string, at = Date.now() + 5) => ({

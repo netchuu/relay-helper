@@ -24,12 +24,6 @@ const userPrompt = (t: string, at: number) => ({
   timestamp: iso(at),
   message: { content: t },
 });
-const thinking = (uuid: string, at: number) => ({
-  type: "assistant",
-  uuid,
-  timestamp: iso(at),
-  message: { content: [{ type: "thinking", thinking: "" }] },
-});
 const use = (id: string, name: unknown, input: object, at: number, uuid = `a-${id}`) => ({
   type: "assistant",
   uuid,

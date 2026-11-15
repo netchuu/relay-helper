@@ -53,10 +53,6 @@ export function x25519Private(rawPriv: Uint8Array): KeyObject {
   });
 }
 
-function rawPrivate(key: KeyObject): Uint8Array {
-  return fromB64url((key.export({ format: "jwk" }) as { d: string }).d);
-}
-
 export interface Identity {
   macId: string;
   authPublic: Uint8Array;
@@ -227,5 +223,3 @@ export class PhoneChannel {
     return new TextDecoder().decode(open(this.keys.macToPhone, this.recvCounter++, frame));
   }
 }
-
-export { rawPrivate };

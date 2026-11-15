@@ -547,7 +547,6 @@ export const EventBody = z.discriminatedUnion("type", [
   }),
 ]);
 export type EventBody = z.infer<typeof EventBody>;
-export type EventType = EventBody["type"];
 
 export const RelayEvent = z.object({ seq: z.number(), ts: z.number() }).and(EventBody);
 export type RelayEvent = { seq: number; ts: number } & EventBody;
@@ -728,7 +727,6 @@ export const SyncResult = z.object({
   more: z.boolean().optional(),
 });
 export type SyncResult = z.infer<typeof SyncResult>;
-export type RpcParams<M extends RpcMethod> = z.infer<(typeof RpcSchemas)[M]>;
 
 export const RpcRequest = z.object({
   id: z.union([z.string(), z.number()]).optional(),

@@ -59,10 +59,6 @@ export function zedSettingsPaths(e: ZedEnv = realEnv()): string[] {
   return paths;
 }
 
-export function zedInstalled(e: ZedEnv = realEnv()): boolean {
-  return zedSettingsPaths(e).length > 0;
-}
-
 /** "Zed" or "Zed (Flatpak)", for install and doctor lines. */
 export function zedLabel(settingsPath: string): string {
   return settingsPath.includes("/.var/app/") ? "Zed (Flatpak)" : "Zed";

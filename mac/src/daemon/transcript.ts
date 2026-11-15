@@ -348,7 +348,6 @@ export function interruptedTurn(
 
   let interrupted = false;
   let text = "";
-  let toolCalls = 0;
   let endedAt: number | null = null;
   const files = new Set<string>();
   const steps = new TranscriptSteps(
@@ -380,7 +379,6 @@ export function interruptedTurn(
     if (texts.length) text = texts.join("\n\n");
     for (const block of blocks) {
       if (block.type !== "tool_use") continue;
-      toolCalls++;
       const file = block.input?.file_path ?? block.input?.notebook_path;
       if (block.name && EDIT_TOOLS.has(block.name) && typeof file === "string") files.add(file);
     }
