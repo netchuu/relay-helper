@@ -331,6 +331,11 @@ export const Session = z.object({
    * the person can switch on helps (Terminal.app, Linux outside tmux…).
    */
   replyFix: z.enum(["accessibility"]).optional(),
+  /**
+   * Present (true) only while the session runs in a Claude Code process the helper started for it
+   * (`session.resume`), with no terminal. Replies go to that process. Older apps ignore it.
+   */
+  runsInHelper: z.literal(true).optional(),
   startedAt: z.number(),
   updatedAt: z.number(),
   lastSummary: z.string().nullable(),
@@ -569,6 +574,13 @@ export type SessionDirectory = z.infer<typeof SessionDirectory>;
 export const SessionStarted = z.object({ sessionId: z.string() });
 export type SessionStarted = z.infer<typeof SessionStarted>;
 
+/**
+ * `session.resume`'s result: the message went to a Claude Code process the helper started for this session
+ * (`via: "headless"`). The session's turns appear like any other's, and its `Session` carries `runsInHelper`.
+ */
+export const SessionResumed = z.object({ via: z.literal("headless") });
+export type SessionResumed = z.infer<typeof SessionResumed>;
+
 export const PresenceMode = z.enum(["auto", "here", "away"]);
 export type PresenceMode = z.infer<typeof PresenceMode>;
 
@@ -664,6 +676,18 @@ export const RpcSchemas = {
   "session.start": z.object({
     directory: z.string().min(1).max(4096),
     text: z.string().max(20_000),
+  }),
+  /**
+   * Continues a session that has no live Claude Code process (its terminal was closed): the helper starts
+   * `claude --resume` for it without a terminal, sends `text` as the first message and keeps the process, so later
+   * `session.send` messages reach it and its permission prompts reach the phone like any other. Refused with
+   * `conflict` (and a reason) when the session still has a live process, or already runs in the helper, and with
+   * `not_found` for an unknown session. `text` must not be empty. Result: SessionResumed. Older helpers answer
+   * "unknown method". It is never done by `session.send` itself: a failed send says `canResume` in its error.
+   */
+  "session.resume": z.object({
+    sessionId: z.string(),
+    text: z.string().min(1).max(20_000),
   }),
   /**
    * A session's finished turns, newest first. `before` (optional): only turns that ended before this time, to
@@ -859,6 +883,11 @@ export type RpcRequest = z.infer<typeof RpcRequest>;
 export interface RpcError {
   code: "bad_request" | "not_found" | "conflict" | "unauthorized" | "internal" | "unavailable";
   message: string;
+  /**
+   * Optional, only true: on a failed `session.send`, the session has no live Claude Code process but its
+   * conversation is on disk, so `session.resume` can continue it. Older helpers leave it out.
+   */
+  canResume?: true;
 }
 
 /** QR payload shown by `relay pair`: v1 = direct (Tailscale), v2 = through the Cloudflare relay. */

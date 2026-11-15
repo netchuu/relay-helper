@@ -14,7 +14,14 @@ import { platform } from "../platform/index.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
-import { deliver, TYPE_ANYWAY_MS, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
+import {
+  deliver,
+  type HeadlessRoute,
+  TYPE_ANYWAY_MS,
+  type TypeOps,
+  WaitForPause,
+  WaitForUnlock,
+} from "./inject.ts";
 import type { Registry, SessionRecord } from "./registry.ts";
 
 /** A reply older than this is dropped, with a notice: the person has moved on. */
@@ -194,6 +201,8 @@ export function deliverQueued(opts: {
   hasOpenPrompt(sessionId: string): boolean;
   typeOps?: TypeOps;
   now?: () => number;
+  /** Processes the helper runs itself: a queued reply for one of their sessions goes to its stdin. */
+  headless?: HeadlessRoute;
 }): Deliver {
   const now = opts.now ?? Date.now;
   return async (session, text, reply) => {
@@ -213,6 +222,7 @@ export function deliverQueued(opts: {
         preferTyping: opts.preferTyping,
         locked: locked === true,
         typeAnyway: now() - reply.createdAt >= TYPE_ANYWAY_MS,
+        headless: opts.headless,
       },
       opts.typeOps,
     );

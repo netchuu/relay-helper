@@ -14,6 +14,7 @@ import { getSetting, openDb, setSetting } from "./db.ts";
 import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
 import { Fcm, loadFcmConfig } from "./fcm.ts";
+import { HeadlessSessions } from "./headless.ts";
 import { HookHandler } from "./hooks.ts";
 import { setKnownPids } from "./inject.ts";
 import { MessageTracker } from "./messages.ts";
@@ -120,7 +121,14 @@ export async function runDaemon(): Promise<void> {
     }
   };
   sweepAttachments();
-  const deps = { ...baseDeps, stopper, steps, messages, background, replies, attachments };
+  // Sessions continued without a terminal (`session.resume`): Claude Code processes this daemon owns.
+  const headless = new HeadlessSessions({
+    registry,
+    claudeBin,
+    openPrompt: (input, signal) => hooks.openPrompt(input, signal),
+  });
+  registry.ownedByHelper = (id) => headless.has(id);
+  const deps = { ...baseDeps, stopper, steps, messages, background, replies, attachments, headless };
   const hooks = new HookHandler(deps);
   const rpc = createRpc(deps);
 
@@ -161,7 +169,11 @@ export async function runDaemon(): Promise<void> {
       () =>
         void replies.drain(
           presence.get().locked === true,
-          deliverQueued({ preferTyping: config.preferTyping, hasOpenPrompt: (id) => broker.hasOpen(id) }),
+          deliverQueued({
+            preferTyping: config.preferTyping,
+            hasOpenPrompt: (id) => broker.hasOpen(id),
+            headless,
+          }),
         ),
       1_000,
     ),
@@ -213,6 +225,8 @@ export async function runDaemon(): Promise<void> {
     for (const t of timers) clearInterval(t);
     presence.stop();
     relayLink?.stop();
+    // The Claude Code processes this daemon started for resumed sessions go with it.
+    headless.stopAll();
     local.stop(true);
     app.stop(true);
     try {

@@ -7,6 +7,7 @@ import {
   type RpcMethod,
   RpcSchemas,
   type SendResult,
+  type SessionResumed,
   type SessionStarted,
   sessionNameLength,
   type Turn,
@@ -27,13 +28,14 @@ import { ensurePushKey, revokeDevice } from "./auth.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
 import { DeliveryError, deliver, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { fitPrompts } from "./promptFit.ts";
-import { publicSession, type Registry, type SessionRecord } from "./registry.ts";
+import { processAlive, publicSession, type Registry, type SessionRecord } from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
 import { SentMessages } from "./sentMessages.ts";
@@ -69,6 +71,10 @@ export interface RpcDeps {
   typeOps?: TypeOps;
   /** How long `session.send` waits for a pause itself before the reply queue takes over; tests shorten it. */
   pauseWait?: { inlineMs: number; pollMs: number };
+  /** Claude Code processes the helper owns for sessions continued without a terminal (`session.resume`). */
+  headless?: HeadlessSessions;
+  /** Whether a session's conversation is still on disk, so it can be resumed; tests replace the check. */
+  hasTranscript?: (session: SessionRecord) => boolean;
 }
 
 /**
@@ -93,6 +99,8 @@ class RpcFailure extends Error {
   constructor(
     readonly code: RpcError["code"],
     message: string,
+    /** The session can be continued with `session.resume` (RpcError.canResume). */
+    readonly canResume?: true,
   ) {
     super(message);
   }
@@ -214,6 +222,38 @@ export function createRpc(
         if (err instanceof StartError) throw new RpcFailure(err.code, err.message);
         throw err;
       }
+    },
+
+    "session.resume": async ({ sessionId, text }, actor) => {
+      const session = d.registry.get(sessionId);
+      if (!session) throw new RpcFailure("not_found", "session not found");
+      if (!d.headless) throw new RpcFailure("unavailable", "Sessions can't be continued on this computer.");
+      if (d.headless.has(sessionId))
+        throw new RpcFailure("conflict", "This session already runs in Relay. Send the message as a reply.");
+      // Never a second copy of a session that is still alive: its terminal, app or editor has the process.
+      if (session.pid !== null && processAlive(session.pid))
+        throw new RpcFailure(
+          "conflict",
+          "This session is still running on the computer. Reply to it instead of continuing it again.",
+        );
+      if (session.status !== "ended" && session.pid === null)
+        throw new RpcFailure(
+          "conflict",
+          "This session is still listed as running. Reply to it instead of continuing it again.",
+        );
+      if (!hasTranscript(session))
+        throw new RpcFailure("not_found", "This session's conversation is no longer on the computer.");
+      await inOrder(sessionId, async () => {
+        notePhoneTyped(sessionId, text);
+        try {
+          await (d.headless as HeadlessSessions).resume(session, text);
+        } catch (err) {
+          if (err instanceof ResumeError) throw new RpcFailure(err.code, err.message);
+          throw err;
+        }
+      });
+      audit(d.db, actor, "session.resume", { sessionId, chars: text.length });
+      return { via: "headless" } satisfies SessionResumed;
     },
 
     "session.turns": ({ sessionId, limit, before }) => {
@@ -504,8 +544,16 @@ export function createRpc(
     const withFiles = (ids?.length ?? 0) > 0;
     if (!withFiles && !message) throw new RpcFailure("bad_request", words.empty);
     const session = d.registry.get(sessionId);
-    if (!session || session.status === "ended")
-      throw new RpcFailure("not_found", withFiles ? words.sessionGone : "session not found or ended");
+    // A session the helper is continuing right now still reads 'ended' until its process announces itself.
+    const gone = (s: SessionRecord | null | undefined): boolean =>
+      !s || (s.status === "ended" && !d.headless?.has(sessionId));
+    const goneError = (s: SessionRecord | null | undefined) =>
+      new RpcFailure(
+        "not_found",
+        withFiles ? words.sessionGone : "session not found or ended",
+        s && canResume(s) ? true : undefined,
+      );
+    if (!session || gone(session)) throw goneError(session);
     let text = message;
     let files = 0;
     if (withFiles) {
@@ -518,6 +566,9 @@ export function createRpc(
       throw new RpcFailure("conflict", "the session is waiting for an answer; answer its prompt instead");
     // One send per session at a time, so messages waiting for a pause arrive in the order they were sent.
     return await inOrder(sessionId, async () => {
+      // Waited behind a resume that failed: the session is still ended.
+      const now = d.registry.get(sessionId);
+      if (!now || gone(now)) throw goneError(now);
       try {
         const res = await sendNow(session, text, arrived);
         if (files > 0 && res.via === "socket")
@@ -530,10 +581,21 @@ export function createRpc(
         audit(d.db, actor, "session.send", { sessionId, via: res.via, chars: text.length, files });
         return res;
       } catch (err) {
-        if (err instanceof DeliveryError) throw new RpcFailure("unavailable", err.message);
+        if (err instanceof DeliveryError)
+          throw new RpcFailure("unavailable", err.message, canResume(session) ? true : undefined);
         throw err;
       }
     });
+  }
+
+  const hasTranscript = d.hasTranscript ?? ((s: SessionRecord) => transcriptPathFor(s) !== null);
+
+  /** The session has no live Claude Code process and its conversation is on disk: `session.resume` can continue it. */
+  function canResume(session: SessionRecord): boolean {
+    if (!d.headless || !d.claudeBin || d.headless.has(session.id)) return false;
+    if (session.pid !== null && processAlive(session.pid)) return false;
+    if (session.status !== "ended" && session.pid === null) return false;
+    return hasTranscript(session);
   }
 
   const sending = new Map<string, Promise<unknown>>();
@@ -564,6 +626,16 @@ export function createRpc(
     arrived: number,
   ): Promise<{ via: string; reason?: WaitReason }> {
     const sessionId = session.id;
+    // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
+    if (d.headless?.has(sessionId)) {
+      notePhoneTyped(sessionId, text);
+      return await deliver(
+        session,
+        text,
+        { idleSeconds: null, userTypingNow: false, preferTyping: false, headless: d.headless },
+        d.typeOps,
+      );
+    }
     const waiting = d.replies?.list(sessionId) ?? [];
     // Replies already waiting go first: keep the order the person sent them in.
     if (d.replies && waiting.length > 0) {
@@ -592,6 +664,7 @@ export function createRpc(
             locked: locked === true,
             // Only without a reply queue (never in the daemon): no one would type it later.
             typeAnyway: !d.replies && waited >= timing.inlineMs,
+            headless: d.headless,
           },
           d.typeOps,
         );
@@ -657,7 +730,14 @@ export function createRpc(
       const handler = handlers[m] as Handler<typeof m>;
       return { result: await handler(parsed.data as never, actor, opts) };
     } catch (err) {
-      if (err instanceof RpcFailure) return { error: { code: err.code, message: err.message } };
+      if (err instanceof RpcFailure)
+        return {
+          error: {
+            code: err.code,
+            message: err.message,
+            ...(err.canResume ? { canResume: true as const } : {}),
+          },
+        };
       log.error("rpc failed", { method, err: errMessage(err) });
       return { error: { code: "internal", message: "internal error" } };
     }

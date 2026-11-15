@@ -26,6 +26,7 @@ import {
   SendResult,
   Session,
   SessionDirectory,
+  SessionResumed,
   SessionStarted,
   Turn,
   TurnFullResult,
@@ -658,6 +659,54 @@ const start = {
   },
 };
 
+// Continuing a session whose terminal is closed (session.resume): the helper runs Claude Code for it without a
+// terminal. A send to such a session fails with `canResume`; the phone may then offer the resume.
+const resume = {
+  // A session the helper runs itself: it takes replies, and says so. Older apps ignore the field.
+  session: Session.parse({
+    ...session,
+    terminal: null,
+    status: "working",
+    replyRoute: "typed",
+    runsInHelper: true,
+  }),
+  params: RpcSchemas["session.resume"].parse({
+    sessionId: session.id,
+    text: "Carry on with the coupon fix",
+  }),
+  result: SessionResumed.parse({ via: "headless" }),
+  // Later messages go to the helper's process: `session.send` answers with this route.
+  sendResult: SendResult.parse({ via: "headless" }),
+  // `session.send` to a session with no live process: the answer says it can be resumed.
+  sendRefused: {
+    type: "rpc",
+    id: 90,
+    error: { code: "not_found", message: "session not found or ended", canResume: true },
+  },
+  // The refusals carry no `canResume`: a plain sentence the phone can show.
+  refused: [
+    {
+      type: "rpc",
+      id: 91,
+      error: {
+        code: "conflict",
+        message: "This session is still running on the computer. Reply to it instead of continuing it again.",
+      },
+    },
+    {
+      type: "rpc",
+      id: 92,
+      error: { code: "not_found", message: "This session's conversation is no longer on the computer." },
+    },
+  ],
+  // An older helper: no `session.resume`.
+  olderHelper: {
+    type: "rpc",
+    id: 93,
+    error: { code: "bad_request", message: "unknown method session.resume" },
+  },
+};
+
 // recorded-transcripts: the turns the helper makes from real Claude Code transcripts (mac/test/fixtures/transcripts/,
 // recorded by `bun run record:transcripts`), so the apps decode what a real session produces: an [Image #N] prompt, a
 // stopped turn, an agent, a background shell, a failed tool. Oldest turn first, as the phone lists them.
@@ -746,5 +795,6 @@ write("attachments.json", attachments);
 write("sends.json", sends);
 write("model.json", model);
 write("start.json", start);
+write("resume.json", resume);
 write("recorded.json", recorded);
 console.log(`wrote fixtures to ${dir}`);

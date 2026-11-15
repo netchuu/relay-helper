@@ -202,6 +202,8 @@ export class HookHandler {
       }
 
       case "PermissionRequest":
+        // A process the helper runs asks over its own channel too (can_use_tool): one prompt, not two.
+        if (this.d.registry.ownedByHelper(sessionId)) return NO_OUTPUT;
         return this.permissionRequest(p as unknown as PermissionRequestInput, signal);
 
       case "PreToolUse": {
@@ -320,6 +322,11 @@ export class HookHandler {
       default:
         return NO_OUTPUT;
     }
+  }
+
+  /** A permission request that doesn't come from a hook (a process the helper owns): the same prompt and status. */
+  openPrompt(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply> {
+    return this.permissionRequest(input, signal);
   }
 
   private async permissionRequest(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply> {

@@ -18,7 +18,13 @@ import { afterBreak, noKeySincePrompt, promptDraft } from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
-export type DeliveryRoute = "pty" | "tmux" | "iterm" | "terminal" | "desktop" | "ide" | "socket";
+export type DeliveryRoute = "pty" | "tmux" | "iterm" | "terminal" | "desktop" | "ide" | "socket" | "headless";
+
+/** The Claude Code processes the helper owns (headless.ts): a message for one of their sessions goes to its stdin. */
+export interface HeadlessRoute {
+  has(sessionId: string): boolean;
+  send(sessionId: string, text: string): Promise<void>;
+}
 
 export interface DeliveryResult {
   via: DeliveryRoute;
@@ -85,6 +91,8 @@ export interface DeliverOptions {
    * the inbox): none Relay can type into throws a DeliveryError.
    */
   terminalOnly?: boolean;
+  /** Processes the helper runs itself: a session among them gets the message on its stdin, before any other route. */
+  headless?: HeadlessRoute;
 }
 
 /** Claude Code needs this long after an Esc before it takes keys as a new message (it is still handling the interrupt). */
@@ -173,6 +181,13 @@ export async function deliver(
   ops: TypeOps = defaultTypeOps,
 ): Promise<DeliveryResult> {
   const text = cleanTypedText(raw);
+  if (opts.headless?.has(session.id)) {
+    if (opts.terminalOnly) throw new DeliveryError("This session runs in Relay, without a terminal.");
+    await opts.headless.send(session.id, text).catch((err) => {
+      throw new DeliveryError(err instanceof Error ? err.message : "the session didn't take the message");
+    });
+    return { via: "headless" };
+  }
   if (opts.preferTyping) {
     await settleAfterEscape(session.id, ops);
     const typed = await typeIntoTerminal(session, text, opts, ops);

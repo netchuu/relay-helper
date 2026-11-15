@@ -155,6 +155,7 @@ export function publicSession(s: SessionRecord): Session {
     // An ended session runs nothing (its list is cleared right after this upsert goes out).
     ...(s.status === "ended" ? {} : backgroundField(s.id)),
     ...replyRouteOf(s),
+    ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
     // The model and effort, left out for app sessions: the phone shows its picker where a model is known. Both are
     // what Claude Code reports (hooks and the status line).
     ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
@@ -177,6 +178,8 @@ export function replyRouteOf(s: SessionRecord): {
   replyFix?: "accessibility";
 } {
   if (s.status === "ended") return {};
+  // A message to the helper's own process is an ordinary user message.
+  if (s.runsInHelper) return { replyRoute: "typed" };
   if (s.ptySocket || (s.tmuxPane && s.tmuxSocket)) return { replyRoute: "typed" };
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
   if (s.terminal === "iTerm.app") return { replyRoute: "typed" };
@@ -238,9 +241,21 @@ export class Registry {
   private tick = 0;
   private readonly workingAt = new Map<string, number>();
 
+  /**
+   * Whether the helper itself runs this session's Claude Code process (headless.ts, `session.resume`). Such a
+   * session takes replies, is shown as running in the helper, and is never ended for missing from `claude agents`.
+   */
+  ownedByHelper: (id: string) => boolean = () => false;
+
+  private mark(r: SessionRecord): SessionRecord {
+    return r.status !== "ended" && this.ownedByHelper(r.id)
+      ? { ...r, canReceive: true, runsInHelper: true }
+      : r;
+  }
+
   get(id: string): SessionRecord | null {
     const row = this.db.query("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow | null;
-    return row ? toRecord(row) : null;
+    return row ? this.mark(toRecord(row)) : null;
   }
 
   list(includeEnded = false): SessionRecord[] {
@@ -251,7 +266,7 @@ export class Registry {
           : "SELECT * FROM sessions WHERE status != 'ended' ORDER BY updated_at DESC",
       )
       .all() as SessionRow[];
-    return rows.map(toRecord);
+    return rows.map((r) => this.mark(toRecord(r)));
   }
 
   /** Creates or refreshes a session from any hook event. Returns the record and whether it is new. */
@@ -355,6 +370,7 @@ export class Registry {
    */
   private sweep(): void {
     for (const s of this.list()) {
+      if (s.runsInHelper) continue;
       if (s.pid && !processAlive(s.pid)) {
         this.setStatus(s.id, "ended");
         continue;
@@ -519,12 +535,12 @@ export class Registry {
       } else if (times.changed) this.publish(s.sessionId);
     }
     for (const s of this.list()) {
-      if (!liveIds.has(s.id)) this.setStatus(s.id, "ended");
+      if (!liveIds.has(s.id) && !s.runsInHelper) this.setStatus(s.id, "ended");
     }
   }
 }
 
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
