@@ -20,7 +20,7 @@ const codeReference = (v: string) => /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)
  * capped: an unbounded one is quadratic on long runs of the word.
  */
 const SECRET_NAME =
-  "(?:api[_-]?key|secret|token|(?<![A-Za-z])pass(?:w(?:or)?d|phrase)?|private[_-]?key|access[_-]?key|client[_-]?secret)";
+  "(?:api[_-]?key|secret|token|pass(?:w(?:or)?d|phrase)|(?<![A-Za-z])pass|private[_-]?key|access[_-]?key|client[_-]?secret)";
 
 const quotedOrWord = `(?:"([^"\\n]{6,})"|'([^'\\n]{6,})'|(["']?)([^\\s"',;]{8,}))`;
 
