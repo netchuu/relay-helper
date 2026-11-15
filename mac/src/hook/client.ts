@@ -5,7 +5,7 @@
  * so Claude Code behaves exactly as if Relay were not installed. Keep this file dependency-free: it is
  * compiled to a standalone binary and its startup time is paid on every hook event.
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -95,5 +95,45 @@ async function main(): Promise<void> {
   }
 }
 
-await main().catch(() => {});
+/**
+ * `relay-hook statusline`: Claude Code's status line command (usage-left). Sends the JSON it was given to the
+ * daemon, then runs the status line the person had before Relay (saved in statusline.json by `relay install`) with
+ * the same input and prints its output unchanged. Same contract as the hooks: fail open.
+ */
+async function statusLine(): Promise<void> {
+  const stdin = await Bun.stdin.text();
+  const home = process.env.RELAY_HOME ?? join(homedir(), ".relay");
+  if (process.env.RELAY_INTERNAL !== "1") {
+    try {
+      await fetch("http://relay/statusline", {
+        method: "POST",
+        unix: join(home, "hook.sock"),
+        headers: { "content-type": "application/json" },
+        body: stdin,
+        signal: AbortSignal.timeout(1000),
+      } as BunFetchRequestInit);
+    } catch {
+      // The daemon isn't running: the status line still works.
+    }
+  }
+  let previous: string | null = null;
+  try {
+    const saved = JSON.parse(readFileSync(join(home, "statusline.json"), "utf8")) as {
+      previous?: { command?: unknown };
+    };
+    if (typeof saved.previous?.command === "string") previous = saved.previous.command;
+  } catch {
+    // Nothing saved: Relay's own status line is empty.
+  }
+  if (!previous) return;
+  const child = Bun.spawn(["/bin/sh", "-c", previous], {
+    stdin: new TextEncoder().encode(stdin),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  await writeStdout(await new Response(child.stdout).text());
+  await child.exited;
+}
+
+await (process.argv[2] === "statusline" ? statusLine() : main()).catch(() => {});
 process.exit(0);

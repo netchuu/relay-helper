@@ -20,6 +20,7 @@ import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps
 import type { TurnStopper } from "./stop.ts";
 import { head } from "./text.ts";
 import { answerOwner, interruptedTurn, isSystemMessage } from "./transcript.ts";
+import { forgetUsage, noteUsageAll, parseUsage } from "./usage.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
 export interface HookEnvelope {
@@ -113,6 +114,20 @@ export class HookHandler {
     this.steps = d.steps ?? new StepTracker(d.events);
     this.messages = d.messages ?? new MessageTracker(d.events);
     this.background = d.background ?? new BackgroundTracker(d.events);
+  }
+
+  /** A status line refresh (usage-left): keeps what is left of the limits and tells the phones when it changed. */
+  statusLine(payload: Record<string, unknown>): void {
+    const sessionId = payload.session_id;
+    if (typeof sessionId !== "string") return;
+    const known = this.d.registry.get(sessionId);
+    if (!known || known.status === "ended") return;
+    // The account's limits changed for every live session, not only this one.
+    for (const id of noteUsageAll(sessionId, parseUsage(payload))) {
+      // The registry ends sessions without a SessionEnd hook too (process gone, no longer listed): drop those.
+      if (this.d.registry.get(id)?.status === "ended") forgetUsage(id);
+      else this.d.registry.publish(id);
+    }
   }
 
   async handle(envelope: HookEnvelope, signal: AbortSignal): Promise<HookReply> {
@@ -280,6 +295,7 @@ export class HookHandler {
         this.background.clear(sessionId);
         this.steps.clear(sessionId);
         this.messages.clear(sessionId);
+        forgetUsage(sessionId);
         this.d.registry.setStatus(sessionId, "ended");
         return NO_OUTPUT;
 

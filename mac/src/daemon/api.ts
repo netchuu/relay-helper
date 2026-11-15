@@ -49,6 +49,10 @@ export function startLocalServer(opts: {
           const envelope = (await req.json()) as HookEnvelope;
           return json(await opts.hooks.handle(envelope, req.signal));
         }
+        if (req.method === "POST" && url.pathname === "/statusline") {
+          opts.hooks.statusLine((await req.json()) as Record<string, unknown>);
+          return json({ ok: true });
+        }
         if (req.method === "GET" && url.pathname === "/health")
           return json({ ok: true, protocol: PROTOCOL_VERSION });
         if (req.method === "POST" && url.pathname === "/admin/rpc") {

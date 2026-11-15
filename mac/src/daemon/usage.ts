@@ -1,0 +1,107 @@
+import type { Usage, UsageLimit } from "../../../protocol/index.ts";
+
+/**
+ * What is left of the plan limits and of a session's context (usage-left), from the JSON Claude Code gives its
+ * status line: `context_window.remaining_percentage` and `rate_limits.five_hour` / `.seven_day`
+ * (`used_percentage`, `resets_at` in epoch seconds). Every part can be missing. In memory: it comes back at the next
+ * status line refresh after a restart.
+ */
+
+const perSession = new Map<string, Usage>();
+/** The plan's limits belong to the account, not a session: the newest ones seen, for a session that has none yet. */
+let accountLimits: Pick<Usage, "fiveHour" | "sevenDay"> = {};
+
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const percent = (v: unknown): number | null => {
+  const n = num(v);
+  return n === null ? null : Math.min(100, Math.max(0, Math.round(n)));
+};
+
+function limitOf(raw: unknown): UsageLimit | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const used = percent(r.used_percentage);
+  if (used === null) return null;
+  const at = num(r.resets_at);
+  // Epoch seconds; a value that is already in milliseconds is kept.
+  const resetsAt = at === null || at <= 0 ? undefined : at < 1e11 ? Math.round(at * 1000) : Math.round(at);
+  return { usedPercent: used, ...(resetsAt !== undefined ? { resetsAt } : {}) };
+}
+
+/** The usage in a status line payload, or null when it has none of the parts. */
+export function parseUsage(payload: unknown): Usage | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const p = payload as Record<string, unknown>;
+  const context = (p.context_window ?? {}) as Record<string, unknown>;
+  const limits = (p.rate_limits ?? {}) as Record<string, unknown>;
+  const left = percent(context.remaining_percentage);
+  const fiveHour = limitOf(limits.five_hour);
+  const sevenDay = limitOf(limits.seven_day);
+  if (left === null && !fiveHour && !sevenDay) return null;
+  return {
+    ...(left !== null ? { contextLeftPercent: left } : {}),
+    ...(fiveHour ? { fiveHour } : {}),
+    ...(sevenDay ? { sevenDay } : {}),
+  };
+}
+
+/**
+ * Which reading of one limit window to keep: the one with the later reset (a newer window), and within the same
+ * window the higher percentage, since usage in a window only goes up. An idle session's stale reading, sent again
+ * at every status line refresh, therefore changes nothing.
+ */
+function newer(kept: UsageLimit | undefined, seen: UsageLimit | undefined): UsageLimit | undefined {
+  if (!kept) return seen;
+  if (!seen) return kept;
+  const a = kept.resetsAt ?? 0;
+  const b = seen.resetsAt ?? 0;
+  if (b !== a) return b > a ? seen : kept;
+  return seen.usedPercent > kept.usedPercent ? seen : kept;
+}
+
+/**
+ * Remembers a session's usage and returns the sessions whose shown usage changed: this one, and the others when
+ * the account's limits did (they are the account's, so every live session shows the newest reading).
+ */
+export function noteUsageAll(sessionId: string, usage: Usage | null): string[] {
+  if (!usage) return [];
+  const ids = new Set([...perSession.keys(), sessionId]);
+  const before = new Map([...ids].map((id) => [id, JSON.stringify(usageOf(id) ?? null)]));
+  perSession.set(sessionId, usage);
+  const fiveHour = newer(accountLimits.fiveHour, usage.fiveHour);
+  const sevenDay = newer(accountLimits.sevenDay, usage.sevenDay);
+  accountLimits = { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}) };
+  return [...ids].filter((id) => JSON.stringify(usageOf(id) ?? null) !== before.get(id));
+}
+
+/** Remembers a session's usage. True when it changed for that session (so the phones need an update). */
+export function noteUsage(sessionId: string, usage: Usage | null): boolean {
+  return noteUsageAll(sessionId, usage).includes(sessionId);
+}
+
+/** The session's usage for `publicSession`: its context, with the account's newest limits that still apply. */
+export function usageOf(sessionId: string, now = Date.now()): Usage | undefined {
+  const own = perSession.get(sessionId);
+  if (!own) return undefined;
+  const live = (l: UsageLimit | undefined) =>
+    l && (l.resetsAt === undefined || l.resetsAt > now) ? l : undefined;
+  const fiveHour = live(accountLimits.fiveHour);
+  const sevenDay = live(accountLimits.sevenDay);
+  const out: Usage = {
+    ...(own.contextLeftPercent !== undefined ? { contextLeftPercent: own.contextLeftPercent } : {}),
+    ...(fiveHour ? { fiveHour } : {}),
+    ...(sevenDay ? { sevenDay } : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** A session ended: nothing more to show for it. */
+export function forgetUsage(sessionId: string): void {
+  perSession.delete(sessionId);
+}
+
+/** Tests only. */
+export function resetUsage(): void {
+  perSession.clear();
+  accountLimits = {};
+}

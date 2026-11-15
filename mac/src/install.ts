@@ -97,6 +97,60 @@ export function countHooks(settings: Record<string, unknown>): number {
     .filter((h) => isRelayCommand(h.command)).length;
 }
 
+/** Relay's status line command: relay-hook run as `relay-hook statusline`, optionally quoted. */
+const RELAY_STATUSLINE_COMMAND = /(^|[/\\])relay-hook(["']?)\s+statusline\s*$/;
+
+type StatusLine = { type?: string; command?: string; padding?: number } & Record<string, unknown>;
+
+function isRelayStatusLine(value: unknown): boolean {
+  const command = (value as StatusLine | undefined)?.command;
+  return typeof command === "string" && RELAY_STATUSLINE_COMMAND.test(command.trim());
+}
+
+/** What `relay install` saved about the person's own status line, so uninstall can give it back. */
+export type SavedStatusLine = { previous: StatusLine | null };
+
+/**
+ * Pure: puts Relay's status line in the settings (usage-left). One the person already had is kept in `saved` and
+ * run by Relay's script with the same input, so it looks the same. Installing again keeps what was saved before.
+ */
+export function mergeStatusLine(
+  settings: Record<string, unknown>,
+  hookBin: string,
+  saved: SavedStatusLine | null,
+): { settings: Record<string, unknown>; saved: SavedStatusLine } {
+  const current = settings.statusLine as StatusLine | undefined;
+  const previous = isRelayStatusLine(current) ? (saved?.previous ?? null) : (current ?? null);
+  // Everything else of theirs (padding, refreshInterval, hideVimModeIndicator, ...) keeps working.
+  const ours: StatusLine = { ...previous, type: "command", command: `${hookBin} statusline` };
+  return { settings: { ...settings, statusLine: ours }, saved: { previous } };
+}
+
+/** Pure: gives the person's own status line back, or removes Relay's when there was none. Others' are left alone. */
+export function removeStatusLine(
+  settings: Record<string, unknown>,
+  saved: SavedStatusLine | null,
+): Record<string, unknown> {
+  if (!isRelayStatusLine(settings.statusLine)) return settings;
+  const { statusLine: _ours, ...rest } = settings;
+  return saved?.previous ? { ...rest, statusLine: saved.previous } : rest;
+}
+
+export const STATUSLINE_SAVED = join(paths.home, "statusline.json");
+
+export function readSavedStatusLine(path = STATUSLINE_SAVED): SavedStatusLine | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as SavedStatusLine;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSavedStatusLine(saved: SavedStatusLine, path = STATUSLINE_SAVED): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileAtomic(path, `${JSON.stringify(saved, null, 2)}\n`, 0o600);
+}
+
 export function readSettings(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;

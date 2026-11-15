@@ -30,12 +30,16 @@ import {
   DEFAULT_SETTINGS,
   HOOK_BIN,
   mergeHooks,
+  mergeStatusLine,
   purgeData,
   RELAY_BIN,
+  readSavedStatusLine,
   readSettings,
   relayHooks as relayHooksFor,
   removeHooks,
+  removeStatusLine,
   serviceContext,
+  writeSavedStatusLine,
   writeSettings,
 } from "./install.ts";
 import { axAllowed, desktopInstalled, desktopSessions } from "./integrations/claudeDesktop.ts";
@@ -200,12 +204,15 @@ async function install(args: string[]): Promise<void> {
 
   // 3. Hooks.
   const before = readSettings(settingsPath);
-  const settings = mergeHooks(before, HOOK_BIN);
+  // The status line shows what is left of the limits on the phone; the person's own one keeps running through it.
+  const withStatus = mergeStatusLine(mergeHooks(before, HOOK_BIN), HOOK_BIN, readSavedStatusLine());
+  const settings = withStatus.settings;
   if (dryRun) {
     console.log(JSON.stringify(settings.hooks, null, 2));
     console.log(`(dry run) would write ${settingsPath}`);
     return;
   }
+  writeSavedStatusLine(withStatus.saved);
   const backup = writeSettings(settingsPath, settings);
   console.log(`• hooks installed in ${settingsPath}${backup ? ` (backup: ${backup})` : ""}`);
 
@@ -270,7 +277,10 @@ async function uninstall(args: string[]): Promise<void> {
   const purge = parsed.flags.has("--purge");
   // A daemon left running would keep using the data and write it again.
   if (purge && noService) throw new Error("--purge stops the helper too, so it can't go with --no-service");
-  const backup = writeSettings(settingsPath, removeHooks(readSettings(settingsPath)));
+  const backup = writeSettings(
+    settingsPath,
+    removeStatusLine(removeHooks(readSettings(settingsPath)), readSavedStatusLine()),
+  );
   console.log(`• hooks removed from ${settingsPath}${backup ? ` (backup: ${backup})` : ""}`);
   for (const zedPath of zedSettingsPaths()) {
     try {

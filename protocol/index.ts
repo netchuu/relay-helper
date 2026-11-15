@@ -283,6 +283,29 @@ export type DeliveryCheck = z.infer<typeof DeliveryCheck>;
 /** At most this long, a `sendId` the phone may ask about or send again. */
 export const SEND_ID_MAX = 100;
 
+/** One of the plan's usage limits: how much of the window is used, and when it starts over. */
+export const UsageLimit = z.object({
+  /** Share of the window already used, 0 to 100. */
+  usedPercent: z.number(),
+  /** When the window resets, in ms since epoch. Absent when Claude Code doesn't say. */
+  resetsAt: z.number().optional(),
+});
+export type UsageLimit = z.infer<typeof UsageLimit>;
+
+/**
+ * What is left of the limits, from Claude Code's status line (usage-left). Every part is optional: the plan limits
+ * exist only for subscribers and only after the first response, and a window can be missing.
+ */
+export const Usage = z.object({
+  /** Share of this session's context window still free, 0 to 100. */
+  contextLeftPercent: z.number().optional(),
+  /** The plan's 5-hour limit. */
+  fiveHour: UsageLimit.optional(),
+  /** The plan's weekly limit. */
+  sevenDay: UsageLimit.optional(),
+});
+export type Usage = z.infer<typeof Usage>;
+
 export const Session = z.object({
   id: z.string(),
   name: z.string().nullable(),
@@ -325,6 +348,8 @@ export const Session = z.object({
   step: TurnStep.nullable().optional(),
   /** Shells and agents still running in the background (background-work); absent when none. */
   background: z.array(BackgroundTask).optional(),
+  /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
+  usage: Usage.optional(),
 });
 export type Session = z.infer<typeof Session>;
 

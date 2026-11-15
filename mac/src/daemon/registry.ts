@@ -6,6 +6,7 @@ import type {
   SessionKind,
   SessionStatus,
   TurnStep,
+  Usage,
 } from "../../../protocol/index.ts";
 import { CHILD_PATH } from "../config.ts";
 import { axAllowed, desktopTitle } from "../integrations/claudeDesktop.ts";
@@ -17,6 +18,7 @@ import type { EventLog } from "./events.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { transcriptLastActivity, transcriptPathFor } from "./transcript.ts";
+import { usageOf } from "./usage.ts";
 
 /** A "busy" session that hasn't written to its transcript for this long counts as idle (left open). */
 export const STALE_MS = 30 * 60_000;
@@ -152,7 +154,14 @@ export function publicSession(s: SessionRecord): Session {
     // An ended session runs nothing (its list is cleared right after this upsert goes out).
     ...(s.status === "ended" ? {} : backgroundField(s.id)),
     ...replyRouteOf(s),
+    // What is left of the limits (usage-left); an ended session shows none.
+    ...(s.status === "ended" ? {} : usageField(s.id)),
   };
+}
+
+function usageField(id: string): { usage?: Usage } {
+  const usage = usageOf(id);
+  return usage ? { usage } : {};
 }
 
 /**

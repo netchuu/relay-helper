@@ -30,6 +30,7 @@ import {
   TurnFullResult,
   TurnMessage,
   TurnStep,
+  Usage,
 } from "./index.ts";
 
 const now = 1793620000000;
@@ -182,6 +183,16 @@ const sessionRenamed = Session.parse({
 
 // A session pinned to the top of the Sessions list (session.pin's reply).
 const sessionPinned = Session.parse({ ...session, pinnedAt: 1_762_250_000_000 });
+
+// A session with what is left of the limits (usage-left): the 5-hour and weekly limits and the context.
+const sessionUsage = Session.parse({
+  ...session,
+  usage: Usage.parse({
+    contextLeftPercent: 62,
+    fiveHour: { usedPercent: 38, resetsAt: now + 7_200_000 },
+    sevenDay: { usedPercent: 71, resetsAt: now + 3 * 86_400_000 },
+  }),
+});
 
 // A turn the user stopped from the phone (session.interrupt): what Claude wrote before it stopped.
 const turnStopped = Turn.parse({
@@ -682,6 +693,12 @@ write("frames.json", frames);
 write("turns.json", [turn]);
 write("turn-full.json", turnFull);
 write("steps.json", steps);
+// usage-left: a session with every part, one with only the context, and one the helper has nothing for.
+write("usage.json", {
+  full: sessionUsage,
+  contextOnly: Session.parse({ ...session, usage: { contextLeftPercent: 8 } }),
+  none: session,
+});
 write("messages.json", messages);
 write("timeline.json", { ...timeline, agent: agentProgress });
 write("background.json", background);
