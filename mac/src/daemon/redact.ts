@@ -10,6 +10,21 @@ const alreadyRedacted = (v: string) => v.startsWith("[redacted:");
 /** A placeholder or reference rather than a value: `$TOKEN`, `${TOKEN}`, `<your-token>`, `{{ token }}`. */
 const placeholder = (v: string) => /^(?:\$|<[^>]*>$|\{\{)/.test(v);
 const onlyLetters = (v: string) => /^[A-Za-z]+$/.test(v);
+/**
+ * Whether a long flag names a secret, judged by its dash-separated words: `--auth-token`, `--client-secret`,
+ * `--api-key`, `--password`. `--author`, `--max-tokens`, `--tokenizer` merely contain the letters, and
+ * `--secret-id`, `--token-file` name where a secret lives, not the secret.
+ */
+const secretFlag = (flag: string) => {
+  const words = flag.replace(/^--/, "").toLowerCase().split("-").filter(Boolean);
+  const last = words[words.length - 1] ?? "";
+  if (/^(?:id|name|file|path|url|type|length|count|limit|arn|version|env|stdin)$/.test(last)) return false;
+  const joined = words.join("-");
+  if (/(?:^|-)(?:api-?key|access-?key|apikey|accesskey)(?:-|$)/.test(joined)) return true;
+  // One-word compounds: `--authtoken`, `--accesstoken`, `--apitoken`, `--secretkey`.
+  const compound = /^(?:auth|access|api|refresh|bearer|session|secret|private|client)(?:token|secret|key)$/;
+  return words.some((w) => /^(?:token|password|passwd|passphrase|secret|auth)$/.test(w) || compound.test(w));
+};
 
 /** A word that may stand after a secret-looking name in code: `req.body.password`, `process.env.GITHUB_TOKEN`. */
 const codeReference = (v: string) => /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(v);
@@ -71,7 +86,8 @@ const RULES: Rule[] = [
   {
     // `sshpass -p …`, `docker login -u me -p …`: `-p` takes the password, with or without a space.
     kind: "cli-password",
-    re: /(\b(?:sshpass|(?:docker|podman|nerdctl)\s+login)\b[^\n;&|]{0,300}?\s-p(?:\s+|(?=['"])|=))('[^']*'|"[^"]*"|[^\s'"][^\s]*)/g,
+    // The gap stops at the command sshpass wraps: the `-p` of `ssh -p 2222` is a port.
+    re: /(\b(?:sshpass|(?:docker|podman|nerdctl)\s+login)\b(?:(?!\s(?:ssh|scp|sftp|rsync)\b)[^\n;&|]){0,300}?\s-p(?:\s+|(?=['"])|=))('[^']*'|"[^"]*"|[^\s'"][^\s]*)/g,
     replace: (m, prefix = "", v = "") => (alreadyRedacted(v) ? m : `${prefix}${tag("cli-password")}`),
   },
   {
@@ -87,6 +103,7 @@ const RULES: Rule[] = [
     re: /(--[a-z0-9-]*(?:token|password|passwd|passphrase|secret|api-?key|access-?key|auth)[a-z0-9-]*)(=|\s+)('[^']*'|"[^"]*"|[^\s'"-][^\s]*)/gi,
     replace: (m, flag = "", sep = "", v = "") => {
       const bare = v.replace(/^['"]|['"]$/g, "");
+      if (!secretFlag(flag)) return m;
       if (alreadyRedacted(v) || placeholder(bare) || bare.length < 4) return m;
       if (sep !== "=" && (onlyLetters(bare) || bare.length < 6)) return m;
       return `${flag}${sep}${tag("cli-secret")}`;
