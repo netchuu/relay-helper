@@ -240,6 +240,8 @@ export class Registry {
   /** Ticks when a session is set working and when a check starts: a report taken before a prompt is out of date. */
   private tick = 0;
   private readonly workingAt = new Map<string, number>();
+  /** Ticks when a hook last touched a session: a check that began earlier can't say the session is gone. */
+  private readonly touchedAt = new Map<string, number>();
 
   /**
    * Whether the helper itself runs this session's Claude Code process (headless.ts, `session.resume`). Such a
@@ -277,6 +279,7 @@ export class Registry {
     activity = true,
   ): { session: SessionRecord; created: boolean } {
     const now = Date.now();
+    if (activity) this.touchedAt.set(id, ++this.tick);
     const existing = this.get(id);
     const env = fields.env ?? {};
     const tmuxSocket = env.tmux ? (env.tmux.split(",")[0] ?? null) : null;
@@ -535,7 +538,10 @@ export class Registry {
       } else if (times.changed) this.publish(s.sessionId);
     }
     for (const s of this.list()) {
-      if (!liveIds.has(s.id) && !s.runsInHelper) this.setStatus(s.id, "ended");
+      if (liveIds.has(s.id) || s.runsInHelper) continue;
+      // Started or resumed while the check ran: the list is older than the session.
+      if (Math.max(this.touchedAt.get(s.id) ?? 0, this.workingAt.get(s.id) ?? 0) > askedAt) continue;
+      this.setStatus(s.id, "ended");
     }
   }
 }
