@@ -38,6 +38,7 @@ import {
   relayHooks as relayHooksFor,
   removeHooks,
   removeStatusLine,
+  savedSettingsPath,
   serviceContext,
   writeSavedStatusLine,
   writeSettings,
@@ -272,7 +273,7 @@ async function uninstall(args: string[]): Promise<void> {
     flags: ["--no-service", "--no-launchd", "--purge"],
     options: ["--settings"],
   });
-  const settingsPath = parsed.options.get("--settings") ?? DEFAULT_SETTINGS;
+  const settingsPath = chooseSettingsPath({ flag: parsed.options.get("--settings"), byHelper: false });
   const noService = parsed.flags.has("--no-service") || parsed.flags.has("--no-launchd");
   const purge = parsed.flags.has("--purge");
   // A daemon left running would keep using the data and write it again.
@@ -495,7 +496,7 @@ async function pair(): Promise<void> {
     );
   }
   // One command for new users: set everything up first if it isn't yet (hooks, helper at login).
-  const settingsPath = loadConfig().settingsPath ?? DEFAULT_SETTINGS;
+  const settingsPath = savedSettingsPath(loadConfig().settingsPath) ?? DEFAULT_SETTINGS;
   if (countHooks(readSettings(settingsPath)) === 0 || !(await daemonAlive())) {
     console.log("Setting up Relay first.\n");
     await install(["--from-pair"]);

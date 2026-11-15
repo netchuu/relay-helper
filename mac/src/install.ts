@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, parse, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { assertWritable, writeFileAtomic } from "./atomicWrite.ts";
 import { CHILD_PATH, paths } from "./config.ts";
 import type { ServiceContext } from "./platform/index.ts";
@@ -15,7 +15,14 @@ export const DEFAULT_SETTINGS = join(homedir(), ".claude", "settings.json");
  * (update, pair) keeps the file the person chose earlier; otherwise the default.
  */
 export function chooseSettingsPath(opts: { flag?: string; saved?: string; byHelper: boolean }): string {
-  return opts.flag ?? (opts.byHelper ? opts.saved : undefined) ?? DEFAULT_SETTINGS;
+  // A flag is resolved against the directory the command runs in, so the saved choice names one file everywhere.
+  if (opts.flag !== undefined) return resolve(opts.flag);
+  return (opts.byHelper ? savedSettingsPath(opts.saved) : undefined) ?? DEFAULT_SETTINGS;
+}
+
+/** The settings file saved in config.json. A relative one (saved by older versions) names no single file: ignored. */
+export function savedSettingsPath(saved: string | undefined): string | undefined {
+  return saved !== undefined && isAbsolute(saved) ? saved : undefined;
 }
 
 /**
