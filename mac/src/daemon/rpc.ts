@@ -34,7 +34,7 @@ import { DeliveryError, deliver, type TypeOps, WaitForPause, WaitForUnlock } fro
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
-import { fitPrompts } from "./promptFit.ts";
+import { fitEvent, fitPrompts } from "./promptFit.ts";
 import { processAlive, publicSession, type Registry, type SessionRecord } from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
@@ -190,6 +190,7 @@ export function createRpc(
       // A replay cut by count or size says so, and its latestSeq is the last event sent, so the phone asks again.
       const page = d.events.syncPage(sinceSeq, {
         maxBytes: REPLY_DATA_BYTES,
+        fit: opts.overRelay ? fitEvent : undefined,
         dropped: (event, bytes) =>
           log.warn("sync left out an event too big for one reply", {
             seq: event.seq,

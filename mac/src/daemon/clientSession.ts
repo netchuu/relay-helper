@@ -12,6 +12,7 @@ import {
 } from "./auth.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import { fitEvent } from "./promptFit.ts";
 import type { RpcOpts, RpcOutcome } from "./rpc.ts";
 
 type Rpc = (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome>;
@@ -137,7 +138,7 @@ export class ClientSession {
   }
 
   private sendEvent(event: RelayEvent): void {
-    const text = JSON.stringify({ type: "event", event });
+    const text = JSON.stringify({ type: "event", event: fitEvent(event) });
     const bytes = Buffer.byteLength(text);
     if (bytes > MAX_REPLY_BYTES) {
       log.warn("event too big for the relay, not sent", { type: event.type, seq: event.seq, bytes });

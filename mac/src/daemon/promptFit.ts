@@ -57,3 +57,14 @@ export function fitPrompts(
   while (out.length > 1 && bytes(out) > budget) out = oldest === "first" ? out.slice(1) : out.slice(0, -1);
   return out;
 }
+
+/** What one `prompt.opened` event may take over the relay, so a big prompt still fits a frame and a sync page. */
+export const PROMPT_EVENT_BYTES = 128 * 1024;
+
+/** `event` as the phone gets it over the relay: a `prompt.opened` with long texts is cut and says `truncated`. */
+export function fitEvent<E extends { type: string }>(event: E): E {
+  if (event.type !== "prompt.opened") return event;
+  const e = event as unknown as { prompt: Prompt };
+  const [prompt] = fitPrompts([e.prompt], PROMPT_EVENT_BYTES);
+  return prompt === e.prompt ? event : ({ ...event, prompt } as E);
+}

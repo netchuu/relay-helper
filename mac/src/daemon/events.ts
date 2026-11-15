@@ -66,10 +66,17 @@ export class EventLog {
    */
   syncPage(
     seq: number,
-    opts: { limit?: number; maxBytes: number; dropped?: (event: RelayEvent, bytes: number) => void },
+    opts: {
+      limit?: number;
+      maxBytes: number;
+      /** Each event as it will be sent (a big prompt cut), measured and returned instead of the stored one. */
+      fit?: (event: RelayEvent) => RelayEvent;
+      dropped?: (event: RelayEvent, bytes: number) => void;
+    },
   ): { events: RelayEvent[]; latestSeq: number; more: boolean } {
     const limit = opts.limit ?? 1000;
-    const rows = this.sinceForSync(seq, limit);
+    const stored = this.sinceForSync(seq, limit);
+    const rows = opts.fit ? stored.map(opts.fit) : stored;
     const events: RelayEvent[] = [];
     let used = 2;
     let last = seq;
