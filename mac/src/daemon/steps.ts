@@ -120,6 +120,19 @@ function host(url: unknown): string | null {
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
 
+const LABEL_FIELDS = new Set([
+  "file_path",
+  "notebook_path",
+  "command",
+  "pattern",
+  "url",
+  "description",
+  "skill",
+  "name",
+  "scriptPath",
+  "workflow",
+]);
+
 /** Kind and label for one tool call, in the live ("Reading …") or finished ("Read …") form. */
 export function stepFor(
   toolName: string,
@@ -130,8 +143,9 @@ export function stepFor(
   const live = tense === "live";
   // Secrets are removed from the whole value before anything is cut, so a cut never leaves half a token.
   const i: Record<string, unknown> = {};
+  // Only the fields a label uses: Write.content or Edit strings can be huge and never reach a label.
   for (const [k, v] of Object.entries(input ?? {}))
-    i[k] = typeof v === "string" && k !== "url" ? redact(v) : v;
+    if (LABEL_FIELDS.has(k)) i[k] = typeof v === "string" && k !== "url" ? redact(v) : v;
   const pick = (): { kind: TurnStepKind; label: string } => {
     const file = str(i.file_path) ?? str(i.notebook_path);
     if (toolName === "Read")

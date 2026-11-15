@@ -19,7 +19,9 @@ const RULES: { kind: string; re: RegExp; keepPrefix?: boolean }[] = [
   {
     // KEY=value / "apiKey": "value" / password: value, for names that look secret.
     kind: "secret-assignment",
-    re: /(\b[A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|access[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
+    // No leading name run: `\b[A-Za-z0-9_.-]*` took quadratic time on long unbroken runs, and the text before the
+    // keyword is kept either way.
+    re: /((?:api[_-]?key|secret|token|passw(?:or)?d|private[_-]?key|access[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
     keepPrefix: true,
   },
 ];
