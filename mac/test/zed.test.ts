@@ -119,6 +119,22 @@ describe("Zed settings", () => {
   test("broken JSON is never rewritten", () => {
     expect(() => addRelayShell(`{ "theme": `, BIN)).toThrow();
   });
+
+  test("uninstall gives back the file with its comments", () => {
+    const sources = [
+      '{\n  // note\n  "theme": "x"\n}\n',
+      '{\n  /* block\n     comment */\n  "theme": "x"\n}\n',
+      '{\n  // my terminal\n  "terminal": {\n    // my font\n    "font_size": 12\n  }\n}\n',
+      '{\n  "terminal": {\n    // my terminal\n    "font_size": 12\n  },\n  "theme": "x"\n}\n',
+      '{\n  "theme": "x" // trailing\n}\n',
+      '{ "theme": "x" }\n',
+    ];
+    for (const src of sources) {
+      const added = addRelayShell(src, BIN);
+      expect(added.changed).toBe(true);
+      expect(removeRelayShell(added.text).text).toBe(src);
+    }
+  });
 });
 
 describe("relay shell typing", () => {

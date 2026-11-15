@@ -322,7 +322,14 @@ function insertEntry(text: string, obj: ObjectNode, entry: string, indent: strin
     const closingIndent = indent.slice(2);
     return `${before}\n${indent}${entry}\n${closingIndent}${after.replace(/^\s*/, "")}`;
   }
-  return `${before}\n${indent}${entry},${after.startsWith("\n") ? "" : "\n"}${after}`;
+  // Insert in front of the first member, below any comment that sits above it.
+  const first = obj.entries[0] as Entry;
+  let lineStart = first.start;
+  while (lineStart > 0 && (text[lineStart - 1] === " " || text[lineStart - 1] === "\t")) lineStart--;
+  if (lineStart > 0 && text[lineStart - 1] === "\n")
+    return `${text.slice(0, lineStart)}${text.slice(lineStart, first.start)}${entry},\n${text.slice(lineStart)}`;
+  // The first member shares its line with `{` (or a comment): keep it there.
+  return `${text.slice(0, first.start)}${entry}, ${text.slice(first.start)}`;
 }
 
 /** Removes `entry` from `obj`, with its comma and line. */
@@ -332,13 +339,24 @@ function removeEntry(text: string, obj: ObjectNode, entry: Entry): string {
   let start = entry.start;
   // Take the line's indentation too.
   while (start > 0 && (text[start - 1] === " " || text[start - 1] === "\t")) start--;
+  const atLineStart = start === 0 || text[start - 1] === "\n";
+  // Ends after the entry's comma and, when it had a line to itself, that line's break; comments stay.
+  const lineEnd = (from: number): number => {
+    let e = from;
+    while (text[e] === " " || text[e] === "\t") e++;
+    if (atLineStart && text[e] === "\r") e++;
+    if (atLineStart && text[e] === "\n") e++;
+    return atLineStart && e > from ? e : from;
+  };
   let end: number;
   if (next) {
-    end = next.start;
-    while (end > 0 && (text[end - 1] === " " || text[end - 1] === "\t")) end--;
-  } else {
-    end = skip(text, entry.valueEnd);
+    end = entry.valueEnd;
     if (text[end] === ",") end++;
+    end = lineEnd(end);
+  } else {
+    end = entry.valueEnd;
+    if (text[end] === ",") end++;
+    end = lineEnd(end);
     // Drop a comma left on the previous member.
     const prev = obj.entries[index - 1];
     if (prev) {
