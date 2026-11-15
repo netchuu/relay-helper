@@ -158,6 +158,8 @@ const MIGRATIONS: string[] = [
      at         INTEGER NOT NULL,
      PRIMARY KEY (session_id, send_id)
    );`,
+  // 15: the Inbox history (newest closed prompts) reads this index instead of sorting every closed prompt.
+  `CREATE INDEX IF NOT EXISTS prompts_recent ON prompts(status, resolved_at);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */
