@@ -10,8 +10,16 @@ export const HOOK_BIN = join(BIN_DIR, "relay-hook");
 export const RELAY_BIN = join(BIN_DIR, "relay");
 export const DEFAULT_SETTINGS = join(homedir(), ".claude", "settings.json");
 
-/** Marker used to recognise Relay's own entries (idempotent install/uninstall). */
-const RELAY_MARKER = "relay-hook";
+/**
+ * Recognises Relay's own entries (idempotent install/uninstall): a command whose program is a file named
+ * exactly `relay-hook`, wherever it lives (older installs used other paths), optionally quoted or with
+ * arguments. Someone else's `slack-relay-hook.sh` is not Relay's.
+ */
+const RELAY_HOOK_COMMAND = /(^|[/\\])relay-hook(["']?)(\s|$)/;
+
+function isRelayCommand(command: string | undefined): boolean {
+  return command !== undefined && RELAY_HOOK_COMMAND.test(command.trim());
+}
 
 type HookCommand = { type: "command"; command: string; timeout?: number; async?: boolean };
 type HookGroup = { matcher?: string; hooks: HookCommand[] };
@@ -47,7 +55,7 @@ export function mergeHooks(settings: Record<string, unknown>, hookBin: string): 
   for (const [event, groups] of Object.entries(hooks)) {
     const kept: HookGroup[] = [];
     for (const group of groups) {
-      const remaining = group.hooks.filter((h) => !h.command?.includes(RELAY_MARKER));
+      const remaining = group.hooks.filter((h) => !isRelayCommand(h.command));
       if (remaining.length) kept.push({ ...group, hooks: remaining });
     }
     if (kept.length) hooks[event] = kept;
@@ -64,7 +72,7 @@ export function removeHooks(settings: Record<string, unknown>): Record<string, u
   const hooks = { ...((settings.hooks as HooksConfig | undefined) ?? {}) };
   for (const [event, groups] of Object.entries(hooks)) {
     const kept = groups
-      .map((g) => ({ ...g, hooks: g.hooks.filter((h) => !h.command?.includes(RELAY_MARKER)) }))
+      .map((g) => ({ ...g, hooks: g.hooks.filter((h) => !isRelayCommand(h.command)) }))
       .filter((g) => g.hooks.length);
     if (kept.length) hooks[event] = kept;
     else delete hooks[event];
@@ -74,12 +82,11 @@ export function removeHooks(settings: Record<string, unknown>): Record<string, u
 
 /** How many of Relay's own hook entries the settings hold. */
 export function countHooks(settings: Record<string, unknown>): number {
-  const needle = RELAY_MARKER;
   const hooks = (settings.hooks as HooksConfig | undefined) ?? {};
   return Object.values(hooks)
     .flat()
     .flatMap((g) => g.hooks)
-    .filter((h) => h.command?.includes(needle)).length;
+    .filter((h) => isRelayCommand(h.command)).length;
 }
 
 export function readSettings(path: string): Record<string, unknown> {

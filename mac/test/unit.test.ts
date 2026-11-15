@@ -310,6 +310,41 @@ describe("install", () => {
     expect(JSON.stringify(removed)).toContain("my-linter");
     expect(JSON.stringify(removed)).toContain("notify-me");
   });
+
+  const slack = { type: "command", command: "/Users/x/bin/slack-relay-hook.sh" };
+  const withSlack = {
+    hooks: {
+      Stop: [{ hooks: [slack] }],
+      Notification: [{ hooks: [slack, { type: "command", command: "/old/path/relay-hook" }] }],
+    },
+  };
+
+  test("a user's slack-relay-hook.sh survives install and uninstall, and isn't counted", () => {
+    expect(countHooks(withSlack)).toBe(1);
+    const merged = mergeHooks(withSlack, "/h/relay-hook");
+    expect(countHooks(merged)).toBe(11);
+    const stop = (merged.hooks as Record<string, { hooks: unknown[] }[]>).Stop;
+    expect(stop?.[0]?.hooks).toEqual([slack]);
+    const notification = (merged.hooks as Record<string, { hooks: unknown[] }[]>).Notification;
+    expect(notification?.[0]?.hooks).toEqual([slack]);
+    const removed = removeHooks(merged);
+    expect(countHooks(removed)).toBe(0);
+    expect(removed.hooks).toEqual({ Stop: [{ hooks: [slack] }], Notification: [{ hooks: [slack] }] });
+  });
+
+  test("Relay's hooks from older install paths are still recognised", () => {
+    for (const command of [
+      "relay-hook",
+      "/Users/x/.relay/bin/relay-hook",
+      '"/Users/x/My Stuff/relay-hook"',
+      "/usr/local/bin/relay-hook --flag",
+    ]) {
+      const s = { hooks: { Stop: [{ hooks: [{ type: "command", command }] }] } };
+      expect(countHooks(s)).toBe(1);
+      expect(countHooks(mergeHooks(s, "/h/relay-hook"))).toBe(11);
+      expect(removeHooks(s).hooks).toEqual({});
+    }
+  });
 });
 
 describe("typed delivery", () => {
