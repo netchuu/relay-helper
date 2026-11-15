@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, parse, resolve } from "node:path";
@@ -106,8 +107,11 @@ export function countHooks(settings: Record<string, unknown>): number {
     .filter((h) => isRelayCommand(h.command)).length;
 }
 
-/** Relay's status line command: relay-hook run as `relay-hook statusline`, optionally quoted. */
-const RELAY_STATUSLINE_COMMAND = /(^|[/\\])relay-hook(["']?)\s+statusline\s*$/;
+/**
+ * Relay's status line command: relay-hook run as `relay-hook statusline`, optionally quoted, optionally followed by
+ * the key of the settings file it was installed into (see `statusLineKey`).
+ */
+const RELAY_STATUSLINE_COMMAND = /(^|[/\\])relay-hook(["']?)\s+statusline(?:\s+([0-9a-f]{8}))?\s*$/;
 
 type StatusLine = { type?: string; command?: string; padding?: number } & Record<string, unknown>;
 
@@ -116,8 +120,33 @@ function isRelayStatusLine(value: unknown): boolean {
   return typeof command === "string" && RELAY_STATUSLINE_COMMAND.test(command.trim());
 }
 
-/** What `relay install` saved about the person's own status line, so uninstall can give it back. */
-export type SavedStatusLine = { previous: StatusLine | null };
+/** The key in a Relay status line command, or undefined for one without (written before keys). */
+function keyOf(value: unknown): string | undefined {
+  const command = (value as StatusLine | undefined)?.command;
+  return typeof command === "string" ? RELAY_STATUSLINE_COMMAND.exec(command.trim())?.[3] : undefined;
+}
+
+/**
+ * Names one settings file in the saved status lines. Every settings file points at the same relay-hook, so the
+ * command carries this key and `relay-hook statusline` knows whose status line to run.
+ */
+export function statusLineKey(settingsPath: string): string {
+  return createHash("sha256").update(resolve(settingsPath)).digest("hex").slice(0, 8);
+}
+
+/**
+ * What `relay install` saved about the person's own status lines, so uninstall can give them back.
+ * `files` holds one per settings file by key; `previous` is the one an install of an earlier version saved for
+ * every file, still used by a status line command that has no key.
+ */
+export type SavedStatusLine = { previous: StatusLine | null; files?: Record<string, StatusLine | null> };
+
+/** The status line saved for a Relay status line command: its file's own, or the old shared one without a key. */
+export function savedStatusLineFor(saved: SavedStatusLine | null, command: unknown): StatusLine | null {
+  const key = keyOf({ command });
+  if (key === undefined) return saved?.previous ?? null;
+  return saved?.files?.[key] ?? null;
+}
 
 /**
  * Pure: puts Relay's status line in the settings (usage-left). One the person already had is kept in `saved` and
@@ -127,12 +156,21 @@ export function mergeStatusLine(
   settings: Record<string, unknown>,
   hookBin: string,
   saved: SavedStatusLine | null,
+  key?: string,
 ): { settings: Record<string, unknown>; saved: SavedStatusLine } {
   const current = settings.statusLine as StatusLine | undefined;
-  const previous = isRelayStatusLine(current) ? (saved?.previous ?? null) : (current ?? null);
+  const previous = isRelayStatusLine(current)
+    ? savedStatusLineFor(saved, current?.command)
+    : (current ?? null);
   // Everything else of theirs (padding, refreshInterval, hideVimModeIndicator, ...) keeps working.
-  const ours: StatusLine = { ...previous, type: "command", command: `${hookBin} statusline` };
-  return { settings: { ...settings, statusLine: ours }, saved: { previous } };
+  const command = key === undefined ? `${hookBin} statusline` : `${hookBin} statusline ${key}`;
+  const ours: StatusLine = { ...previous, type: "command", command };
+  if (key === undefined) return { settings: { ...settings, statusLine: ours }, saved: { previous } };
+  // The other files' status lines stay as they were; the shared one stays for files still on the old command.
+  return {
+    settings: { ...settings, statusLine: ours },
+    saved: { previous: saved?.previous ?? null, files: { ...saved?.files, [key]: previous } },
+  };
 }
 
 /** True when the settings hold a Relay hook or Relay's status line: what uninstall has to take out. */
@@ -147,7 +185,8 @@ export function removeStatusLine(
 ): Record<string, unknown> {
   if (!isRelayStatusLine(settings.statusLine)) return settings;
   const { statusLine: _ours, ...rest } = settings;
-  return saved?.previous ? { ...rest, statusLine: saved.previous } : rest;
+  const previous = savedStatusLineFor(saved, (settings.statusLine as StatusLine).command);
+  return previous ? { ...rest, statusLine: previous } : rest;
 }
 
 export const STATUSLINE_SAVED = join(paths.home, "statusline.json");

@@ -42,6 +42,7 @@ import {
   removeStatusLine,
   savedSettingsPath,
   serviceContext,
+  statusLineKey,
   writeSavedStatusLine,
   writeSettings,
 } from "./install.ts";
@@ -208,7 +209,12 @@ async function install(args: string[]): Promise<void> {
   // 3. Hooks.
   const before = readSettings(settingsPath);
   // The status line shows what is left of the limits on the phone; the person's own one keeps running through it.
-  const withStatus = mergeStatusLine(mergeHooks(before, HOOK_BIN), HOOK_BIN, readSavedStatusLine());
+  const withStatus = mergeStatusLine(
+    mergeHooks(before, HOOK_BIN),
+    HOOK_BIN,
+    readSavedStatusLine(),
+    statusLineKey(settingsPath),
+  );
   const settings = withStatus.settings;
   if (dryRun) {
     console.log(JSON.stringify(settings.hooks, null, 2));

@@ -14,7 +14,13 @@ import { sessionModels } from "../src/daemon/model.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { noteUsage, noteUsageAll, parseUsage, resetUsage, usageOf } from "../src/daemon/usage.ts";
-import { mergeStatusLine, removeStatusLine } from "../src/install.ts";
+import {
+  mergeStatusLine,
+  readSavedStatusLine,
+  removeStatusLine,
+  statusLineKey,
+  writeSavedStatusLine,
+} from "../src/install.ts";
 
 const BIN = "/Users/me/.relay/bin/relay-hook";
 const dirs: string[] = [];
@@ -227,12 +233,64 @@ test("uninstall leaves a status line that isn't Relay's alone", () => {
   expect(removeStatusLine({ statusLine: other }, { previous: null }).statusLine).toEqual(other);
 });
 
+// A second settings file must not touch the first one's saved status line.
+
+test("a second settings file without a status line keeps the first file's", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-line-"));
+  dirs.push(dir);
+  const savedPath = join(dir, "statusline.json");
+  const own = { type: "command", command: "~/.claude/statusline.sh", padding: 0 };
+  const [ka, kb] = [statusLineKey("/a/settings.json"), statusLineKey("/b/settings.json")];
+  expect(ka).not.toBe(kb);
+  const a = mergeStatusLine({ statusLine: own }, BIN, readSavedStatusLine(savedPath), ka);
+  writeSavedStatusLine(a.saved, savedPath);
+  const b = mergeStatusLine({}, BIN, readSavedStatusLine(savedPath), kb);
+  writeSavedStatusLine(b.saved, savedPath);
+  const saved = readSavedStatusLine(savedPath);
+  expect(saved?.files?.[ka]).toEqual(own);
+  expect(removeStatusLine(a.settings, saved).statusLine).toEqual(own);
+  expect(removeStatusLine(b.settings, saved)).toEqual({});
+  // Installing into the first file again keeps its own line too.
+  const again = mergeStatusLine(a.settings, BIN, saved, ka);
+  expect(again.saved.files?.[ka]).toEqual(own);
+});
+
+test("two settings files with different status lines each get their own back", () => {
+  const one = { type: "command", command: "echo one" };
+  const two = { type: "command", command: "echo two", padding: 1 };
+  const [ka, kb] = [statusLineKey("/a/settings.json"), statusLineKey("/b/settings.json")];
+  const a = mergeStatusLine({ statusLine: one }, BIN, null, ka);
+  const b = mergeStatusLine({ statusLine: two }, BIN, a.saved, kb);
+  expect(removeStatusLine(a.settings, b.saved).statusLine).toEqual(one);
+  expect(removeStatusLine(b.settings, b.saved).statusLine).toEqual(two);
+});
+
+test("a statusline.json from before keys is still read, and the first install after it keeps it", () => {
+  const own = { type: "command", command: "echo old" };
+  const legacy = { previous: own };
+  const oldSettings = { statusLine: { ...own, command: `${BIN} statusline` } };
+  expect(removeStatusLine(oldSettings, legacy).statusLine).toEqual(own);
+  const key = statusLineKey("/a/settings.json");
+  const again = mergeStatusLine(oldSettings, BIN, legacy, key);
+  expect(again.saved.files?.[key]).toEqual(own);
+  expect(again.saved.previous).toEqual(own);
+  expect(removeStatusLine(again.settings, again.saved).statusLine).toEqual(own);
+});
+
+test("a keyed status line command is Relay's, and one with another word after it isn't", () => {
+  const key = statusLineKey("/a/settings.json");
+  const kept = { type: "command", command: "echo x" };
+  expect(removeStatusLine({ statusLine: kept }, { previous: null })).toEqual({ statusLine: kept });
+  const ours = { type: "command", command: `${BIN} statusline ${key}` };
+  expect(removeStatusLine({ statusLine: ours }, { previous: null })).toEqual({});
+});
+
 // relay-hook statusline: reports to the daemon and prints the person's own line unchanged.
 
 const CLIENT = join(import.meta.dir, "../src/hook/client.ts");
 const INPUT = JSON.stringify({ session_id: "s1", context_window: { remaining_percentage: 62 } });
 
-async function runLine(saved: unknown, daemon: boolean) {
+async function runLine(saved: unknown, daemon: boolean, key?: string) {
   const dir = mkdtempSync(join(tmpdir(), "relay-line-"));
   dirs.push(dir);
   const bodies: string[] = [];
@@ -246,7 +304,7 @@ async function runLine(saved: unknown, daemon: boolean) {
       })
     : null;
   if (saved) writeFileSync(join(dir, "statusline.json"), JSON.stringify(saved));
-  const proc = Bun.spawn(["bun", CLIENT, "statusline"], {
+  const proc = Bun.spawn(["bun", CLIENT, "statusline", ...(key ? [key] : [])], {
     env: { ...process.env, RELAY_HOME: dir },
     stdin: new Blob([INPUT]),
     stdout: "pipe",
@@ -265,6 +323,16 @@ test("the status line command sends the input on and prints the person's line un
   );
   expect(out).toBe(`${INPUT.toUpperCase()} ok`);
   expect(bodies).toEqual([INPUT]);
+});
+
+test("the status line command runs the line of the settings file whose key it carries", async () => {
+  const saved = {
+    previous: { command: "echo shared" },
+    files: { aaaaaaaa: { command: "echo first" }, bbbbbbbb: null },
+  };
+  expect((await runLine(saved, false, "aaaaaaaa")).out).toBe("first\n");
+  expect((await runLine(saved, false, "bbbbbbbb")).out).toBe("");
+  expect((await runLine(saved, false)).out).toBe("shared\n");
 });
 
 test("without a line of the person's it prints nothing, and with the daemon down it still works", async () => {

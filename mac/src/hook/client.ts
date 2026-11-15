@@ -123,10 +123,15 @@ async function statusLine(): Promise<void> {
   }
   let previous: string | null = null;
   try {
+    type Line = { command?: unknown } | null;
     const saved = JSON.parse(readFileSync(join(home, "statusline.json"), "utf8")) as {
-      previous?: { command?: unknown };
+      previous?: Line;
+      files?: Record<string, Line>;
     };
-    if (typeof saved.previous?.command === "string") previous = saved.previous.command;
+    // The command carries the key of its settings file; one without (an earlier version) uses the shared one.
+    const key = process.argv[3];
+    const own = key === undefined ? saved.previous : saved.files?.[key];
+    if (typeof own?.command === "string") previous = own.command;
   } catch {
     // Nothing saved: Relay's own status line is empty.
   }
