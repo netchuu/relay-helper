@@ -12,6 +12,29 @@ import { join } from "node:path";
 const BLOCKING_EVENTS = new Set(["PermissionRequest"]);
 const NON_BLOCKING_TIMEOUT_MS = 5000;
 
+const STDOUT_FLUSH_TIMEOUT_MS = 10_000;
+
+/**
+ * Write the reply and wait until it is flushed. Exiting right after `write` cuts a large reply at the
+ * pipe's buffer (64 KiB) when the reader is a Node process or a shell. A reader that never reads or
+ * has closed the pipe must not hang Claude Code: give up after a timeout or on any error.
+ */
+function writeStdout(text: string): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, STDOUT_FLUSH_TIMEOUT_MS);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    process.stdout.on("error", done);
+    try {
+      process.stdout.write(text, done);
+    } catch {
+      done();
+    }
+  });
+}
+
 async function main(): Promise<void> {
   // The daemon's own Claude processes (manager agent, summaries) must not report to themselves.
   if (process.env.RELAY_INTERNAL === "1") return;
@@ -58,7 +81,7 @@ async function main(): Promise<void> {
     } as BunFetchRequestInit);
     if (!res.ok) return;
     const reply = (await res.json()) as { stdout?: string };
-    if (reply.stdout) process.stdout.write(reply.stdout);
+    if (reply.stdout) await writeStdout(reply.stdout);
   } catch (err) {
     // ENOENT/ECONNREFUSED just means the daemon is not running; anything else is worth a trace.
     const message = err instanceof Error ? err.message : String(err);
