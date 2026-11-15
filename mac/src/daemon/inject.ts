@@ -396,7 +396,7 @@ async function claudeIsInFrontInPane(
       ops.tmuxPaneTty(session.tmuxSocket, session.tmuxPane).catch(() => null),
       ops.ttyOf(session.pid).catch(() => null),
     ]);
-    if (!paneTty || paneTty !== procTty) {
+    if (!sameTty(paneTty, procTty)) {
       log.info("not typing into tmux: Claude Code isn't running in that pane", {
         sessionId: session.id,
         pid: session.pid,
@@ -612,7 +612,21 @@ export async function ttyOf(pid: number | null): Promise<string | null> {
   });
   const out = (await new Response(proc.stdout).text()).trim();
   await proc.exited;
-  return /^ttys\d+$/.test(out) ? `/dev/${out}` : null;
+  return fullTty(out);
+}
+
+/** A terminal name as `ps` prints it (`ttys003` on macOS, `pts/0` or `tty1` on Linux), or null for none (`??`, `?`). */
+const PS_TTY = /^(ttys\d+|pts\/\d+|tty\d+)$/;
+
+/** The device path of a `ps` terminal name (`ttys003` is `/dev/ttys003`), or null when it names no terminal. */
+export function fullTty(psName: string): string | null {
+  return PS_TTY.test(psName) ? `/dev/${psName}` : null;
+}
+
+/** Whether two terminal names are the same one: tmux's `pane_tty` is `/dev/pts/0`, `ps` prints `pts/0`. */
+export function sameTty(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  return a.replace(/^\/dev\//, "") === b.replace(/^\/dev\//, "");
 }
 
 /**
@@ -638,7 +652,7 @@ export async function viewerTtyOf(
   if (!host?.command.includes("--bg-pty-host")) return null;
   const viewers = procs.filter(
     (p) =>
-      /^ttys\d+$/.test(p.tty) &&
+      PS_TTY.test(p.tty) &&
       p.pid !== pid &&
       !others.includes(p.pid) &&
       /^(\S*\/)?claude(\s|$)/.test(p.command) &&
