@@ -45,6 +45,65 @@
       "reason": null
     }
   ],
+  "resultHeld": {
+    "via": "socket",
+    "heldAtMac": true
+  },
+  "heldEvents": [
+    {
+      "seq": 60,
+      "ts": 1793620000000,
+      "type": "reply.held",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "state": "waiting"
+    },
+    {
+      "seq": 61,
+      "ts": 1793620000000,
+      "type": "reply.held",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "state": "delivered"
+    },
+    {
+      "seq": 62,
+      "ts": 1793620000000,
+      "type": "reply.held",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "state": "waiting",
+      "stop": true
+    },
+    {
+      "seq": 63,
+      "ts": 1793620000000,
+      "type": "reply.held",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "state": "expired",
+      "stop": true
+    }
+  ],
+  "sessionHeld": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "heldAtMac": true,
+    "permissionMode": "bypassPermissions"
+  },
+  "interruptHeld": {
+    "via": "message",
+    "turnId": null,
+    "heldAtMac": true
+  },
   "resultRepeat": {
     "via": "tmux",
     "repeat": true

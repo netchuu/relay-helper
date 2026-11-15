@@ -15,6 +15,7 @@ import { errMessage, log } from "../log.ts";
 import { backgroundOf } from "./background.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import { heldField, permissionModeField } from "./held.ts";
 import { sessionModels } from "./model.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
@@ -155,6 +156,7 @@ export function publicSession(s: SessionRecord): Session {
     // An ended session runs nothing (its list is cleared right after this upsert goes out).
     ...(s.status === "ended" ? {} : backgroundField(s.id)),
     ...replyRouteOf(s),
+    ...(s.status === "ended" ? {} : { ...heldField(s.id), ...permissionModeField(s.id) }),
     ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
     // The model and effort, left out for app sessions: the phone shows its picker where a model is known. Both are
     // what Claude Code reports (hooks and the status line).

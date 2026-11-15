@@ -266,6 +266,12 @@ export const SendResult = z.object({
   repeat: z.literal(true).optional(),
   /** With `via: "queued"`: why it waits. Older helpers leave it out, and the phone then says the Mac is locked. */
   reason: z.enum(["locked", "typing", "draft"]).optional(),
+  /**
+   * With `via: "socket"`: Claude Code didn't take the message, it waits for approval at the Mac (a session that
+   * skips permission prompts holds inbox messages). Sent only as true; `reply.held` events say when it was delivered
+   * or expired. Older helpers leave it out, and the phone then shows the message as sent.
+   */
+  heldAtMac: z.literal(true).optional(),
 });
 export type SendResult = z.infer<typeof SendResult>;
 
@@ -359,6 +365,14 @@ export const Session = z.object({
   effort: z.string().optional(),
   /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
   usage: Usage.optional(),
+  /** Present (true) while a reply to this session waits for approval at the Mac (`reply.held`); absent otherwise. */
+  heldAtMac: z.literal(true).optional(),
+  /**
+   * Claude Code's permission mode as the session's last hook reported it ("default", "acceptEdits", "plan",
+   * "bypassPermissions"...); absent when none has. In a session that skips permission prompts, replies sent through
+   * the inbox may need approval at the Mac, so a phone can say so beforehand.
+   */
+  permissionMode: z.string().optional(),
 });
 export type Session = z.infer<typeof Session>;
 
@@ -440,6 +454,8 @@ export const InterruptResult = z.object({
   via: InterruptVia,
   /** The stopped turn, once the helper saw it end (within a few seconds); null otherwise. */
   turnId: z.string().nullable(),
+  /** Present (true) when the stop message sits at the Mac waiting for approval: nothing has stopped yet. */
+  heldAtMac: z.literal(true).optional(),
 });
 export type InterruptResult = z.infer<typeof InterruptResult>;
 
@@ -639,6 +655,16 @@ export const EventBody = z.discriminatedUnion("type", [
     type: z.literal("reply.waiting"),
     sessionId: z.string(),
     reason: z.enum(["locked", "typing", "draft"]).nullable(),
+  }),
+  /**
+   * A reply sent through the inbox is held at the Mac (`waiting`), then taken by Claude (`delivered`) or dropped
+   * when the hold's time ran out (`expired`). `stop`: it was the phone's Stop. Never pushed.
+   */
+  z.object({
+    type: z.literal("reply.held"),
+    sessionId: z.string(),
+    state: z.enum(["waiting", "delivered", "expired"]),
+    stop: z.literal(true).optional(),
   }),
   z.object({
     type: z.literal("session.notice"),

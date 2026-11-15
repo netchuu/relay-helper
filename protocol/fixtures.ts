@@ -602,6 +602,20 @@ const sends = {
     { seq: 51, ts: now, type: "reply.waiting", sessionId: session.id, reason: "typing" },
     { seq: 52, ts: now, type: "reply.waiting", sessionId: session.id, reason: null },
   ]),
+  // Through the inbox, but Claude Code holds the message at the Mac for approval: it isn't delivered yet. Older
+  // helpers leave `heldAtMac` out and the phone shows it as sent.
+  resultHeld: SendResult.parse({ via: "socket", heldAtMac: true }),
+  // Then it is delivered (the Mac approved it) or expired (nobody did): `reply.held` events; `stop` marks the phone's Stop.
+  heldEvents: z.array(RelayEvent).parse([
+    { seq: 60, ts: now, type: "reply.held", sessionId: session.id, state: "waiting" },
+    { seq: 61, ts: now, type: "reply.held", sessionId: session.id, state: "delivered" },
+    { seq: 62, ts: now, type: "reply.held", sessionId: session.id, state: "waiting", stop: true },
+    { seq: 63, ts: now, type: "reply.held", sessionId: session.id, state: "expired", stop: true },
+  ]),
+  // A session whose replies wait at the Mac now, and one that reports its permission mode beforehand.
+  sessionHeld: Session.parse({ ...session, heldAtMac: true, permissionMode: "bypassPermissions" }),
+  // The phone's Stop held at the Mac: nothing stopped.
+  interruptHeld: InterruptResult.parse({ via: "message", turnId: null, heldAtMac: true }),
   // The same id again: nothing typed, the first send's answer.
   resultRepeat: SendResult.parse({ via: "tmux", repeat: true }),
   // No reply came: the phone asks once.

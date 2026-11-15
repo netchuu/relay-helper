@@ -13,10 +13,12 @@ import { errMessage, log } from "../log.ts";
 import { platform } from "../platform/index.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import type { HeldReplies } from "./held.ts";
 import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
 import {
   deliver,
   type HeadlessRoute,
+  PHONE_PREFIX,
   TYPE_ANYWAY_MS,
   type TypeOps,
   WaitForPause,
@@ -203,6 +205,8 @@ export function deliverQueued(opts: {
   now?: () => number;
   /** Processes the helper runs itself: a queued reply for one of their sessions goes to its stdin. */
   headless?: HeadlessRoute;
+  /** Replies Claude Code holds at the Mac: a queued reply that ends up in the inbox is watched like a direct one. */
+  held?: HeldReplies;
 }): Deliver {
   const now = opts.now ?? Date.now;
   return async (session, text, reply) => {
@@ -212,20 +216,30 @@ export function deliverQueued(opts: {
       ? await platform.presence.read({ tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [] })
       : { idleSeconds: null, locked: false };
     notePhoneTyped(session.id, text);
-    const res = await deliver(
-      session,
-      text,
-      {
-        submitted: () => !phoneTypePending(session.id, text),
-        idleSeconds,
-        userTypingNow: false,
-        preferTyping: opts.preferTyping,
-        locked: locked === true,
-        typeAnyway: now() - reply.createdAt >= TYPE_ANYWAY_MS,
-        headless: opts.headless,
-      },
-      opts.typeOps,
-    );
+    const watch = opts.held?.expect(session.id, `${PHONE_PREFIX}\n${text}`);
+    let res: Awaited<ReturnType<typeof deliver>>;
+    try {
+      res = await deliver(
+        session,
+        text,
+        {
+          submitted: () => !phoneTypePending(session.id, text),
+          idleSeconds,
+          userTypingNow: false,
+          preferTyping: opts.preferTyping,
+          locked: locked === true,
+          typeAnyway: now() - reply.createdAt >= TYPE_ANYWAY_MS,
+          headless: opts.headless,
+        },
+        opts.typeOps,
+      );
+    } catch (err) {
+      watch?.cancel();
+      throw err;
+    }
+    // Through the inbox: the watch runs on without holding the queue up, and tells the phone if it is held.
+    if (res.via === "socket") void watch?.wait();
+    else watch?.cancel();
     if (res.submitted === false) throw new NotSent();
   };
 }

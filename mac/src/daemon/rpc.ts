@@ -29,8 +29,9 @@ import type { Broker } from "./broker.ts";
 import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
+import type { HeldReplies } from "./held.ts";
 import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
-import { DeliveryError, deliver, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
+import { DeliveryError, deliver, PHONE_PREFIX, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
@@ -63,6 +64,8 @@ export interface RpcDeps {
   claudeBin?: string | null;
   /** The phone's Stop (session.interrupt). */
   stopper?: TurnStopper;
+  /** Replies Claude Code holds at the Mac (held-replies). */
+  held?: HeldReplies;
   /** Replies waiting for the Mac to be unlocked (desktop-ide-delivery). */
   replies?: ReplyQueue;
   /** Photos and files from the phone (attachments). */
@@ -317,7 +320,13 @@ export function createRpc(
           audit(d.db, actor, "session.send", { sessionId, via: first.via, repeat: true });
           // Still waiting: why, as of now.
           const reason = first.via === "queued" ? d.replies?.reasonOf(sessionId) : undefined;
-          return { via: first.via, ...(reason ? { reason } : {}), repeat: true } satisfies SendResult;
+          const held = first.via === "socket" && d.held?.isHeld(sessionId);
+          return {
+            via: first.via,
+            ...(reason ? { reason } : {}),
+            ...(held ? { heldAtMac: true as const } : {}),
+            repeat: true,
+          } satisfies SendResult;
         }
       }
       const sending = send(sessionId, message, ids, actor);
@@ -635,7 +644,7 @@ export function createRpc(
     session: SessionRecord,
     text: string,
     arrived: number,
-  ): Promise<{ via: string; reason?: WaitReason }> {
+  ): Promise<{ via: string; reason?: WaitReason; heldAtMac?: true }> {
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
     if (d.headless?.has(sessionId)) {
@@ -663,6 +672,8 @@ export function createRpc(
       // Before typing: its UserPromptSubmit hook arrives before deliver() returns (the desktop and IDE routes
       // wait for the transcript), and must know this came from the phone, not the person at the Mac.
       notePhoneTyped(sessionId, text);
+      // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
+      const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`);
       try {
         const res = await deliver(
           session,
@@ -688,8 +699,11 @@ export function createRpc(
             text: `Your message to ${name} was typed but not sent. Press Enter at the computer, or send it again.`,
           });
         }
+        if (res.via !== "socket") watch?.cancel();
+        else if (watch && (await watch.wait())) return { ...res, heldAtMac: true };
         return res;
       } catch (err) {
+        watch?.cancel();
         if (err instanceof WaitForUnlock && d.replies) {
           d.replies.add(sessionId, text, arrived, "unlock");
           d.replies.setReason(sessionId, "locked");

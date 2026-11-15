@@ -10,6 +10,8 @@ export function formatEvent(e: RelayEvent): string {
       return `${t} #${e.seq} ⧗ ${e.sessionId.slice(0, 8)} ${e.tasks.length ? e.tasks.map((x) => `${x.kind} · ${x.title}`).join(", ") : "nothing in the background"}`;
     case "reply.waiting":
       return `${t} #${e.seq} ⏳ ${e.sessionId.slice(0, 8)} ${e.reason ? `waiting: ${e.reason}` : "nothing waiting"}`;
+    case "reply.held":
+      return `${t} #${e.seq} ⏳ ${e.sessionId.slice(0, 8)} ${e.stop ? "stop" : "reply"} ${e.state === "waiting" ? "held at the Mac" : e.state}`;
     case "session.removed":
       return `${t} #${e.seq} session ${e.sessionId.slice(0, 8)} removed`;
     case "turn.done":

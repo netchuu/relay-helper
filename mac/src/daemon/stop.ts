@@ -12,6 +12,7 @@ import { attachmentFields } from "./attachments.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import type { HeldReplies } from "./held.ts";
 import {
   DeliveryError,
   defaultKeyOps,
@@ -58,6 +59,8 @@ export interface StopDeps {
   steps?: StepTracker;
   /** The live messages (live-messages), shared with the hook handler: a stopped turn stops being followed. */
   messages?: MessageTracker;
+  /** Replies Claude Code holds at the Mac (held-replies): a stop message held there has stopped nothing. */
+  held?: HeldReplies;
 }
 
 interface Timing {
@@ -138,10 +141,10 @@ export class TurnStopper {
 
   private async run(sessionId: string, actor: string): Promise<InterruptResult> {
     const open = this.openTurn(sessionId);
-    const done = (via: InterruptVia, turnId: string | null): InterruptResult => {
+    const done = (via: InterruptVia, turnId: string | null, heldAtMac = false): InterruptResult => {
       audit(this.d.db, actor, "session.interrupt", { sessionId, via, turnId });
       log.info("session interrupted", { sessionId, via, turnId });
-      const result = { via, turnId };
+      const result: InterruptResult = { via, turnId, ...(heldAtMac ? { heldAtMac: true as const } : {}) };
       this.lastEsc.set(sessionId, { at: Date.now(), result, turnId: open?.id ?? null });
       return result;
     };
@@ -174,16 +177,21 @@ export class TurnStopper {
       const confirmed = new Promise<string | null>((resolve) => {
         this.pendingInbox.set(sessionId, { turnId: open?.id ?? null, at: Date.now(), resolve });
       });
+      const watch = this.d.held?.expect(sessionId, STOP_MESSAGE, { stop: true });
       try {
         await this.inbox(fresh.socketPath, fresh.socketToken, STOP_MESSAGE);
       } catch (err) {
+        watch?.cancel();
         this.pendingInbox.delete(sessionId);
         if (err instanceof DeliveryError) throw new StopError("unavailable", err.message);
         throw err;
       }
       const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), this.t.inboxMs));
       const outcome = await Promise.race([confirmed, timeout]);
-      if (outcome === "timeout") return done("message", null);
+      if (outcome === "timeout") {
+        return done("message", null, watch?.holdNow() === true);
+      }
+      watch?.cancel();
       return done("inbox", outcome);
     }
 

@@ -9,6 +9,7 @@ import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
+import { type HeldReplies, notePermissionMode } from "./held.ts";
 import { splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import { modelFromTranscript, sessionModels } from "./model.ts";
@@ -44,6 +45,8 @@ export interface HookDeps {
   messages?: MessageTracker;
   /** What runs in the background (background-work); one is made when absent. */
   background?: BackgroundTracker;
+  /** Replies Claude Code holds at the Mac (held-replies); absent in tests that don't need it. */
+  held?: HeldReplies;
 }
 
 const NO_OUTPUT: HookReply = { stdout: "" };
@@ -187,7 +190,9 @@ export class HookHandler {
       env: envelope.env,
       name: str("session_title") ?? null,
     });
-    if (created) this.d.registry.publish(sessionId);
+    // The permission mode rides on every hook: the phone can be told beforehand that replies need approval.
+    const modeChanged = notePermissionMode(sessionId, p.permission_mode);
+    if (created || modeChanged) this.d.registry.publish(sessionId);
     // A session that started before the helper did: its model is in the transcript, read once per prompt or stop
     // (the status change that follows publishes it).
     if ((event === "UserPromptSubmit" || event === "Stop") && !sessionModels.has(sessionId))
@@ -215,6 +220,8 @@ export class HookHandler {
         // A background task finished: Claude Code tells the session with a notification (background-work).
         if (system) this.background.notified(sessionId, raw);
         const prompt = system ? "" : raw;
+        // A message posted to the inbox arrived: it isn't held at the Mac.
+        this.d.held?.seen(sessionId, raw);
         this.d.broker.settleFromSessionEvent(sessionId, { hookEventName: event });
         // A notice while the turn is still running (no Stop yet) is part of that turn, not a new one: closing the
         // turn here would leave it without its answer and put the answer on a turn without a prompt.

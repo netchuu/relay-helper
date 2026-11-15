@@ -15,6 +15,7 @@ import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
 import { Fcm, loadFcmConfig } from "./fcm.ts";
 import { HeadlessSessions } from "./headless.ts";
+import { HeldReplies } from "./held.ts";
 import { HookHandler } from "./hooks.ts";
 import { setKnownPids } from "./inject.ts";
 import { MessageTracker } from "./messages.ts";
@@ -84,7 +85,8 @@ export async function runDaemon(): Promise<void> {
     const s = registry.get(id);
     return Boolean(s && s.status !== "ended");
   });
-  const stopper = new TurnStopper({ db, events, registry, broker, config, steps, messages });
+  const held = new HeldReplies({ events, registry });
+  const stopper = new TurnStopper({ db, events, registry, broker, config, steps, messages, held });
   const replies = new ReplyQueue(db, events, registry);
   // Claude desktop app users: macOS asks for the Accessibility relay needs to type replies in as them, at
   // startup and again (at most daily) when a reply needs it.
@@ -128,7 +130,7 @@ export async function runDaemon(): Promise<void> {
     openPrompt: (input, signal) => hooks.openPrompt(input, signal),
   });
   registry.ownedByHelper = (id) => headless.has(id);
-  const deps = { ...baseDeps, stopper, steps, messages, background, replies, attachments, headless };
+  const deps = { ...baseDeps, held, stopper, steps, messages, background, replies, attachments, headless };
   const hooks = new HookHandler(deps);
   const rpc = createRpc(deps);
 
@@ -173,6 +175,7 @@ export async function runDaemon(): Promise<void> {
             preferTyping: config.preferTyping,
             hasOpenPrompt: (id) => broker.hasOpen(id),
             headless,
+            held,
           }),
         ),
       1_000,
