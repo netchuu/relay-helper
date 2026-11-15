@@ -44,3 +44,14 @@ test("redact still handles assignments with name prefixes and suffixes", () => {
   expect(redact('"clientSecret": "s3cr3t-value-123"')).toBe('"clientSecret": "[redacted:secret-assignment]"');
   expect(redact("db.password_hash: s3cr3t-value-123")).toBe("db.password_hash: [redacted:secret-assignment]");
 });
+
+test("redact stays fast on repeated secret words, flags and URL-like runs", () => {
+  expect(ms(() => redact("secret_".repeat(10000)))).toBeLessThan(50);
+  expect(ms(() => redact("token-api_key ".repeat(5000)))).toBeLessThan(50);
+  expect(ms(() => redact("a.b+c-".repeat(10000)))).toBeLessThan(50);
+  expect(ms(() => redact(`curl ${"-u x ".repeat(5000)}`))).toBeLessThan(100);
+  expect(ms(() => redact(`mysql ${"mysql ".repeat(5000)}`))).toBeLessThan(100);
+  expect(ms(() => redact(`https://${"a".repeat(50000)}`))).toBeLessThan(50);
+  expect(ms(() => redact(`x://a:${"@".repeat(50000)}`))).toBeLessThan(50);
+  expect(ms(() => redact(`--token ${"-token ".repeat(5000)}`))).toBeLessThan(100);
+});

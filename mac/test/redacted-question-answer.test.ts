@@ -28,7 +28,7 @@ async function answers(questions: unknown[], pick: (shown: any[]) => Record<stri
   return JSON.parse(reply.stdout as string).hookSpecificOutput.decision.updatedInput.answers;
 }
 
-const Q = "Where should I keep the secret: environment variables or a config file?";
+const Q = "Where should I keep API_KEY=abcdefgh12345678 in environment variables or a config file?";
 
 test("a redacted question and option come back under their original text", async () => {
   const questions = [

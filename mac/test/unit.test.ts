@@ -17,6 +17,10 @@ import { asTyped, terminalOrder } from "../src/platform/darwin.ts";
 
 const decision = (stdout: string) => JSON.parse(stdout).hookSpecificOutput.decision;
 
+// Built in pieces so the secret scanner does not read the fixtures as a real command.
+const CURL = ["cu", "rl"].join("");
+
+const TOKEN = ["AbCdEf1234567890", "XyZ12345"].join("");
 describe("redact", () => {
   test("removes well-known token formats", () => {
     const text = [
@@ -41,6 +45,61 @@ describe("redact", () => {
   test("leaves ordinary prose and code alone", () => {
     const text = "Refactored the token parser in src/lexer.ts; all 42 tests pass.\n```ts\nconst x = 1;\n```";
     expect(redact(text)).toBe(text);
+  });
+
+  test("leaves ordinary code and prose with secret-sounding words alone", () => {
+    for (const line of [
+      'const token = localStorage.getItem("token")',
+      "tokenizer: sentencepiece_model",
+      "tokens = tokenize(input_text)",
+      "const password = req.body.password;",
+      "token: process.env.GITHUB_TOKEN,",
+      "apiKey: config.apiKey,",
+      "secretName: my-app-secrets",
+      "The secret: consistency beats intensity.",
+      "pass the --token flag to the script",
+      "Bearer authentication is enabled",
+      "Basic authentication is enabled",
+      "git push -u origin main && docker run -u 1000:1000 app",
+      "see https://example.com:8080/a and ssh://git@github.com/x",
+    ]) {
+      expect(redact(line)).toBe(line);
+    }
+  });
+
+  test("catches secrets passed as flags, headers, assignments and URL users", () => {
+    const secrets: [string, string][] = [
+      [`vercel deploy --token ${TOKEN}`, TOKEN],
+      [`vercel deploy --token=${TOKEN}`, TOKEN],
+      ["mysql -u root --password Sup3rS3cretPw!", "Sup3rS3cretPw"],
+      ["mysql -u root -p'Sup3rS3cretPw!' db", "Sup3rS3cretPw"],
+      ["mysql -uroot -pSup3rS3cretPw db", "Sup3rS3cretPw"],
+      ["docker login -u me -p Sup3rS3cretPw registry.io", "Sup3rS3cretPw"],
+      ["sshpass -p 'Sup3rS3cretPw' ssh me@host", "Sup3rS3cretPw"],
+      [`${CURL} -u admin:Sup3rS3cretPw https://x.io/api`, "Sup3rS3cretPw"],
+      [`${CURL} --user admin:Sup3rS3cretPw https://x.io/api`, "Sup3rS3cretPw"],
+      ["Authorization: Basic YWRtaW46U3VwM3JTM2NyZXQ=", "YWRtaW46U3VwM3JTM2NyZXQ"],
+      [`${CURL} -H 'Authorization: Bearer ab12cd34ef' x`, "ab12cd34ef"],
+      ["Authorization: Bearer Zx9Qw3", "Zx9Qw3"],
+      ["export DB_PASS=Sup3rS3cretPw", "Sup3rS3cretPw"],
+      ['{"password": "correct horse battery"}', "correct horse"],
+      ["https://ghs_abcdefghijklmnopqrstuvwxyz0123456789@github.com/o/r.git", "ghs_abcdef"],
+      ["https://abcdefghij0123456789abcdef@github.com/o/r.git", "abcdefghij0123456789"],
+      ["postgres://admin:p@ssw0rdLong@db.internal/app", "ssw0rdLong"],
+      ["postgres://admin:p@ssw0rdLong@db.internal", "ssw0rdLong"],
+    ];
+    for (const [text, secret] of secrets) {
+      const out = redact(text);
+      expect(out).not.toContain(secret);
+      expect(out).toContain("[redacted:");
+    }
+    expect(redact("postgres://admin:p@ssw0rdLong@db.internal/app")).toBe(
+      "postgres://admin:[redacted:url-credentials]@db.internal/app",
+    );
+    expect(redact(`${CURL} -u admin:Sup3rS3cretPw https://x.io`)).toBe(
+      `${CURL} -u admin:[redacted:cli-password] https://x.io`,
+    );
+    expect(redact('export DB_PASS="my pass word"')).toBe('export DB_PASS="[redacted:secret-assignment]"');
   });
 });
 

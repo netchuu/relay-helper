@@ -297,7 +297,7 @@ describe("a message sent while Claude is still answering", () => {
   test("the same when the first prompt has the rewritten words", async () => {
     const t = setup();
     await t.hook("SessionStart");
-    const first = "fix the access-token: handling in login";
+    const first = "fix the access-token: h4ndling in login";
     t.prompt(first);
     await t.hook("UserPromptSubmit", { prompt: first });
     t.read("toolu_1", "a.ts");
