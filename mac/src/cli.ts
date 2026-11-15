@@ -561,7 +561,10 @@ async function answer(args: string[]): Promise<void> {
   const [promptId, ...rest] = args;
   if (!promptId || !rest.length) throw new Error("usage: relay answer <promptId> <answer…>");
   const open = await admin<Prompt[]>("prompts.open");
-  const p = open.find((x) => x.id === promptId || x.id.startsWith(promptId));
+  const exact = open.find((x) => x.id === promptId);
+  const matches = exact ? [exact] : open.filter((x) => x.id.startsWith(promptId));
+  if (matches.length > 1) throw new Error("ambiguous prompt id; use more of the id");
+  const p = matches[0];
   if (!p) throw new Error("no open prompt with that id");
   const [verb = "", ...more] = rest;
   let ans: unknown;
