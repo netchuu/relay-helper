@@ -698,13 +698,19 @@ export function tmuxTypeSteps(socket: string, pane: string, text: string): TmuxS
     { args: [...base, "paste-buffer", "-p", "-d", "-b", "relay", "-t", pane] },
   ];
   const steps: TmuxStep[] = [];
-  if (body)
-    steps.push(
-      // A newline or a tab goes in as a paste: typed, it would be Enter or Tab.
-      ...(/[\n\t]/.test(body)
-        ? paste(body)
-        : [{ args: [...base, "send-keys", "-t", pane, "-l", "--", body] }]),
-    );
+  if (body) {
+    // A newline or a tab goes in as a paste: typed, it would be Enter or Tab.
+    if (/[\n\t]/.test(body)) steps.push(...paste(body));
+    else {
+      // tmux reads an argument that ends in ";" as a command separator and drops it, so trailing semicolons go
+      // in as hex keys (0x3b) instead.
+      const text = body.replace(/;+$/, "");
+      const semis = body.length - text.length;
+      if (text) steps.push({ args: [...base, "send-keys", "-t", pane, "-l", "--", text] });
+      if (semis > 0)
+        steps.push({ args: [...base, "send-keys", "-t", pane, "-H", ...Array<string>(semis).fill("3b")] });
+    }
+  }
   // Each path is a paste of its own, so Claude Code makes it "[Image #N]" for an image.
   for (const path of paths) {
     if (steps.length > 0) steps.push({ args: [...base, "send-keys", "-t", pane, "-l", "--", " "] });
