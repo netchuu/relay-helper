@@ -4,6 +4,7 @@ import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
 import type { DB } from "./db.ts";
 import type { Registry } from "./registry.ts";
+import { head } from "./text.ts";
 
 /**
  * Starting a Claude Code session from the phone: `sessions.directories` lists the folders past sessions ran in,
@@ -121,7 +122,7 @@ async function findSession(
 /** Claude Code's own words for why it refused, one short line (nothing of the message). */
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? "";
-  return line.trim().slice(0, 200);
+  return head(line.trim(), 200);
 }
 
 export async function startSession(opts: {
