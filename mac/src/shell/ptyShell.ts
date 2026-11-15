@@ -70,6 +70,8 @@ export interface RequestContext {
   lastInput(): number;
   /** Whether you typed something into the agent's prompt that isn't sent yet (DraftTracker). */
   hasDraft?(): boolean;
+  /** The helper pressed Enter itself: whatever was in the prompt went with it, so no draft is left. */
+  sentEnter?(): void;
   pasteOn(): boolean;
   write(data: string): void;
   sleep(ms: number): Promise<void>;
@@ -116,6 +118,7 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
   // Enter is what runs a command: check once more that the agent is still in front.
   if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "not_foreground" };
   ctx.write(enter);
+  ctx.sentEnter?.();
   return { ok: true };
 }
 
@@ -134,6 +137,10 @@ export class DraftTracker {
   static readonly SHORT_CHARS = 3;
   /** A longer draft is real text you paused on: it stays for this long (an abandoned tab eventually frees up). */
   static readonly LONG_STALE_MS = 6 * 60 * 60_000;
+  /** An Esc that the next key follows later than this is a key press of its own, not the start of a sequence. */
+  static readonly ESC_MS = 250;
+  /** The window for a second Esc, at the pace of a person pressing Esc twice. */
+  static readonly ESC_ESC_MS = 800;
   private chars = 0;
   private lastFed = 0;
 
@@ -146,7 +153,12 @@ export class DraftTracker {
 
   feed(chunk: Uint8Array | string): void {
     const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-    this.lastFed = this.now();
+    const at = this.now();
+    // A lone Esc: the next key came much later, so it isn't Option+Enter or Alt+key; it stands alone.
+    // A second Esc (Esc Esc clears the draft) may come much later than Enter or a letter, so it gets a longer window.
+    const window = text.startsWith("\x1b") ? DraftTracker.ESC_ESC_MS : DraftTracker.ESC_MS;
+    if (this.esc && at - this.lastFed > window) this.esc = false;
+    this.lastFed = at;
     for (const ch of text) {
       if (this.pasting) {
         this.pasteTail = (this.pasteTail + ch).slice(-6);
@@ -296,6 +308,7 @@ async function runInPty(shell: string): Promise<number> {
           isForeground,
           lastInput: () => lastInput,
           hasDraft: () => draft.pending,
+          sentEnter: () => draft.feed("\r"),
           pasteOn: () => paste.on,
           write: (d) => term.write(d),
           sleep: (ms) => Bun.sleep(ms),

@@ -826,6 +826,55 @@ describe("relay shell: drafts and typing anyway", () => {
     expect(d.pending).toBe(false);
   });
 
+  test("a forced send behind a draft sends the draft too: the next message waits for nothing", async () => {
+    const d = new DraftTracker();
+    d.feed("fix the failing test in");
+    const x = ctx({ hasDraft: () => d.pending, sentEnter: () => d.feed("\r") });
+    expect(await answerRequest(req({ force: true }), x.c)).toEqual({ ok: true });
+    expect(d.pending).toBe(false);
+    x.written.length = 0;
+    expect(await answerRequest(req(), x.c)).toEqual({ ok: true });
+    expect(x.written.join("")).not.toContain("\n\n");
+  });
+
+  test("a lone Esc and a later Enter are separate keys: Enter sends the draft", () => {
+    let t = 1_000;
+    const d = new DraftTracker(() => t);
+    d.feed("also update the docs");
+    d.feed("\x1b");
+    t += 5_000;
+    d.feed("\r");
+    expect(d.pending).toBe(false);
+    d.feed("ab");
+    d.feed("\x1b");
+    t += 5_000;
+    d.feed("c");
+    expect(d.pending).toBe(true);
+    d.feed("\x7f\x7f\x7f");
+    expect(d.pending).toBe(false);
+  });
+
+  test("a slow Esc Esc still clears the draft; a lone Esc followed late by a letter does not", () => {
+    let t = 1_000;
+    const d = new DraftTracker(() => t);
+    d.feed("hello world");
+    d.feed("\x1b");
+    t += 400;
+    d.feed("\x1b");
+    expect(d.pending).toBe(false);
+    d.feed("hello world");
+    d.feed("\x1b");
+    t += 900;
+    d.feed("\x1b");
+    expect(d.pending).toBe(true);
+    // The first Esc stood alone; the letter after 400 ms is typed text.
+    d.feed("\x7f".repeat(20));
+    d.feed("\x1b");
+    t += 400;
+    d.feed("x");
+    expect(d.pending).toBe(true);
+  });
+
   test("the draft follows what you type: Enter sends it, Ctrl+U, Ctrl+C and Esc Esc clear it", () => {
     const d = new DraftTracker();
     expect(d.pending).toBe(false);
