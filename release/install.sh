@@ -44,10 +44,19 @@ ACTUAL="$(sha256 "$TMP/$NAME.tar.gz")"
 [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || { echo "The download doesn't match its checksum, so it wasn't installed. Try again." >&2; exit 1; }
 
 tar -xzf "$TMP/$NAME.tar.gz" -C "$TMP"
-"$TMP/$NAME/relay" install
+# `relay install` exits non-zero when the helper doesn't answer in time. Keep going: link the command and
+# pair (which sets up again and waits for the helper), then report the failure through the exit status.
+INSTALL_STATUS=0
+"$TMP/$NAME/relay" install || INSTALL_STATUS=$?
 
 mkdir -p "$HOME/.local/bin"
 ln -sf "${RELAY_HOME:-$HOME/.relay}/bin/relay" "$HOME/.local/bin/relay"
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "Add ~/.local/bin to your PATH to use the relay command." ;; esac
 # Finish with the pairing code, so one command takes a new user from nothing to scanning.
-"${RELAY_HOME:-$HOME/.relay}/bin/relay" pair
+if [ "$INSTALL_STATUS" -ne 0 ]; then
+  echo "The helper didn't start in time. If pairing below fails, run: relay doctor, then relay pair." >&2
+fi
+PAIR_STATUS=0
+"${RELAY_HOME:-$HOME/.relay}/bin/relay" pair || PAIR_STATUS=$?
+[ "$INSTALL_STATUS" -eq 0 ] || exit "$INSTALL_STATUS"
+exit "$PAIR_STATUS"
