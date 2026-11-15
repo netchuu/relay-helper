@@ -9,9 +9,10 @@
  * The file is edited as text, in place, so the person's comments and formatting survive. Only the
  * `terminal.shell` entry is touched, and only when it isn't set already: a custom shell is left alone.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { assertWritable, writeFileAtomic } from "../atomicWrite.ts";
 
 export interface ZedEnv {
   home: string;
@@ -174,6 +175,7 @@ export function writeZedSettings(
   if (!result.changed) return { state: result.state, backup: null };
   // Never write something Zed couldn't read back.
   parseRoot(result.text);
+  assertWritable(path);
   let backup: string | null = null;
   if (before) {
     backup = `${path}.relay-backup`;
@@ -181,9 +183,7 @@ export function writeZedSettings(
   }
   // Zed installed but never opened has no settings folder yet.
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.relay-tmp`;
-  writeFileSync(tmp, result.text);
-  renameSync(tmp, path);
+  writeFileAtomic(path, result.text);
   return { state: result.state, backup };
 }
 

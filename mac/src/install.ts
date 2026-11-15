@@ -1,14 +1,7 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, parse, resolve } from "node:path";
+import { assertWritable, writeFileAtomic } from "./atomicWrite.ts";
 import { CHILD_PATH, paths } from "./config.ts";
 import type { ServiceContext } from "./platform/index.ts";
 
@@ -97,14 +90,13 @@ export function readSettings(path: string): Record<string, unknown> {
 /** Backs up, then writes atomically (tmp + rename) so a crash never leaves a half-written settings file. */
 export function writeSettings(path: string, settings: Record<string, unknown>): string | null {
   mkdirSync(dirname(path), { recursive: true });
+  assertWritable(path);
   let backup: string | null = null;
   if (existsSync(path)) {
     backup = `${path}.relay-backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     copyFileSync(path, backup);
   }
-  const tmp = `${path}.relay-tmp`;
-  writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, path);
+  writeFileAtomic(path, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
   return backup;
 }
 
