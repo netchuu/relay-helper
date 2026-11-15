@@ -219,7 +219,17 @@ export function createRpc(
         audit(d.db, actor, "session.start", { sessionId, directory, chars: text.length });
         return { sessionId } satisfies SessionStarted;
       } catch (err) {
-        if (err instanceof StartError) throw new RpcFailure(err.code, err.message);
+        if (err instanceof StartError) {
+          // Claude Code was launched with the message but the session wasn't found: still a start, and it is
+          // audited (the short id when the launch printed one; the directory and the length, never the message).
+          if (err.launched)
+            audit(d.db, actor, "session.start", {
+              ...(err.launched.shortId ? { sessionId: err.launched.shortId } : {}),
+              directory,
+              chars: text.length,
+            });
+          throw new RpcFailure(err.code, err.message);
+        }
         throw err;
       }
     },

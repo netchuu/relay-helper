@@ -14,6 +14,8 @@ export class StartError extends Error {
   constructor(
     readonly code: "bad_request" | "not_found" | "unavailable",
     message: string,
+    /** Set when `claude --bg` already ran and exited 0: Claude Code has the message, so the start is audited. */
+    readonly launched?: { shortId?: string },
   ) {
     super(message);
   }
@@ -154,7 +156,10 @@ export async function startSession(opts: {
   }
   const printed = /\b([0-9a-f]{8})\b/.exec(`${res.out}\n${res.err}`)?.[1];
   const found = printed ? await findSession(opts.claudeBin, known.path, printed) : null;
-  if (!found) throw new StartError("unavailable", "Claude Code started, but the new session wasn't found.");
+  if (!found)
+    throw new StartError("unavailable", "Claude Code started, but the new session wasn't found.", {
+      ...(printed ? { shortId: printed } : {}),
+    });
   const { created } = opts.registry.touch(found.sessionId, {
     cwd: known.path,
     name: found.name,

@@ -52,6 +52,7 @@ pwd > "$here/cwd.txt"
 echo "RELAY_INTERNAL=\${RELAY_INTERNAL-unset}" > "$here/env.txt"
 shift 2
 printf '%s' "$1" > "$here/prompt.txt"
+[ -f "$here/unlisted" ] && { [ -f "$here/silent" ] && echo "backgrounded" || echo "backgrounded · 7c1d2e3f"; exit 0; }
 cat > "$here/started.json" <<EOF
 [{"id":"7c1d2e3f","cwd":"$(pwd)","kind":"background","sessionId":"7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff","name":"cart-fix","state":"busy"}]
 EOF
@@ -283,6 +284,39 @@ describe("session.start", () => {
       chars: 13,
     });
     expect(rows[0]?.detail).not.toContain("secret");
+  });
+
+  const startRows = () =>
+    (db.query("SELECT detail FROM audit WHERE action = 'session.start'").all() as { detail: string }[]).map(
+      (r) => JSON.parse(r.detail),
+    );
+
+  for (const [name, flags, shortId] of [
+    ["isn't listed", ["unlisted"], "7c1d2e3f"],
+    ["has no short id in the launch output", ["unlisted", "silent"], undefined],
+  ] as const) {
+    test(`a launch that ran is audited when the session ${name}`, async () => {
+      const a = dirOf("a");
+      past("old", a, 1000);
+      for (const f of flags) writeFileSync(join(tools, f), "");
+      const res = (await call("session.start", { directory: a, text: "a secret plan" })) as {
+        error: { code: string };
+      };
+      expect(res.error.code).toBe("unavailable");
+      expect(readFileSync(join(tools, "prompt.txt"), "utf8")).toBe("a secret plan");
+      expect(startRows()).toEqual([{ ...(shortId ? { sessionId: shortId } : {}), directory: a, chars: 13 }]);
+      expect(JSON.stringify(startRows())).not.toContain("secret");
+    }, 30_000);
+  }
+
+  test("a refused launch, an unlisted directory and an empty message leave no start row", async () => {
+    const a = dirOf("a");
+    past("old", a, 1000);
+    writeFileSync(join(tools, "refuse"), "");
+    await call("session.start", { directory: a, text: "hi" });
+    await call("session.start", { directory: dirOf("other"), text: "hi" });
+    await call("session.start", { directory: a, text: " " });
+    expect(startRows()).toEqual([]);
   });
 });
 
