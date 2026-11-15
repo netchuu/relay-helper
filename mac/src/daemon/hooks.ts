@@ -73,6 +73,43 @@ export function notePhoneTyped(sessionId: string, text: string): void {
   phoneTyped.set(sessionId, { text: clean, head: typedHead(clean), paths, at: Date.now() });
 }
 
+/** First messages of sessions the phone is starting: their id isn't known until the launch returns. */
+const phoneLaunches = new Set<{ cwd: string; head: string; paths: string[]; text: string; taken: boolean }>();
+
+/**
+ * The phone is starting a session in `cwd` with `text`. The first prompt's hook can arrive before the launch
+ * returns the session id, so it is matched by folder and text meanwhile. `done(sessionId)` then marks it for that
+ * session (when no hook took it yet); `abort()` drops it when the launch failed.
+ */
+export function notePhoneLaunch(
+  cwd: string,
+  text: string,
+): { done: (sessionId: string) => void; abort: () => void } {
+  const clean = cleanTypedText(text);
+  const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
+  const launch = { cwd, head: typedHead(clean), paths, text: clean, taken: false };
+  phoneLaunches.add(launch);
+  return {
+    done: (sessionId) => {
+      phoneLaunches.delete(launch);
+      if (!launch.taken) notePhoneTyped(sessionId, text);
+    },
+    abort: () => void phoneLaunches.delete(launch),
+  };
+}
+
+/** Whether `prompt` in `cwd` is the first message of a session the phone is starting; it is used up then. */
+function takePhoneLaunch(cwd: string | undefined, prompt: string): boolean {
+  if (!cwd) return false;
+  for (const l of phoneLaunches) {
+    if (!l.taken && l.cwd === cwd && matchesPhoneTyped(l, prompt)) {
+      l.taken = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Whether the prompt Claude Code reported is the text the phone typed. An empty prompt never is; with no caption,
  * only a prompt that shows the image ("[Image #N]" first, or the path itself) is.
@@ -186,8 +223,9 @@ export class HookHandler {
           return NO_OUTPUT;
         }
         const typed = phoneTyped.get(sessionId);
-        const fromPhone = typed && Date.now() - typed.at < 15_000 && matchesPhoneTyped(typed, prompt);
+        let fromPhone = typed && Date.now() - typed.at < 15_000 && matchesPhoneTyped(typed, prompt);
         if (fromPhone) phoneTyped.delete(sessionId);
+        else if (!system && takePhoneLaunch(str("cwd") ?? session.cwd, prompt)) fromPhone = true;
         // The stop message the helper sent through the inbox: it cut the old turn off, which ends as stopped.
         const inboxStop = this.d.stopper?.takeInboxStop(sessionId, prompt) ?? null;
         if (!fromPhone && !inboxStop && !system) this.d.presence.noteLocalActivity();

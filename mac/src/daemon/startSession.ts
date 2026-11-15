@@ -3,6 +3,7 @@ import type { SessionDirectory } from "../../../protocol/index.ts";
 import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
 import type { DB } from "./db.ts";
+import { notePhoneLaunch } from "./hooks.ts";
 import type { Registry } from "./registry.ts";
 import { head } from "./text.ts";
 
@@ -140,14 +141,18 @@ export async function startSession(opts: {
   if (!isDirectory(known.path))
     throw new StartError("not_found", "That folder no longer exists on this computer.");
 
+  // The first message is the phone's, not typing at the Mac: its hook may come before the session id is known.
+  const launch = notePhoneLaunch(known.path, opts.text);
   let res: Awaited<ReturnType<typeof runClaude>>;
   try {
     res = await runClaude(startCommand(opts.claudeBin, opts.text), known.path);
   } catch (err) {
+    launch.abort();
     log.warn("session.start: launch failed", { err: errMessage(err) });
     throw new StartError("unavailable", "Claude Code couldn't be started.");
   }
   if (res.code !== 0) {
+    launch.abort();
     const why = firstLine(res.err) || firstLine(res.out);
     log.warn("session.start: claude exited", { code: res.code, why });
     throw new StartError(
@@ -157,10 +162,13 @@ export async function startSession(opts: {
   }
   const printed = /\b([0-9a-f]{8})\b/.exec(`${res.out}\n${res.err}`)?.[1];
   const found = printed ? await findSession(opts.claudeBin, known.path, printed) : null;
-  if (!found)
+  if (!found) {
+    launch.abort();
     throw new StartError("unavailable", "Claude Code started, but the new session wasn't found.", {
       ...(printed ? { shortId: printed } : {}),
     });
+  }
+  launch.done(found.sessionId);
   const { created } = opts.registry.touch(found.sessionId, {
     cwd: known.path,
     name: found.name,
