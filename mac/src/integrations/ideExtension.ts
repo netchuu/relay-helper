@@ -165,6 +165,33 @@ function claudeTabs(window: Ax): Ax[] {
   );
 }
 
+/** What sendToIde asks of the system; tests pass fakes. */
+export type IdeDeps = {
+  platform(): string;
+  axAllowed(): boolean;
+  pidOf(bundleId: string): Promise<number | null>;
+  frontBundleId(): Promise<string | null>;
+  app(pid: number): Ax;
+  sleep(ms: number): Promise<unknown>;
+  typedByRelay(sessionId: string, text: string): boolean;
+  rememberTyped(sessionId: string, text: string): void;
+  typeToPid(pid: number, text: string, opts: { submit: boolean }): Promise<unknown>;
+  waitForPrompt(path: string, text: string, since: number): Promise<boolean>;
+};
+
+const realDeps: IdeDeps = {
+  platform: () => process.platform,
+  axAllowed,
+  pidOf,
+  frontBundleId,
+  app: (pid) => AxElement.app(pid),
+  sleep: (ms) => Bun.sleep(ms),
+  typedByRelay,
+  rememberTyped,
+  typeToPid,
+  waitForPrompt,
+};
+
 /**
  * Types `text` into the Claude Code tab showing session `sessionId` and sends it. `userActive` is the
  * person's recent typing (idle under a few seconds). Never throws.
@@ -174,9 +201,10 @@ export async function sendToIde(
   text: string,
   transcript: string | null,
   userActive: boolean,
+  deps: IdeDeps = realDeps,
 ): Promise<IdeResult> {
-  if (process.platform !== "darwin") return "not-found";
-  if (!axAllowed()) return "no-permission";
+  if (deps.platform() !== "darwin") return "not-found";
+  if (!deps.axAllowed()) return "no-permission";
   const snippets = await recentAnswerSnippets(transcript);
   if (snippets.length === 0) return "not-found";
 
@@ -186,12 +214,12 @@ export async function sendToIde(
     const matches: Match[] = [];
     let sawContent = false;
     for (const bundleId of IDE_BUNDLE_IDS) {
-      const pid = await pidOf(bundleId);
+      const pid = await deps.pidOf(bundleId);
       if (!pid) continue;
-      const app = AxElement.app(pid);
+      const app = deps.app(pid);
       roots.push(app);
       app.setBool("AXManualAccessibility", true);
-      await Bun.sleep(300);
+      await deps.sleep(300);
       const windows = [
         app.element("AXMainWindow"),
         app.element("AXFocusedWindow"),
@@ -214,7 +242,7 @@ export async function sendToIde(
     if (matches.length > 1) return "ambiguous";
     const { pid, bundleId, window, tab } = matches[0] as Match;
 
-    if (userActive && (await frontBundleId()) === bundleId) return "busy";
+    if (userActive && (await deps.frontBundleId()) === bundleId) return "busy";
     const send = tab.findAll(isButton("Send message"), 90)[0];
     const box = tab.findAll(isComposer, 90)[0];
     if (!send || !box) {
@@ -223,14 +251,14 @@ export async function sendToIde(
     }
     // Send is enabled only while the editor holds text: the person's draft, unless it's text Relay typed itself
     // that a stale tree still shows.
-    if (send.bool("AXEnabled") && !typedByRelay(sessionId, box.string("AXValue"))) return "draft";
+    if (send.bool("AXEnabled") && !deps.typedByRelay(sessionId, box.string("AXValue"))) return "draft";
 
     // The editor takes a moment to accept focus from the background: ask again for up to a second.
     window.setBool("AXMain", true);
     let focused = false;
     for (let i = 0; i < 7 && !focused; i++) {
       box.setBool("AXFocused", true);
-      await Bun.sleep(150);
+      await deps.sleep(150);
       focused = box.bool("AXFocused");
     }
     if (!focused) {
@@ -238,9 +266,9 @@ export async function sendToIde(
       return "failed";
     }
     const started = Date.now();
-    await typeToPid(pid, text, { submit: true });
-    const sent = transcript ? await waitForPrompt(transcript, text, started) : false;
-    if (sent) rememberTyped(sessionId, text);
+    await deps.typeToPid(pid, text, { submit: true });
+    const sent = transcript ? await deps.waitForPrompt(transcript, text, started) : false;
+    if (sent) deps.rememberTyped(sessionId, text);
     trace("confirmed", sent);
     return sent ? "sent" : "failed";
   } catch (err) {
