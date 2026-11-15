@@ -320,6 +320,8 @@ interface TurnState {
   running: Map<string, TurnStep>;
   /** Tools whose permission prompt closed at the terminal: after a No no end hook follows, so the next tool to start drops them. */
   unresolved: Set<string>;
+  /** Tools dropped from `running` without an end hook (denied, or answered at the terminal): a late end hook is only recorded. */
+  dropped: Set<string>;
   /** Running tools a permission prompt is tied to. */
   prompted: Set<string>;
   ended: Set<string>;
@@ -379,6 +381,7 @@ export class StepTracker {
       turnId,
       running: new Map(),
       unresolved: new Set(),
+      dropped: new Set(),
       prompted: new Set(),
       ended: new Set(),
       sawPre: false,
@@ -401,7 +404,9 @@ export class StepTracker {
     if (state.ended.has(id)) return;
     // Claude Code asks about one tool at a time: a new tool starting means the one whose prompt closed
     // at the terminal was answered. After Yes its end hook still comes (and is recorded); after No none does.
-    for (const stale of state.unresolved) state.running.delete(stale);
+    for (const stale of state.unresolved) {
+      if (state.running.delete(stale)) state.dropped.add(stale);
+    }
     state.unresolved.clear();
     const step = { ...stepFor(call.toolName, call.input, call.cwd, "live"), at: Date.now() };
     state.running.set(id, step);
@@ -441,12 +446,28 @@ export class StepTracker {
     state.unresolved.add(toolId);
   }
 
+  /**
+   * The phone denied a tool's permission prompt: it never runs, so stop showing it now (Thinking follows
+   * when nothing else runs). A late end hook for it is recorded without becoming the live step.
+   */
+  toolDenied(sessionId: string, toolId: string | null): void {
+    const state = this.turns.get(sessionId);
+    if (!state || !toolId || !state.running.delete(toolId)) return;
+    state.dropped.add(toolId);
+    state.unresolved.delete(toolId);
+    state.prompted.delete(toolId);
+    const newest = [...state.running.values()].at(-1);
+    if (newest) this.show(sessionId, state, newest);
+    else if (state.sawPre) this.scheduleThinking(sessionId, state);
+  }
+
   toolEnded(sessionId: string, call: ToolCall, failed: boolean): void {
     const state = this.turns.get(sessionId);
     if (!state || call.agentId) return;
     const id = call.toolUseId;
     // A PostToolUse delivered twice is one step (ids are unique on the phones).
     if (id && state.ended.has(id)) return;
+    const late = id ? state.dropped.has(id) : false;
     const started = id ? state.running.get(id) : undefined;
     const doneStep: TurnStep = {
       ...stepFor(call.toolName, call.input, call.cwd, "done"),
@@ -460,6 +481,7 @@ export class StepTracker {
       state.ended.add(id);
       state.running.delete(id);
     }
+    if (late) return;
     if (!started) {
       // No PreToolUse seen (yet, or ever: a session from before the hook): show this tool for now.
       this.show(sessionId, state, {

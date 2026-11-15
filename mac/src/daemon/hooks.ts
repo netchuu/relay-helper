@@ -344,10 +344,12 @@ export class HookHandler {
       input.tool_input as Record<string, unknown> | undefined,
       this.d.registry.get(input.session_id)?.cwd ?? null,
     );
-    // A phone answer marks nothing: the tool runs or its end hook follows.
+    // A phone Allow marks nothing: the tool runs and its end hook follows. A phone Deny (or plan changes)
+    // is the same as a terminal No: the tool never runs, so mark it and let the next tool replace it.
     let answered = false;
-    void reply.then(() => {
+    void reply.then((r) => {
       answered = true;
+      if (isDenyReply(r)) this.steps.toolDenied(input.session_id, toolId);
     });
     const aborted = new Promise<HookReply>((resolve) =>
       signal.addEventListener("abort", () => {
@@ -620,4 +622,14 @@ export function newId(prefix: string): string {
 function oneLine(text: string, max: number): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > max ? `${head(line, max - 1)}…` : line;
+}
+
+/** Whether a PermissionRequest reply denies the tool (a phone Deny, or plan changes sent back). */
+function isDenyReply(reply: HookReply): boolean {
+  try {
+    const out = JSON.parse(reply.stdout) as { hookSpecificOutput?: { decision?: { behavior?: string } } };
+    return out.hookSpecificOutput?.decision?.behavior === "deny";
+  } catch {
+    return false;
+  }
 }
