@@ -21,3 +21,31 @@ test("bare pass inside a word is spared, separated names are caught", () => {
   expect(redact("DB_PASSWORD=Sup3rS3cretPw")).toContain("[redacted:secret-assignment]");
   expect(redact("password: Sup3rS3cretPw")).toContain("[redacted:secret-assignment]");
 });
+
+const nowRedacted = [
+  'secretKey: "EXAMPLEKEYEXAMPLEKEYEXAMPLE1"',
+  "jwtSecretKey=1111222233334444",
+  'tokenValue = "abc123abc123"',
+  'apiKeyProd: "abab1212abab1212"',
+  'accessTokenValue: "abab1212abab1212"',
+  "passwords: hunter2hunter2",
+  "password: correcthorsebattery",
+  "token: abcdefghijklmnopqrs",
+  "password = letmeinplease",
+];
+for (const s of nowRedacted) {
+  test(`redacts: ${s}`, () => {
+    expect(redact(s)).toContain("[redacted:secret-assignment]");
+  });
+}
+
+for (const s of [
+  "tokenizer: sentencepiece_model",
+  "tokens = tokenize(input_text)",
+  "secretName: my-app-secrets",
+  "The secret: consistency beats intensity.",
+]) {
+  test(`spared: ${s}`, () => {
+    expect(redact(s)).toBe(s);
+  });
+}

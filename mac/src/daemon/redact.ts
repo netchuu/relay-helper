@@ -97,18 +97,34 @@ const RULES: Rule[] = [
     kind: "secret-assignment",
     // No leading name run: `\b[A-Za-z0-9_.-]*` took quadratic time on long unbroken runs, and the text before the
     // keyword is kept either way.
-    re: new RegExp(
-      `(${SECRET_NAME}(?:[_.-][A-Za-z0-9_.-]{0,40})?["']?)(\\s*)([:=])(\\s*)${quotedOrWord}`,
-      "gi",
-    ),
-    replace: (m, name = "", before = "", sep = "", after = "", dq = "", sq = "", lead = "", bare = "") => {
+    re: new RegExp(`(${SECRET_NAME})([A-Za-z0-9_.-]{0,40}["']?)(\\s*)([:=])(\\s*)${quotedOrWord}`, "gi"),
+    replace: (
+      m,
+      word = "",
+      rest = "",
+      before = "",
+      sep = "",
+      after = "",
+      dq = "",
+      sq = "",
+      lead = "",
+      bare = "",
+      offset = "",
+      whole = "",
+    ) => {
+      const name = word + rest;
       const quoted = dq || sq;
       const v = quoted || bare;
       if (alreadyRedacted(v) || placeholder(v)) return m;
       if (!quoted) {
         // Code and prose, not values: `getItem("token")`, `req.body.password`, `The secret: consistency beats…`.
         if (/^(?:[\w.]+\(|[[{(])/.test(v) || codeReference(v)) return m;
-        if (onlyLetters(v) && v.length < 20 && (sep === ":" || before || after)) return m;
+        // A name that goes on with a letter (`tokenizer`, `secretName`) is a secret only with a digit in the value.
+        if (/^[A-Za-z]/.test(rest) && !/\d/.test(v)) return m;
+        // A letters-only value followed by more words is prose; one that ends the line is a password.
+        const next = whole.slice(Number(offset) + m.length);
+        if (onlyLetters(v) && v.length < 20 && (sep === ":" || before || after) && /^[ \t]+\S/.test(next))
+          return m;
       }
       const q = dq ? '"' : sq ? "'" : lead;
       return `${name}${before}${sep}${after}${q}${tag("secret-assignment")}${quoted ? q : ""}`;
