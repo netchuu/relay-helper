@@ -164,7 +164,9 @@ export function removeRelayShell(text: string): ZedEdit {
   const shell = obj.entries.find((e) => e.key === "shell");
   if (!shell) return { text, changed: false, state: "none" };
   if (!isOurs(text.slice(shell.valueStart, shell.valueEnd))) return { text, changed: false, state: "custom" };
-  if (obj.entries.length === 1)
+  // Only when nothing else (not even a comment) is inside the block does the whole block go.
+  const rest = text.slice(obj.open + 1, shell.start) + text.slice(shell.valueEnd, obj.close);
+  if (obj.entries.length === 1 && /^[\s,]*$/.test(rest))
     return { text: removeEntry(text, root, terminal), changed: true, state: "none" };
   return { text: removeEntry(text, obj, shell), changed: true, state: "none" };
 }
@@ -322,6 +324,8 @@ function insertEntry(text: string, obj: ObjectNode, entry: string, indent: strin
   const empty = obj.entries.length === 0;
   const before = text.slice(0, obj.open + 1);
   const after = text.slice(obj.open + 1);
+  // Only comments inside: the entry goes first and the comments keep their lines and indentation.
+  if (empty && /\S/.test(text.slice(obj.open + 1, obj.close))) return `${before}\n${indent}${entry}${after}`;
   if (empty) {
     const closingIndent = indent.slice(2);
     return `${before}\n${indent}${entry}\n${closingIndent}${after.replace(/^\s*/, "")}`;

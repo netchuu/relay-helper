@@ -124,6 +124,17 @@ describe("Zed settings", () => {
     expect(() => addRelayShell(`{ "theme": `, BIN)).toThrow();
   });
 
+  test("uninstall keeps a comment added next to Relay's shell, and removes a block with only the shell", () => {
+    const installed = addRelayShell('{\n  "theme": "x"\n}\n', BIN).text;
+    for (const c of ['// "font_size": 14', '/* "font_size": 14 */']) {
+      const withComment = installed.replace('"terminal": {\n', `"terminal": {\n    ${c}\n`);
+      expect(withComment).not.toBe(installed);
+      const removed = removeRelayShell(withComment).text;
+      expect(removed).toBe(`{\n  "terminal": {\n    ${c}\n  },\n  "theme": "x"\n}\n`);
+    }
+    expect(removeRelayShell(installed).text).toBe('{\n  "theme": "x"\n}\n');
+  });
+
   test("uninstall gives back the file with its comments", () => {
     const sources = [
       '{\n  // note\n  "theme": "x"\n}\n',
@@ -132,6 +143,8 @@ describe("Zed settings", () => {
       '{\n  "terminal": {\n    // my terminal\n    "font_size": 12\n  },\n  "theme": "x"\n}\n',
       '{\n  "theme": "x" // trailing\n}\n',
       '{ "theme": "x" }\n',
+      '{\n  "terminal": {\n    // "font_size": 14\n  },\n  "theme": "x"\n}\n',
+      '{\n  "terminal": {\n    /* "font_size": 14 */\n  },\n  "theme": "x"\n}\n',
     ];
     for (const src of sources) {
       const added = addRelayShell(src, BIN);
