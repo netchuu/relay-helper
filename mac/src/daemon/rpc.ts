@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import {
   type DeliveryCheck,
+  type ModelResult,
   REPLY_DATA_BYTES,
   type RpcError,
   type RpcMethod,
@@ -326,6 +327,61 @@ export function createRpc(
         if (err instanceof StopError) throw new RpcFailure(err.code, err.message);
         throw err;
       }
+    },
+
+    "session.model": async ({ sessionId, model, effort }, actor) => {
+      // Checked now and again once the pick's turn comes: a message queued before it may have started Claude working.
+      const idleSession = () => {
+        const session = d.registry.get(sessionId);
+        if (!session || session.status === "ended")
+          throw new RpcFailure("not_found", "This session has ended.");
+        if (session.status === "working")
+          throw new RpcFailure("conflict", "Claude is working. Change the model when it is done.");
+        if (d.broker.hasOpen(sessionId))
+          throw new RpcFailure("conflict", "Claude is waiting for an answer. Answer it first.");
+        if (d.replies && d.replies.list(sessionId).length > 0)
+          throw new RpcFailure(
+            "conflict",
+            "A message is still waiting to be typed. Try again after it arrives.",
+          );
+        return session;
+      };
+      idleSession();
+      const command = model !== undefined ? `/model ${model}` : `/effort ${effort}`;
+      const res = await inOrder(sessionId, async () => {
+        const session = idleSession();
+        const { idleSeconds, locked } = await platform.presence.read({
+          tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
+        });
+        try {
+          return await deliver(
+            session,
+            command,
+            {
+              idleSeconds,
+              userTypingNow: idleSeconds !== null && idleSeconds < 8,
+              preferTyping: true,
+              locked: locked === true,
+              terminalOnly: true,
+            },
+            d.typeOps,
+          );
+        } catch (err) {
+          if (err instanceof WaitForPause)
+            throw new RpcFailure(
+              "conflict",
+              err.reason === "draft"
+                ? "There is text in the prompt at the computer. Send or clear it first."
+                : "Someone is typing at the computer. Try again in a moment.",
+            );
+          if (err instanceof DeliveryError)
+            throw new RpcFailure("unavailable", "This session can't be changed from the phone.");
+          throw err;
+        }
+      });
+      // Claude Code reports the model itself (PostModelSwitch); the effort comes with the status line.
+      audit(d.db, actor, "session.model", { sessionId, model, effort, via: res.via });
+      return { via: res.via } satisfies ModelResult;
     },
 
     "session.pin": ({ sessionId, pinned }, actor) => {

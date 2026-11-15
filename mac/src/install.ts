@@ -44,6 +44,8 @@ export function relayHooks(hookBin: string): HooksConfig {
   return {
     SessionStart: asyncHook(),
     UserPromptSubmit: asyncHook(),
+    // The model after a switch (the phone's model pill); present in Claude Code 2.1.325.
+    PostModelSwitch: asyncHook(),
     PermissionRequest: [{ hooks: [{ type: "command", command: hookBin, timeout: 86_400 }] }],
     // The live step (turn-steps). Async, so it never holds the tool: checked on Claude Code 2.1.318.
     PreToolUse: asyncHook(),

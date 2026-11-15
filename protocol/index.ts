@@ -348,6 +348,10 @@ export const Session = z.object({
   step: TurnStep.nullable().optional(),
   /** Shells and agents still running in the background (background-work); absent when none. */
   background: z.array(BackgroundTask).optional(),
+  /** The model the session runs, as people read it ("Fable 5.2"); absent when the helper doesn't know. */
+  model: z.string().optional(),
+  /** The session's effort level ("medium"), when known; absent otherwise. */
+  effort: z.string().optional(),
   /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
   usage: Usage.optional(),
 });
@@ -433,6 +437,32 @@ export const InterruptResult = z.object({
   turnId: z.string().nullable(),
 });
 export type InterruptResult = z.infer<typeof InterruptResult>;
+
+/** The model names the phone offers; Claude Code's `/model <name>` takes each of them. */
+export const MODEL_ALIASES = [
+  "default",
+  "fable",
+  "opus",
+  "sonnet",
+  "haiku",
+  "opusplan",
+  "fable[1m]",
+  "opus[1m]",
+  "sonnet[1m]",
+] as const;
+export const ModelAlias = z.enum(MODEL_ALIASES);
+export type ModelAlias = z.infer<typeof ModelAlias>;
+
+/** The effort levels the phone offers; Claude Code's `/effort <level>` takes each of them. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max", "auto"] as const;
+export const EffortLevel = z.enum(EFFORT_LEVELS);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+
+/** `session.model`'s result: the command that was typed. The new model shows in the session once Claude Code reports it. */
+export const ModelResult = z.object({
+  via: z.string(),
+});
+export type ModelResult = z.infer<typeof ModelResult>;
 
 export const QuestionOption = z.object({ label: z.string(), description: z.string().optional() });
 export const Question = z.object({
@@ -721,6 +751,21 @@ export const RpcSchemas = {
    * Errors: not_found (unknown or ended), conflict (nothing running), unavailable (no way to reach it).
    */
   "session.interrupt": z.object({ sessionId: z.string() }),
+  /**
+   * Switches the running session's model or its effort (exactly one of `model`, `effort`) by typing `/model <alias>`
+   * or `/effort <level>` into its terminal, as the person would. Only when the session is typed into (not the desktop
+   * app, an editor or the inbox), Claude isn't working, no prompt is open and the prompt line is empty. Errors are plain
+   * sentences the phone shows: not_found (unknown or ended), conflict (working, a prompt open, a draft, you typing),
+   * unavailable (no terminal to type into). The session's `model` changes once Claude Code reports it
+   * (`session.upsert`); its `effort` once Claude Code's status line reports it. Result: ModelResult. Older helpers answer
+   * "unknown method".
+   */
+  "session.model": z
+    .object({ sessionId: z.string(), model: ModelAlias.optional(), effort: EffortLevel.optional() })
+    .refine(
+      (p) => (p.model === undefined) !== (p.effort === undefined),
+      "give a model or an effort, not both",
+    ),
   "prompt.answer": z.object({ promptId: z.string(), answer: Answer }),
   "prompts.open": z.object({}),
   /** Recently settled prompts, newest first: the Inbox history. */

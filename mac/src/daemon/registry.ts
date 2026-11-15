@@ -15,6 +15,7 @@ import { errMessage, log } from "../log.ts";
 import { backgroundOf } from "./background.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import { sessionModels } from "./model.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { transcriptLastActivity, transcriptPathFor } from "./transcript.ts";
@@ -154,6 +155,9 @@ export function publicSession(s: SessionRecord): Session {
     // An ended session runs nothing (its list is cleared right after this upsert goes out).
     ...(s.status === "ended" ? {} : backgroundField(s.id)),
     ...replyRouteOf(s),
+    // The model and effort, left out for app sessions: the phone shows its picker where a model is known. Both are
+    // what Claude Code reports (hooks and the status line).
+    ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
     // What is left of the limits (usage-left); an ended session shows none.
     ...(s.status === "ended" ? {} : usageField(s.id)),
   };
@@ -177,10 +181,30 @@ export function replyRouteOf(s: SessionRecord): {
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
   if (s.terminal === "iTerm.app") return { replyRoute: "typed" };
   // The Claude desktop app and the editor extension: typed with Accessibility, which the phone can point to.
-  const appSession = desktopTitle(s.id) !== null || isIdeSessionSync(transcriptPathFor(s));
+  const appSession = isAppSession(s);
   if (appSession && axAllowed()) return { replyRoute: "typed" };
   if (!s.socketPath) return {};
   return appSession ? { replyRoute: "labelled", replyFix: "accessibility" } : { replyRoute: "labelled" };
+}
+
+function modelOf(id: string): { model?: string; effort?: string } {
+  const { model, effort } = sessionModels.get(id);
+  return { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}) };
+}
+
+/** A session of the Claude desktop app or an editor extension. */
+function isAppSession(s: SessionRecord): boolean {
+  return desktopTitle(s.id) !== null || isIdeSessionSync(transcriptPathFor(s));
+}
+
+/**
+ * Whether `/model` can be typed into the session's own terminal, so the phone may offer the model picker. Not for the
+ * desktop app and editors, which are typed into with Accessibility only.
+ */
+function modelChangeable(s: SessionRecord): boolean {
+  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket)) return true;
+  if (s.terminal === "iTerm.app") return true;
+  return !isAppSession(s);
 }
 
 /** What still runs in the background (background-work); left out when nothing does. */

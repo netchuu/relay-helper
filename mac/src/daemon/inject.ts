@@ -80,6 +80,11 @@ export interface DeliverOptions {
   submitted?: () => boolean;
   /** How long to wait for the hook before pressing Enter again (SUBMIT_WAIT_MS). */
   submitWaitMs?: number;
+  /**
+   * Only the session's own terminal (a slash command like `/model` means nothing to the desktop app, the editor or
+   * the inbox): none Relay can type into throws a DeliveryError.
+   */
+  terminalOnly?: boolean;
 }
 
 /** Claude Code needs this long after an Esc before it takes keys as a new message (it is still handling the interrupt). */
@@ -175,6 +180,7 @@ export async function deliver(
       const submitted = await confirmSubmitted(session, text, typed, opts, ops);
       return submitted === false ? { via: typed, submitted } : { via: typed };
     }
+    if (opts.terminalOnly) throw new DeliveryError("Relay can't type into this session's terminal.");
     if (desktopSessionWithoutPermission(session.id)) {
       const asked = askForAccessibility();
       if (asked !== "skipped") log.info("accessibility", { result: asked, for: session.id });

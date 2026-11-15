@@ -1,0 +1,92 @@
+{
+  "session": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "model": "Fable 5.2",
+    "effort": "medium"
+  },
+  "sessionUnknown": {
+    "id": "s-min",
+    "name": null,
+    "cwd": "/tmp",
+    "project": "tmp",
+    "branch": null,
+    "kind": "unknown",
+    "status": "idle",
+    "title": null,
+    "terminal": null,
+    "canReceive": false,
+    "startedAt": 1793620000000,
+    "updatedAt": 1793620000000,
+    "lastSummary": null
+  },
+  "setModel": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "model": "opus"
+  },
+  "setModelLong": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "model": "sonnet[1m]"
+  },
+  "setEffort": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "effort": "high"
+  },
+  "result": {
+    "via": "tmux"
+  },
+  "errors": [
+    {
+      "type": "rpc",
+      "id": 80,
+      "error": {
+        "code": "conflict",
+        "message": "Claude is working. Change the model when it is done."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 81,
+      "error": {
+        "code": "conflict",
+        "message": "There is text in the prompt at the computer. Send or clear it first."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 82,
+      "error": {
+        "code": "unavailable",
+        "message": "This session can't be changed from the phone."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 83,
+      "error": {
+        "code": "not_found",
+        "message": "This session has ended."
+      }
+    }
+  ],
+  "olderHelper": {
+    "type": "rpc",
+    "id": 84,
+    "error": {
+      "code": "bad_request",
+      "message": "unknown method session.model"
+    }
+  }
+}

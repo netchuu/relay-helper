@@ -10,6 +10,7 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
+import { sessionModels } from "../src/daemon/model.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { noteUsage, noteUsageAll, parseUsage, resetUsage, usageOf } from "../src/daemon/usage.ts";
@@ -270,4 +271,39 @@ test("without a line of the person's it prints nothing, and with the daemon down
   expect((await runLine(null, true)).out).toBe("");
   const down = await runLine({ previous: { type: "command", command: "echo mine" } }, false);
   expect(down.out).toBe("mine\n");
+});
+
+test("a status line refresh puts the model and effort on the session, once per change", async () => {
+  const t = setup();
+  await t.hook("SessionStart");
+  const before = t.upserts().length;
+  const payload = { session_id: "s1", model: { display_name: "Opus 4.7" }, effort: { level: "high" } };
+  t.hooks.statusLine(payload);
+  t.hooks.statusLine(payload);
+  expect(t.upserts().length).toBe(before + 1);
+  const last = t.upserts().at(-1);
+  if (last?.type !== "session.upsert") throw new Error("no upsert");
+  expect(last.session.model).toBe("Opus 4.7");
+  expect(last.session.effort).toBe("high");
+  t.hooks.statusLine({ ...payload, effort: { level: "low" } });
+  const next = t.upserts().at(-1);
+  if (next?.type !== "session.upsert") throw new Error("no upsert");
+  expect(next.session.effort).toBe("low");
+  sessionModels.forget("s1");
+});
+
+test("a refresh without an effort clears it (a model that has none)", async () => {
+  const t = setup();
+  await t.hook("SessionStart");
+  t.hooks.statusLine({ session_id: "s1", model: { display_name: "Opus 4.7" }, effort: { level: "high" } });
+  const before = t.upserts().length;
+  t.hooks.statusLine({ session_id: "s1", model: { display_name: "Haiku 4.5" } });
+  expect(t.upserts().length).toBe(before + 1);
+  const last = t.upserts().at(-1);
+  if (last?.type !== "session.upsert") throw new Error("no upsert");
+  expect(last.session.model).toBe("Haiku 4.5");
+  expect(last.session.effort).toBeUndefined();
+  t.hooks.statusLine({ session_id: "s1", model: { display_name: "Haiku 4.5" } });
+  expect(t.upserts().length).toBe(before + 1);
+  sessionModels.forget("s1");
 });

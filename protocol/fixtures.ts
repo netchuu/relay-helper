@@ -18,6 +18,7 @@ import {
   DeliveryCheck,
   HostInfo,
   InterruptResult,
+  ModelResult,
   Presence,
   Prompt,
   RelayEvent,
@@ -683,6 +684,45 @@ const recorded = Object.fromEntries(
   ]),
 );
 
+// Choosing the model from the phone (session.model): the session shows its model and effort once known.
+const model = {
+  session: Session.parse({ ...session, model: "Fable 5.2", effort: "medium" }),
+  // A session whose model the helper doesn't know carries neither field.
+  sessionUnknown: sessionMinimal,
+  setModel: RpcSchemas["session.model"].parse({ sessionId: session.id, model: "opus" }),
+  setModelLong: RpcSchemas["session.model"].parse({ sessionId: session.id, model: "sonnet[1m]" }),
+  setEffort: RpcSchemas["session.model"].parse({ sessionId: session.id, effort: "high" }),
+  result: ModelResult.parse({ via: "tmux" }),
+  // Refusals are plain sentences the phone shows; the pill stays as it was.
+  errors: [
+    {
+      type: "rpc",
+      id: 80,
+      error: { code: "conflict", message: "Claude is working. Change the model when it is done." },
+    },
+    {
+      type: "rpc",
+      id: 81,
+      error: {
+        code: "conflict",
+        message: "There is text in the prompt at the computer. Send or clear it first.",
+      },
+    },
+    {
+      type: "rpc",
+      id: 82,
+      error: { code: "unavailable", message: "This session can't be changed from the phone." },
+    },
+    { type: "rpc", id: 83, error: { code: "not_found", message: "This session has ended." } },
+  ],
+  // An older helper, without `session.model`.
+  olderHelper: {
+    type: "rpc",
+    id: 84,
+    error: { code: "bad_request", message: "unknown method session.model" },
+  },
+};
+
 const dir = join(import.meta.dir, "fixtures");
 mkdirSync(dir, { recursive: true });
 const write = (name: string, value: unknown) =>
@@ -704,6 +744,7 @@ write("timeline.json", { ...timeline, agent: agentProgress });
 write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);
+write("model.json", model);
 write("start.json", start);
 write("recorded.json", recorded);
 console.log(`wrote fixtures to ${dir}`);

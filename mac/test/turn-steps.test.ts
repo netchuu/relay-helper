@@ -970,22 +970,22 @@ describe("a finished turn's list", () => {
 });
 
 describe("hooks and doctor", () => {
-  test("PreToolUse is installed async; there are 11 Relay hook events", () => {
+  test("PreToolUse is installed async; there are 12 Relay hook events", () => {
     const hooks = relayHooks("/x/relay-hook") as Record<string, { hooks: { async?: boolean }[] }[]>;
     expect(hooks.PreToolUse?.[0]?.hooks[0]?.async).toBe(true);
-    expect(Object.keys(hooks).length).toBe(11);
+    expect(Object.keys(hooks).length).toBe(12);
   });
 
-  test("an install from before (10 hooks) counts short of 11; updating adds PreToolUse once", () => {
+  test("an install from before (11 hooks) counts short of 12; updating adds PreToolUse once", () => {
     const all = relayHooks("/x/relay-hook");
     const { PreToolUse: _, ...old } = all;
     const before = { hooks: old };
-    expect(countHooks(before)).toBe(10);
+    expect(countHooks(before)).toBe(11);
     expect(countHooks(before)).toBeLessThan(Object.keys(all).length);
     const after = mergeHooks(before, "/x/relay-hook");
-    expect(countHooks(after)).toBe(11);
+    expect(countHooks(after)).toBe(12);
     const again = mergeHooks(after, "/x/relay-hook");
-    expect(countHooks(again)).toBe(11);
+    expect(countHooks(again)).toBe(12);
     expect(Object.keys(again.hooks as object)).toContain("PreToolUse");
   });
 });

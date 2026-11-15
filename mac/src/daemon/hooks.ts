@@ -11,6 +11,7 @@ import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
 import { splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
+import { modelFromTranscript, sessionModels } from "./model.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { notePromptSubmitted } from "./promptLine.ts";
 import { redact } from "./redact.ts";
@@ -122,6 +123,12 @@ export class HookHandler {
     if (typeof sessionId !== "string") return;
     const known = this.d.registry.get(sessionId);
     if (!known || known.status === "ended") return;
+    // The model and effort the status line reports: published when either changed.
+    const model = payload.model as { display_name?: unknown } | undefined;
+    const effort = payload.effort as { level?: unknown } | undefined;
+    const changedModel = sessionModels.setModelName(sessionId, model?.display_name);
+    const changedEffort = sessionModels.setEffort(sessionId, effort?.level);
+    if (changedModel || changedEffort) this.d.registry.publish(sessionId);
     // The account's limits changed for every live session, not only this one.
     for (const id of noteUsageAll(sessionId, parseUsage(payload))) {
       // The registry ends sessions without a SessionEnd hook too (process gone, no longer listed): drop those.
@@ -144,10 +151,20 @@ export class HookHandler {
       name: str("session_title") ?? null,
     });
     if (created) this.d.registry.publish(sessionId);
+    // A session that started before the helper did: its model is in the transcript, read once per prompt or stop
+    // (the status change that follows publishes it).
+    if ((event === "UserPromptSubmit" || event === "Stop") && !sessionModels.has(sessionId))
+      sessionModels.setModel(sessionId, modelFromTranscript(session.transcript ?? str("transcript_path")));
 
     switch (event) {
       case "SessionStart":
+        sessionModels.setModel(sessionId, p.model);
         this.d.registry.publish(sessionId);
+        return NO_OUTPUT;
+
+      // The model changed (from the phone's `/model` or at the Mac): the new one is the one Claude Code reports.
+      case "PostModelSwitch":
+        if (sessionModels.setModel(sessionId, p.to_model)) this.d.registry.publish(sessionId);
         return NO_OUTPUT;
 
       case "UserPromptSubmit": {
@@ -297,6 +314,7 @@ export class HookHandler {
         this.messages.clear(sessionId);
         forgetUsage(sessionId);
         this.d.registry.setStatus(sessionId, "ended");
+        sessionModels.forget(sessionId);
         return NO_OUTPUT;
 
       default:
