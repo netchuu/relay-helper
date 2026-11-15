@@ -13,10 +13,18 @@ let cachedHost: Promise<HostInfo> | null = null;
  * What the phone shows for the computer it's paired with ("Mac" or "computer", and its name). Sent in the
  * `pair` and `hello` replies; apps that don't know the field keep saying "Mac".
  */
-export function hostInfo(): Promise<HostInfo> {
+export async function hostInfo(): Promise<HostInfo> {
   cachedHost ??= platform
     .computerName()
     .catch(() => "")
     .then((name) => ({ os: platform.name === "linux" ? "linux" : "macos", name: name.slice(0, 80) }));
-  return cachedHost;
+  const host = await cachedHost;
+  return canStartSessions ? { ...host, canStartSessions: true } : host;
+}
+
+let canStartSessions = false;
+
+/** The daemon found `claude`, so the phone may offer to start sessions (same on macOS and Linux). */
+export function setCanStartSessions(can: boolean): void {
+  canStartSessions = can;
 }

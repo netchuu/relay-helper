@@ -477,8 +477,28 @@ export const HostInfo = z.object({
   os: z.enum(["macos", "linux"]),
   /** "Ana's MacBook Pro", or the short hostname on Linux. May be empty. */
   name: z.string(),
+  /**
+   * Optional: the helper can start a Claude Code session from the phone (`sessions.directories`, `session.start`).
+   * Sent as true only when it can find `claude`; an app that doesn't see it hides the entry point.
+   */
+  canStartSessions: z.boolean().optional(),
 });
 export type HostInfo = z.infer<typeof HostInfo>;
+
+/** One folder past sessions ran in, as `sessions.directories` lists them. */
+export const SessionDirectory = z.object({
+  /** Absolute path, the value `session.start` takes. */
+  path: z.string(),
+  /** The folder's project name (the repository's name, or the folder's own). */
+  project: z.string(),
+  /** When a session in this folder was last active, epoch ms. */
+  lastUsedAt: z.number(),
+});
+export type SessionDirectory = z.infer<typeof SessionDirectory>;
+
+/** `session.start`'s result: the new session's id, as it appears in `sessions.list`. */
+export const SessionStarted = z.object({ sessionId: z.string() });
+export type SessionStarted = z.infer<typeof SessionStarted>;
 
 export const PresenceMode = z.enum(["auto", "here", "away"]);
 export type PresenceMode = z.infer<typeof PresenceMode>;
@@ -559,6 +579,23 @@ export type RelayEvent = { seq: number; ts: number } & EventBody;
 export const RpcSchemas = {
   sync: z.object({ sinceSeq: z.number().int().nonnegative().default(0) }),
   "sessions.list": z.object({ includeEnded: z.boolean().default(false) }),
+  /**
+   * The folders past sessions (ended ones too) ran in, most recently used first, one entry per folder, without folders
+   * that no longer exist on the Mac. Result: SessionDirectory[]. Older helpers answer "unknown method".
+   */
+  "sessions.directories": z.object({}),
+  /**
+   * Starts a Claude Code session in the background (no window) in `directory`, with `text` as its first message,
+   * and answers with its id. `directory` must be a path `sessions.directories` lists; any other, or one that has
+   * disappeared since, is refused and nothing starts. `text` must not be empty. The session uses the Mac's
+   * normal permission settings: the phone can't choose a permission mode. It then shows up like any other
+   * session (`session.upsert`, kind `background`, its turns). Result: SessionStarted. Older helpers answer
+   * "unknown method"; `HostInfo.canStartSessions` says whether the helper can.
+   */
+  "session.start": z.object({
+    directory: z.string().min(1).max(4096),
+    text: z.string().max(20_000),
+  }),
   /**
    * A session's finished turns, newest first. `before` (optional): only turns that ended before this time, to
    * page back through a long history. The phone gives the time its oldest turn started (its end when the start

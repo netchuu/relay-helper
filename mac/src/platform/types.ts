@@ -48,6 +48,8 @@ export interface PresenceContext {
 export interface HostInfo {
   os: "macos" | "linux";
   name: string;
+  /** Present (true) when sessions can be started from the phone. */
+  canStartSessions?: boolean;
 }
 
 /** Terminal apps Relay can type into besides tmux. */

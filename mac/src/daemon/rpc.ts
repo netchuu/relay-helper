@@ -6,6 +6,7 @@ import {
   type RpcMethod,
   RpcSchemas,
   type SendResult,
+  type SessionStarted,
   sessionNameLength,
   type Turn,
   type TurnFullResult,
@@ -34,6 +35,7 @@ import { publicSession, type Registry, type SessionRecord } from "./registry.ts"
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
 import { SentMessages } from "./sentMessages.ts";
+import { StartError, sessionDirectories, startSession } from "./startSession.ts";
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
 import {
@@ -53,6 +55,8 @@ export interface RpcDeps {
   config: RelayConfig;
   /** Present when APNs or FCM is configured. */
   notifier?: Notifier | null;
+  /** The real `claude` binary, for `session.start`; null or missing: starting isn't available. */
+  claudeBin?: string | null;
   /** The phone's Stop (session.interrupt). */
   stopper?: TurnStopper;
   /** Replies waiting for the Mac to be unlocked (desktop-ide-delivery). */
@@ -179,6 +183,26 @@ export function createRpc(
     },
 
     "sessions.list": ({ includeEnded }) => d.registry.list(includeEnded).map(publicSession),
+
+    "sessions.directories": () => sessionDirectories(d.db),
+
+    "session.start": async ({ directory, text }, actor) => {
+      try {
+        const { sessionId } = await startSession({
+          db: d.db,
+          registry: d.registry,
+          claudeBin: d.claudeBin,
+          directory,
+          text,
+        });
+        // The directory and the length, never the message.
+        audit(d.db, actor, "session.start", { sessionId, directory, chars: text.length });
+        return { sessionId } satisfies SessionStarted;
+      } catch (err) {
+        if (err instanceof StartError) throw new RpcFailure(err.code, err.message);
+        throw err;
+      }
+    },
 
     "session.turns": ({ sessionId, limit, before }) => {
       // Up to and including `before`: a turn the next prompt closed ends at the very moment that one started, which

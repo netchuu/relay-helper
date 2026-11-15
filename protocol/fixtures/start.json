@@ -1,0 +1,65 @@
+{
+  "host": {
+    "os": "macos",
+    "name": "Ana's MacBook Pro",
+    "canStartSessions": true
+  },
+  "hostOlder": {
+    "os": "macos",
+    "name": "Ana's MacBook Pro"
+  },
+  "directoriesParams": {},
+  "directories": [
+    {
+      "path": "/Users/me/Projects/web-shop",
+      "project": "web-shop",
+      "lastUsedAt": 1793620000000
+    },
+    {
+      "path": "/Users/me/Projects/scratch",
+      "project": "scratch",
+      "lastUsedAt": 1793533600000
+    }
+  ],
+  "params": {
+    "directory": "/Users/me/Projects/web-shop",
+    "text": "Fix the cart total when a coupon is applied"
+  },
+  "result": {
+    "sessionId": "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff"
+  },
+  "errors": [
+    {
+      "type": "rpc",
+      "id": 80,
+      "error": {
+        "code": "not_found",
+        "message": "That folder isn't one of your past chats' folders."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 81,
+      "error": {
+        "code": "not_found",
+        "message": "That folder no longer exists on this computer."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 82,
+      "error": {
+        "code": "bad_request",
+        "message": "Write a first message to start a session."
+      }
+    }
+  ],
+  "olderHelper": {
+    "type": "rpc",
+    "id": 83,
+    "error": {
+      "code": "bad_request",
+      "message": "unknown method session.start"
+    }
+  }
+}

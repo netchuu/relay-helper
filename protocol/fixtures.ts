@@ -16,6 +16,7 @@ import {
   AttachmentUpload,
   BackgroundTask,
   DeliveryCheck,
+  HostInfo,
   InterruptResult,
   Presence,
   Prompt,
@@ -23,6 +24,8 @@ import {
   RpcSchemas,
   SendResult,
   Session,
+  SessionDirectory,
+  SessionStarted,
   Turn,
   TurnFullResult,
   TurnMessage,
@@ -601,6 +604,48 @@ const sends = {
   },
 };
 
+// Starting a session from the phone: the folders of past chats, then a first message in one of them.
+const start = {
+  // `hello` and `pair` say the helper can start sessions; an older helper leaves the field out.
+  host: HostInfo.parse({ os: "macos", name: "Ana's MacBook Pro", canStartSessions: true }),
+  hostOlder: HostInfo.parse({ os: "macos", name: "Ana's MacBook Pro" }),
+  directoriesParams: RpcSchemas["sessions.directories"].parse({}),
+  // One entry per folder, most recently used first.
+  directories: z.array(SessionDirectory).parse([
+    { path: "/Users/me/Projects/web-shop", project: "web-shop", lastUsedAt: now },
+    { path: "/Users/me/Projects/scratch", project: "scratch", lastUsedAt: now - 86_400_000 },
+  ]),
+  params: RpcSchemas["session.start"].parse({
+    directory: "/Users/me/Projects/web-shop",
+    text: "Fix the cart total when a coupon is applied",
+  }),
+  result: SessionStarted.parse({ sessionId: "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff" }),
+  // Plain sentences the phone can show.
+  errors: [
+    {
+      type: "rpc",
+      id: 80,
+      error: { code: "not_found", message: "That folder isn't one of your past chats' folders." },
+    },
+    {
+      type: "rpc",
+      id: 81,
+      error: { code: "not_found", message: "That folder no longer exists on this computer." },
+    },
+    {
+      type: "rpc",
+      id: 82,
+      error: { code: "bad_request", message: "Write a first message to start a session." },
+    },
+  ],
+  // An older helper: the phone hides the entry point, and a call that went out anyway gets this.
+  olderHelper: {
+    type: "rpc",
+    id: 83,
+    error: { code: "bad_request", message: "unknown method session.start" },
+  },
+};
+
 // recorded-transcripts: the turns the helper makes from real Claude Code transcripts (mac/test/fixtures/transcripts/,
 // recorded by `bun run record:transcripts`), so the apps decode what a real session produces: an [Image #N] prompt, a
 // stopped turn, an agent, a background shell, a failed tool. Oldest turn first, as the phone lists them.
@@ -642,5 +687,6 @@ write("timeline.json", { ...timeline, agent: agentProgress });
 write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);
+write("start.json", start);
 write("recorded.json", recorded);
 console.log(`wrote fixtures to ${dir}`);

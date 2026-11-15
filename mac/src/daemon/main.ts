@@ -4,6 +4,7 @@ import { RELAY_BIN } from "../install.ts";
 import { askForAccessibility, axAllowed, setAccessibilityAskStore } from "../integrations/claudeDesktop.ts";
 import { errMessage, log } from "../log.ts";
 import { run } from "../platform/exec.ts";
+import { setCanStartSessions } from "../platform/index.ts";
 import { watchAccessibility } from "./accessibilityWatch.ts";
 import { startAppServer, startLocalServer } from "./api.ts";
 import { AttachmentStore } from "./attachments.ts";
@@ -72,7 +73,8 @@ export async function runDaemon(): Promise<void> {
     }
   }
   const notifier = apns || fcm ? new Notifier(db, events, presence, registry, broker, { apns, fcm }) : null;
-  const baseDeps = { db, events, registry, broker, presence, config, notifier };
+  const baseDeps = { db, events, registry, broker, presence, config, notifier, claudeBin };
+  setCanStartSessions(Boolean(claudeBin));
   const steps = new StepTracker(events);
   const messages = new MessageTracker(events);
   const background = new BackgroundTracker(events);
