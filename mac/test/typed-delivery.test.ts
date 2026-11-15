@@ -765,6 +765,30 @@ describe("relay shell: drafts and typing anyway", () => {
     expect(written).toEqual([]);
   });
 
+  test("Claude quit during the wait for a quiet moment: not_foreground, nothing written", async () => {
+    let calls = 0;
+    const x = ctx({ isForeground: async () => ++calls === 1 });
+    const typedAt = x.now() - 500; // quiet again after a few sleeps
+    x.c.lastInput = () => typedAt;
+    expect(await answerRequest(req(), x.c)).toEqual({ ok: false, reason: "not_foreground" });
+    expect(x.written).toEqual([]);
+  });
+
+  test("force: Claude quit before Enter: no Enter is written", async () => {
+    let calls = 0;
+    const x = ctx({ isForeground: async () => ++calls < 2 });
+    expect(await answerRequest(req({ force: true }), x.c)).toEqual({ ok: false, reason: "not_foreground" });
+    expect(x.written).not.toContain("\r");
+  });
+
+  test("Claude stays in front through the wait: typed as before", async () => {
+    const x = ctx();
+    const typedAt = x.now() - 500;
+    x.c.lastInput = () => typedAt;
+    expect(await answerRequest(req(), x.c)).toEqual({ ok: true });
+    expect(x.written).toEqual(["\x1b[200~hi\x1b[201~", "\r"]);
+  });
+
   test("force: typed at once while you type, after a clean break from a draft", async () => {
     const x = ctx({ hasDraft: () => true });
     x.c.lastInput = () => x.now();

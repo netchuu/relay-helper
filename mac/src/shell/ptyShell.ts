@@ -106,11 +106,15 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
     }
     // Nor into a draft you left in the prompt: the helper waits for it to be sent or cleared.
     if (ctx.hasDraft?.()) return { ok: false, reason: "draft" };
+    // The wait can be long: you may have quit the agent meanwhile, and the text would run in the shell.
+    if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "not_foreground" };
   }
   const text = req.text as string;
   const { body, enter } = typedBytes(ctx.hasDraft?.() ? `\n\n${text}` : text, ctx.pasteOn());
   ctx.write(body);
   await ctx.sleep(150);
+  // Enter is what runs a command: check once more that the agent is still in front.
+  if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "not_foreground" };
   ctx.write(enter);
   return { ok: true };
 }
