@@ -9,6 +9,7 @@ import {
   payloadFor,
   promptKindFor,
   resolveChoices,
+  restoreCutQuestion,
   stopHookOutput,
   validateQuestionAnswer,
 } from "./decisions.ts";
@@ -183,8 +184,17 @@ export class Broker {
     const row = this.db.query("SELECT * FROM prompts WHERE id = ?").get(promptId) as PromptRow | null;
     if (!row) return { ok: false, code: "not_found", message: "unknown prompt" };
     if (row.status !== "open") {
-      if (row.resolved_by === "phone" && row.answer_json && sameAnswer(row.answer_json, answer))
-        return { ok: true };
+      if (row.resolved_by === "phone" && row.answer_json) {
+        // A notification answer comes under the cut question; compare both sides under the full one.
+        const payload = JSON.parse(row.payload_json) as PromptPayload;
+        const whole = (a: Answer): Answer =>
+          a.kind === "question" && payload.kind === "question"
+            ? { ...a, answers: restoreCutQuestion(payload.questions, a.answers) }
+            : a;
+        const stored = JSON.parse(row.answer_json) as Answer;
+        if (sameAnswer(row.answer_json, answer) || sameAnswer(JSON.stringify(whole(stored)), whole(answer)))
+          return { ok: true };
+      }
       return { ok: false, code: "conflict", message: `already closed (${row.resolved_by ?? "unknown"})` };
     }
 
@@ -192,10 +202,11 @@ export class Broker {
     let forHook: Answer = answer;
     if (answer.kind === "question") {
       const payload = JSON.parse(row.payload_json) as PromptPayload;
+      // A long question's notification answers under the cut text the push carried.
+      const given =
+        payload.kind === "question" ? restoreCutQuestion(payload.questions, answer.answers) : answer.answers;
       const answers =
-        payload.kind === "question"
-          ? resolveChoices(payload.questions, answer.answers, answer.choices)
-          : answer.answers;
+        payload.kind === "question" ? resolveChoices(payload.questions, given, answer.choices) : given;
       forHook = { kind: "question", answers };
       const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };

@@ -236,3 +236,24 @@ export function validateQuestionAnswer(
   }
   return null;
 }
+
+/**
+ * A question too long for one push goes out cut (fitAlert) and the notification's buttons answer under the cut
+ * text, ending in "…". For a single question whose answer is keyed by such a cut (a prefix of the question, or
+ * of its redacted form), the key goes back to the whole question so the answer is accepted and reaches Claude.
+ * Anything else comes back unchanged.
+ */
+export function restoreCutQuestion(
+  questions: Question[],
+  answers: Record<string, string>,
+): Record<string, string> {
+  const only = questions.length === 1 ? questions[0] : undefined;
+  const keys = Object.keys(answers);
+  if (!only || keys.length !== 1) return answers;
+  const key = keys[0] as string;
+  if (key === only.question || key === redact(only.question)) return answers;
+  const stem = key.endsWith("…") ? key.slice(0, -1) : key;
+  if (stem === "" || !(only.question.startsWith(stem) || redact(only.question).startsWith(stem)))
+    return answers;
+  return { [only.question]: answers[key] as string };
+}

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { parsePushRequest } from "../../cloud/src/push.ts";
 import type { Prompt } from "../../protocol/index.ts";
+import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
+import { EventLog } from "../src/daemon/events.ts";
 import {
   alertFor,
   MAX_SEALED_BYTES,
@@ -138,5 +140,85 @@ describe("a push the relay still refuses", () => {
     const retry = JSON.stringify([apnsSent[1], fcmSent[1]]);
     expect(retry).toContain("New activity on your Mac");
     for (const secret of ["secret-project", "Which DB?", "p_1"]) expect(retry).not.toContain(secret);
+  });
+});
+
+describe("a long question can be answered from its notification", () => {
+  const open = (text: string) => {
+    const db = openDb(":memory:");
+    const broker = new Broker(db, new EventLog(db));
+    const opened = broker.open({
+      session_id: "s1",
+      tool_name: "AskUserQuestion",
+      tool_input: {
+        questions: [
+          { question: text, multiSelect: false, options: [{ label: "Postgres" }, { label: "SQLite" }] },
+        ],
+      },
+    } as never);
+    return { broker, prompt: opened.prompt, reply: opened.reply };
+  };
+  const long = `Which database? ${"Details follow. ".repeat(200)}`;
+
+  const pushed = (prompt: Prompt) =>
+    openSealed((sealedApnsPayload(promptAlert(prompt, "relay"), KEY) as { relay: { enc: string } }).relay.enc)
+      .data.question as string;
+
+  for (const [label, value] of [
+    ["a button", "Postgres"],
+    ["typed Other text", "Use DuckDB instead"],
+  ] as const) {
+    test(`${label} under the pushed (cut) question is accepted and reaches Claude under the full one`, async () => {
+      const { broker, prompt, reply } = open(long);
+      const shown = pushed(prompt);
+      expect(shown.length).toBeLessThan(long.length);
+      const r = broker.answer(prompt.id, { kind: "question", answers: { [shown]: value } }, "device:a");
+      expect(r.ok).toBe(true);
+      const out = JSON.stringify(await reply);
+      expect(out).toContain(JSON.stringify(long).slice(1, 60));
+      expect(out).toContain(value);
+    });
+  }
+
+  test("the full question as the key still works, and an unrelated key still fails", () => {
+    const { broker, prompt, reply } = open(long);
+    reply.catch(() => {});
+    const bad = broker.answer(
+      prompt.id,
+      { kind: "question", answers: { "Something else": "x" } },
+      "device:a",
+    );
+    expect(bad.ok).toBe(false);
+    const ok = broker.answer(prompt.id, { kind: "question", answers: { [long]: "Postgres" } }, "device:a");
+    expect(ok.ok).toBe(true);
+  });
+});
+
+describe("a re-sent notification answer", () => {
+  test("answered twice under the cut key, the second is ok; a different answer still conflicts", async () => {
+    const db = openDb(":memory:");
+    const broker = new Broker(db, new EventLog(db));
+    const long = `Which database? ${"Details follow. ".repeat(200)}`;
+    const opened = broker.open({
+      session_id: "s1",
+      tool_name: "AskUserQuestion",
+      tool_input: {
+        questions: [
+          { question: long, multiSelect: false, options: [{ label: "Postgres" }, { label: "SQLite" }] },
+        ],
+      },
+    } as never);
+    const shown = openSealed(
+      (sealedApnsPayload(promptAlert(opened.prompt, "relay"), KEY) as { relay: { enc: string } }).relay.enc,
+    ).data.question as string;
+    const answer = (value: string) => ({ kind: "question" as const, answers: { [shown]: value } });
+    expect(broker.answer(opened.prompt.id, answer("Postgres"), "device:a").ok).toBe(true);
+    await opened.reply;
+    expect(broker.answer(opened.prompt.id, answer("Postgres"), "device:a").ok).toBe(true);
+    const other = broker.answer(opened.prompt.id, answer("SQLite"), "device:a");
+    expect(other.ok).toBe(false);
+    // The same answer under the full question is the same answer.
+    const full = { kind: "question" as const, answers: { [long]: "Postgres" } };
+    expect(broker.answer(opened.prompt.id, full, "device:a").ok).toBe(true);
   });
 });
