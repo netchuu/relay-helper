@@ -165,6 +165,51 @@ export function turnAlert(turn: Turn, name: string): Alert {
 }
 
 /**
+ * The most plaintext (title, body and data as JSON, in UTF-8 bytes) one sealed push may carry. The relay
+ * accepts 4,096 bytes of APNs payload and 4,000 of FCM data, which leaves about 2,813 for this at the
+ * longest thread id it allows.
+ */
+export const MAX_SEALED_BYTES = 2800;
+
+const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
+
+/**
+ * The alert cut down so its sealed text fits MAX_SEALED_BYTES whatever the session name, question or options:
+ * the question gives way first (cut on whole characters), then the buttons, then the title and body.
+ * Alerts that already fit come back unchanged.
+ */
+export function fitAlert(alert: Alert): Alert {
+  const plain = (a: Alert) => ({ title: a.title, body: a.body, data: a.data });
+  if (jsonBytes(plain(alert)) <= MAX_SEALED_BYTES) return alert;
+  const question = alert.data.question;
+  if (typeof question === "string") {
+    const fits = (n: number) =>
+      jsonBytes(plain({ ...alert, data: { ...alert.data, question: clip(question, n) } })) <=
+      MAX_SEALED_BYTES;
+    let lo = 0;
+    let hi = question.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (fits(mid)) lo = mid;
+      else hi = mid - 1;
+    }
+    if (fits(lo)) {
+      return { ...alert, data: { ...alert.data, question: clip(question, lo) } };
+    }
+  }
+  // Still too big (huge name, options or ids): the title and body only, and no buttons.
+  const { question: _q, options: _o, ...rest } = alert.data;
+  const bare: Alert = { ...alert, title: clip(alert.title, 100), body: clip(alert.body, 180), data: rest };
+  if (jsonBytes(plain(bare)) <= MAX_SEALED_BYTES) return bare;
+  return { ...bare, title: GENERIC_ALERT.title, body: GENERIC_ALERT.body, data: {} };
+}
+
+const sealAlert = (alert: Alert, pushKey: string): string => {
+  const a = fitAlert(alert);
+  return sealForPhone(pushKey, { title: a.title, body: a.body, data: a.data });
+};
+
+/**
  * The APNs payload with the real text encrypted for one phone (sealForPhone). Apple and the relay see a
  * generic alert, the category (so the action buttons work) and an opaque blob; the phone's Notification
  * Service Extension decrypts the blob and shows the real title, body and data.
@@ -178,7 +223,7 @@ export function sealedApnsPayload(alert: Alert, pushKey: string): object {
       "thread-id": alert.threadId,
       "mutable-content": 1,
     },
-    relay: { v: 1, enc: sealForPhone(pushKey, { title: alert.title, body: alert.body, data: alert.data }) },
+    relay: { v: 1, enc: sealAlert(alert, pushKey) },
   };
 }
 
@@ -191,7 +236,7 @@ export function sealedFcmMessage(alert: Alert, pushKey: string): FcmMessage {
   return {
     data: {
       v: "1",
-      enc: sealForPhone(pushKey, { title: alert.title, body: alert.body, data: alert.data }),
+      enc: sealAlert(alert, pushKey),
       category: alert.category,
       threadId: alert.threadId,
     },
@@ -365,6 +410,25 @@ export class Notifier {
           collapseId: t.push_key ? alert.collapseId : generic.collapseId,
         });
         dead = isDeadToken(result);
+      }
+      // The relay refused the sealed push (too large, say): the generic alert still tells the phone something is up.
+      if (result.status !== 200 && !dead && t.push_key && (result.status === 400 || result.status === 413)) {
+        log.warn("push rejected, sending the generic alert", {
+          device: t.id,
+          platform: t.push_platform,
+          status: result.status,
+          reason: result.reason,
+        });
+        if (t.push_platform === "fcm") {
+          result = (await this.senders.fcm?.send(t.apns_token, fcmMessage(generic))) ?? result;
+          dead = isDeadFcmToken(result);
+        } else {
+          result =
+            (await this.senders.apns?.send(t.apns_token, t.apns_env, apnsPayload(generic), {
+              collapseId: generic.collapseId,
+            })) ?? result;
+          dead = isDeadToken(result);
+        }
       }
       if (result.status === 200) sent++;
       else if (dead) {
