@@ -500,6 +500,11 @@ async function pair(): Promise<void> {
     console.log("Setting up Relay first.\n");
     await install(["--from-pair"]);
     for (let i = 0; i < 20 && !(await daemonAlive()); i++) await Bun.sleep(250);
+    // install() gave up after its own wait and set the exit code; a helper that answered during ours is fine.
+    if (process.exitCode && (await daemonAlive())) {
+      process.exitCode = 0;
+      console.log("• daemon running");
+    }
     console.log("");
   }
   let config = loadConfig();
