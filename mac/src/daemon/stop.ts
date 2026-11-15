@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import {
   type InterruptResult,
   type InterruptVia,
@@ -69,9 +70,18 @@ interface Timing {
   pollMs: number;
   /** A second Stop within this time after an Esc sends no second Esc (two would open Claude Code's rewind menu). */
   repeatMs: number;
+  /** A sweep ends an idle session's open turn on a finished answer only once the transcript has been quiet this long. */
+  quietMs: number;
 }
 
-const TIMING: Timing = { graceMs: 400, markerMs: 5000, inboxMs: 3000, pollMs: 250, repeatMs: 2000 };
+const TIMING: Timing = {
+  graceMs: 400,
+  markerMs: 5000,
+  inboxMs: 3000,
+  pollMs: 250,
+  repeatMs: 2000,
+  quietMs: 30_000,
+};
 /** A stop message held at the terminal (bypass mode) still counts once someone delivers it. */
 const PENDING_INBOX_MS = 10 * 60_000;
 
@@ -91,6 +101,8 @@ export class TurnStopper {
     string,
     { turnId: string | null; at: number; resolve: (turnId: string | null) => void }
   >();
+  /** The transcript's size and mtime when a sweep last read it for a turn: unchanged, nothing new to find. */
+  private readonly swept = new Map<string, string>();
   private readonly t: Timing;
   private readonly keys: KeyOps;
   private readonly inbox: (socketPath: string, token: string | null, text: string) => Promise<void>;
@@ -227,10 +239,18 @@ export class TurnStopper {
          WHERE t.ended_at IS NULL AND t.started_at IS NOT NULL AND s.status = 'idle'`,
       )
       .all() as { id: string; session_id: string; started_at: number; prompt: string | null }[];
+    const open = new Set(rows.map((r) => r.id));
+    for (const id of this.swept.keys()) if (!open.has(id)) this.swept.delete(id);
     for (const r of rows) {
       if (this.inflight.has(r.session_id)) continue;
+      const stamp = this.transcriptStamp(r.session_id);
+      if (stamp !== null && this.swept.get(r.id) === stamp) continue;
       const info = this.transcriptInfo(r.session_id, r.started_at, undefined, r.prompt);
       if (info?.interrupted) this.endStopped(r.id, info);
+      else if (info?.finished && info.lastAt !== null && Date.now() - info.lastAt >= this.t.quietMs) {
+        // A Stop hook was missed (the helper was down): Claude finished, and nothing came after the answer.
+        this.endStopped(r.id, info, false);
+      } else if (stamp !== null && !info?.finished) this.swept.set(r.id, stamp); // finished: wait out the quiet time
     }
   }
 
@@ -239,7 +259,7 @@ export class TurnStopper {
    * the turn was still the session's open one, the session goes idle; when a newer turn already started (a
    * message queued at the computer, or the inbox stop message), its status is left to that turn.
    */
-  endStopped(turnId: string, known?: ReturnType<typeof interruptedTurn>): string | null {
+  endStopped(turnId: string, known?: ReturnType<typeof interruptedTurn>, stopped = true): string | null {
     const row = this.d.db
       .query(
         "SELECT id, session_id, prompt, full_text, started_at, ended_at, stopped FROM turns WHERE id = ?",
@@ -260,7 +280,7 @@ export class TurnStopper {
     const full = redact(info?.text ?? "");
     const { text: summary, truncated } = compact(full, this.d.config.previewChars);
     const now = Date.now();
-    const endedAt = row.ended_at ?? now;
+    const endedAt = row.ended_at ?? (stopped ? now : (info?.lastAt ?? now));
     const stats: TurnStats = {
       durationMs: row.started_at ? Math.max(0, (info?.endedAt ?? endedAt) - row.started_at) : null,
       toolCalls: info?.toolCalls ?? 0,
@@ -278,13 +298,14 @@ export class TurnStopper {
       : { messages: liveSent.slice(0, TURN_MESSAGES_MAX) };
     this.d.db
       .query(
-        "UPDATE turns SET full_text = ?, summary = ?, truncated = ?, stats_json = ?, failed = 0, stopped = 1, ended_at = ?, steps_json = ?, messages_json = ? WHERE id = ?",
+        "UPDATE turns SET full_text = ?, summary = ?, truncated = ?, stats_json = ?, failed = 0, stopped = ?, ended_at = ?, steps_json = ?, messages_json = ? WHERE id = ?",
       )
       .run(
         full,
         summary,
         truncated ? 1 : 0,
         JSON.stringify(stats),
+        stopped ? 1 : 0,
         endedAt,
         stepsJson,
         messagesJson(messages),
@@ -301,7 +322,7 @@ export class TurnStopper {
       failed: false,
       startedAt: row.started_at,
       endedAt,
-      stopped: true,
+      ...(stopped ? { stopped: true } : {}),
       ...timeline,
       ...turnMessageFields(messages),
       ...attachmentFields(this.d.db, row.session_id, row.prompt),
@@ -312,7 +333,7 @@ export class TurnStopper {
       if (s && s.status !== "ended")
         this.d.registry.setStatus(row.session_id, "idle", summary ? { lastSummary: summary } : undefined);
     }
-    log.info("turn stopped", { turnId: row.id });
+    log.info(stopped ? "turn stopped" : "stale open turn ended", { turnId: row.id });
     return row.id;
   }
 
@@ -338,6 +359,18 @@ export class TurnStopper {
       transcriptUnreadable: unreadable,
     });
     return null;
+  }
+
+  private transcriptStamp(sessionId: string): string | null {
+    const session = this.d.registry.get(sessionId);
+    const path = session ? (this.d.transcriptPath ?? transcriptPathFor)(session) : null;
+    if (!path) return null;
+    try {
+      const st = statSync(path);
+      return `${st.size}:${st.mtimeMs}`;
+    } catch {
+      return null;
+    }
   }
 
   private transcriptInfo(

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1120,5 +1120,74 @@ describe("prompts that look alike, and the edge of the double-tap window", () =>
     expect(after.error).toBeNull();
     expect((await after.result)?.via).toBe("tmux");
     expect(s.keys.tmux).toBe(2);
+  });
+});
+
+describe("a turn left open on an idle session (missed Stop hook)", () => {
+  const prompt = (t: string, at: number) => ({
+    type: "user",
+    timestamp: new Date(at).toISOString(),
+    message: { role: "user", content: t },
+  });
+  const tool = (at: number) => ({
+    type: "assistant",
+    timestamp: new Date(at).toISOString(),
+    message: { content: [{ type: "tool_use", name: "Bash", input: {} }] },
+  });
+  /** Sweeps with the clock `ms` after `from`. */
+  const sweepAt = (s: ReturnType<typeof setup>, from: number, ms: number) => {
+    setSystemTime(new Date(from + ms));
+    try {
+      s.stopper.sweep();
+    } finally {
+      setSystemTime();
+    }
+  };
+  const begin = async () => {
+    const s = setup();
+    await s.working("s1", TMUX, "Rewrite the checkout");
+    const started = (s.openTurn("s1") as { started_at: number }).started_at;
+    return { s, started };
+  };
+
+  test("a sweep ends it with the finished answer, then doesn't read the transcript again", async () => {
+    const { s, started } = await begin();
+    s.tx(prompt("Rewrite the checkout", started), text("Rewritten.", started + 1000));
+    s.registry.setStatus("s1", "idle");
+    sweepAt(s, started, 60_000);
+    const done = s.turnsDone();
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ summary: "Rewritten.", failed: false });
+    expect("stopped" in (done[0] as Turn)).toBe(false);
+    expect(s.openTurn("s1")).toBeNull();
+    sweepAt(s, started, 120_000);
+    expect(s.turnsDone()).toHaveLength(1);
+  });
+
+  test("an unchanged transcript that doesn't end the turn is read once", async () => {
+    const { s, started } = await begin();
+    s.tx(prompt("Rewrite the checkout", started), tool(started + 1000));
+    s.registry.setStatus("s1", "idle");
+    const spy = spyOn(TurnStopper.prototype as never, "transcriptInfo" as never);
+    sweepAt(s, started, 60_000);
+    sweepAt(s, started, 80_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  test("a working session, a fresh answer or a pending tool call is left alone; an interrupt ends as stopped", async () => {
+    const { s, started } = await begin();
+    s.tx(prompt("Rewrite the checkout", started), text("Done?", started + 1000));
+    sweepAt(s, started, 60_000); // status working
+    expect(s.turnsDone()).toEqual([]);
+    s.registry.setStatus("s1", "idle");
+    sweepAt(s, started, 5_000); // answer written 4 seconds ago
+    expect(s.turnsDone()).toEqual([]);
+    s.tx(prompt("Rewrite the checkout", started), text("Done?", started + 1000), tool(started + 2000));
+    sweepAt(s, started, 60_000);
+    expect(s.turnsDone()).toEqual([]);
+    s.tx(prompt("Rewrite the checkout", started), text("Partial.", started + 1000), marker(started + 2000));
+    sweepAt(s, started, 60_000);
+    expect(s.turnsDone()[0]).toMatchObject({ stopped: true });
   });
 });

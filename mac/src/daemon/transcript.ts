@@ -283,6 +283,12 @@ export function interruptedTurn(
   thoughts: TurnStep[];
   /** Everything Claude wrote in the turn (live-messages); the last is the answer when it is `text`. */
   messages: RawMessage[];
+  /**
+   * The turn's last conversation entry is Claude's finished answer (text, no tool call after it) and nothing
+   * follows it, no interrupt marker either; `lastAt` is when it was written.
+   */
+  finished: boolean;
+  lastAt: number | null;
 } | null {
   let lines: string[];
   try {
@@ -312,6 +318,8 @@ export function interruptedTurn(
     steps: [],
     thoughts: [],
     messages: [],
+    finished: false,
+    lastAt: null,
   };
   // Everything up to the previous turn's last entry belongs to that turn, so its prompt entry can never anchor
   // this one, even with the same text ("continue" twice, or two messages from the phone).
@@ -356,15 +364,22 @@ export function interruptedTurn(
     path,
   );
   const messages: RawMessage[] = [];
+  let finished = false;
+  let lastAt: number | null = null;
   for (const { entry, ts } of rest) {
     if (ts > until) break;
     if (isInterruptMarker(entry)) {
       interrupted = true;
       endedAt = ts;
+      finished = false;
       continue;
     }
     // The next prompt is a new turn (one queued at the computer starts as soon as Esc stops this one).
     if (promptText(entry) !== null) break;
+    if ((entry.type === "assistant" || entry.type === "user") && !entry.isSidechain) {
+      finished = isFinishedAnswer(entry);
+      lastAt = ts;
+    }
     steps.add(entry);
     const message = messageFrom(entry, since);
     if (message) messages.push(message);
@@ -392,7 +407,19 @@ export function interruptedTurn(
     steps: steps.steps,
     thoughts: steps.thoughts,
     messages,
+    finished,
+    lastAt,
   };
+}
+
+/** An assistant entry that ends the turn: it has text and no tool call, and Claude Code didn't say it goes on. */
+function isFinishedAnswer(entry: Entry): boolean {
+  if (entry.type !== "assistant" || !Array.isArray(entry.message?.content)) return false;
+  const reason = (entry.message as { stop_reason?: string | null }).stop_reason;
+  if (reason === "tool_use" || reason === "pause_turn") return false;
+  const blocks = entry.message.content as { type?: string; text?: string }[];
+  if (blocks.some((b) => b.type === "tool_use")) return false;
+  return blocks.some((b) => b.type === "text" && b.text?.trim());
 }
 
 function readTail(path: string): string {
