@@ -191,7 +191,14 @@ export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog;
           );
           return;
         }
-        const outcome = await opts.rpc(req.method, req.params, `device:${ws.data.device.id}`);
+        // A throw here would be an unhandled rejection that ends the helper: answer this call instead.
+        let outcome: RpcOutcome;
+        try {
+          outcome = await opts.rpc(req.method, req.params, `device:${ws.data.device.id}`);
+        } catch (err) {
+          log.error("rpc failed", { method: req.method, err: errMessage(err) });
+          outcome = { error: { code: "internal", message: "internal error" } };
+        }
         ws.send(JSON.stringify({ type: "rpc", id: req.id ?? null, ...outcome }));
       },
       close(ws) {

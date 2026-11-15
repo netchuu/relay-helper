@@ -548,7 +548,8 @@ export function createRpc(
   }
 
   return async (method, params, actor) => {
-    if (!(method in RpcSchemas))
+    // Own keys only: "toString", "constructor" and "__proto__" are `in` every object.
+    if (!Object.hasOwn(RpcSchemas, method))
       return { error: { code: "bad_request", message: `unknown method ${method}` } };
     const m = method as RpcMethod;
     const parsed = RpcSchemas[m].safeParse(params ?? {});
