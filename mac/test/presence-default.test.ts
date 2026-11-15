@@ -26,3 +26,34 @@ test("local activity doesn't make an away Mac present (pushes keep coming)", () 
   monitor.noteLocalActivity();
   expect(monitor.get().present).toBe(false);
 });
+
+test("a poll that started before setMode doesn't undo the chosen mode", async () => {
+  const { platform } = await import("../src/platform/index.ts");
+  const { spyOn } = await import("bun:test");
+  const db = openDb(":memory:");
+  setSetting(db, "presence.mode", "auto");
+  const monitor = new PresenceMonitor(db, new EventLog(db), 300);
+  const resolvers: Array<() => void> = [];
+  const spy = spyOn(platform.presence, "read").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolvers.push(() => resolve({ idleSeconds: 1, locked: false, source: "test" }));
+      }),
+  );
+  try {
+    const early = monitor.poll();
+    const choose = monitor.setMode("away");
+    // The later read resolves first, then the one that started before the choice.
+    resolvers[1]?.();
+    await choose;
+    resolvers[0]?.();
+    await early;
+    expect(monitor.get()).toMatchObject({ mode: "away", present: false });
+    const later = monitor.poll();
+    resolvers[2]?.();
+    await later;
+    expect(monitor.get()).toMatchObject({ mode: "away", present: false });
+  } finally {
+    spy.mockRestore();
+  }
+});

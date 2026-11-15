@@ -49,7 +49,7 @@ export class PresenceMonitor {
   /** Applies immediately (no waiting for the next poll), so a following `session.send` sees it. */
   async setMode(mode: PresenceMode): Promise<Presence> {
     setSetting(this.db, "presence.mode", mode);
-    await this.poll(mode);
+    await this.poll();
     return this.get();
   }
 
@@ -58,8 +58,10 @@ export class PresenceMonitor {
     if (!this.state.present && this.state.mode === "auto") this.update({ ...this.state, present: true });
   }
 
-  async poll(mode: PresenceMode = this.state.mode): Promise<void> {
+  async poll(): Promise<void> {
     const reading = await platform.presence.read({ tmuxSockets: liveTmuxSockets(this.db) });
+    // The saved mode, read after the await: a choice made while the read was running wins over the old one.
+    const mode = getSetting<PresenceMode>(this.db, "presence.mode", DEFAULT_PRESENCE_MODE);
     const locked = reading.locked ?? false;
     const recentlyTyped = Date.now() - this.lastLocalActivity < this.idleAwaySeconds * 1000;
     // Unknown idle time (a Linux server with no desktop, no attached tmux and no login terminal) counts
