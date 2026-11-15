@@ -6,10 +6,17 @@ import { join } from "node:path";
 import type { RelayEvent } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { type DeliverOptions, deliver, type TypeOps, typingRouteFor } from "../src/daemon/inject.ts";
+import {
+  type DeliverOptions,
+  deliver,
+  setKnownPids,
+  type TypeOps,
+  typingRouteFor,
+} from "../src/daemon/inject.ts";
 import { type HookEnv, Registry, type SessionRecord } from "../src/daemon/registry.ts";
 import { ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
+import { inFront, parseProcs } from "../src/platform/foreground.ts";
 import { platform } from "../src/platform/index.ts";
 import type { TabView } from "../src/platform/types.ts";
 
@@ -112,10 +119,83 @@ describe("typed delivery after a resume, a restart, a host", () => {
     expect(await deliver(s(), "a", opts, host.ops)).toEqual({ via: "iterm" });
     expect(host.peeks).toEqual(["/dev/ttys010", "/dev/ttys014"]);
     expect(host.typed).toEqual(["/dev/ttys014:a"]);
-    // The viewer can't be told now, the earlier tab still takes it.
-    const later = terminals({ tabs: ["/dev/ttys014"], ttys: { 4242: "/dev/ttys010" } });
+    // The viewer is still there, so the earlier tab (found again through it) takes it.
+    const later = terminals({
+      tabs: ["/dev/ttys014"],
+      ttys: { 4242: "/dev/ttys010" },
+      viewer: "/dev/ttys014",
+    });
     expect(await deliver(s(), "b", opts, later.ops)).toEqual({ via: "iterm" });
     expect(later.peeks).toEqual(["/dev/ttys010", "/dev/ttys014"]);
+  });
+
+  test("the earlier tab now runs another known session: nothing is typed into it", async () => {
+    const { registry } = registryWith();
+    registry.touch("a", { cwd: "/p", env: ITERM });
+    const a = () => registry.get("a") as SessionRecord;
+    const viewerPs = [
+      " 4242  4242  4242 ttys010  claude --bg-pty-host-child",
+      " 5000  5000  5000 ttys014  claude",
+    ].join("\n");
+    const otherPs = [
+      " 4242  4242  4242 ttys010  claude --bg-pty-host-child",
+      " 6000  6000  6000 ttys014  claude",
+    ].join("\n");
+    let ps = viewerPs;
+    const t = terminals({ tabs: ["/dev/ttys014"], ttys: { 4242: "/dev/ttys010" }, viewer: "/dev/ttys014" });
+    const ops: TypeOps = {
+      ...t.ops,
+      inFront: async (pid, tty, others) => inFront(parseProcs(ps), pid, tty, others),
+    };
+    try {
+      setKnownPids(() => [6000]);
+      // Typed through the viewer tab: the tab is remembered.
+      expect(await deliver(a(), "one", opts, ops)).toEqual({ via: "iterm" });
+      expect(t.typed).toEqual(["/dev/ttys014:one"]);
+      // The viewer closed; session B (known) now runs in that tab.
+      ps = otherPs;
+      const box = await inboxAt();
+      registry.touch("a", { cwd: "/p", env: { ...ITERM, socket: box.path } });
+      const later = terminals({ tabs: ["/dev/ttys014"], ttys: { 4242: "/dev/ttys010" } });
+      const ops2: TypeOps = { ...ops, ...later.ops, inFront: ops.inFront };
+      expect(await deliver(a(), "two", opts, ops2)).toEqual({ via: "socket" });
+      expect(later.typed).toEqual([]);
+    } finally {
+      setKnownPids(() => []);
+    }
+  });
+
+  test("the earlier tab now shows a background-hosted session B's viewer: nothing is typed into it", async () => {
+    const { registry } = registryWith();
+    registry.touch("a", { cwd: "/p", env: ITERM });
+    const a = () => registry.get("a") as SessionRecord;
+    let ps = [
+      " 4242  4242  4242 ttys010  claude --bg-pty-host-child",
+      " 5000  5000  5000 ttys014  claude",
+    ].join("\n");
+    const t = terminals({ tabs: ["/dev/ttys014"], ttys: { 4242: "/dev/ttys010" }, viewer: "/dev/ttys014" });
+    const ops: TypeOps = {
+      ...t.ops,
+      inFront: async (pid, tty, others) => inFront(parseProcs(ps), pid, tty, others),
+    };
+    try {
+      setKnownPids(() => [4242, 7000]);
+      expect(await deliver(a(), "one", opts, ops)).toEqual({ via: "iterm" });
+      // A's viewer closed; B, resumed into a background host, is shown in the same tab.
+      ps = [
+        " 4242  4242  4242 ttys010  claude --bg-pty-host-child",
+        " 7000  7000  7000 ttys020  claude --bg-pty-host-child",
+        " 6000  6000  6000 ttys014  claude --resume b",
+      ].join("\n");
+      const box = await inboxAt();
+      registry.touch("a", { cwd: "/p", env: { ...ITERM, socket: box.path } });
+      const later = terminals({ tabs: ["/dev/ttys014"], ttys: { 4242: "/dev/ttys010" } });
+      const ops2: TypeOps = { ...ops, ...later.ops, inFront: ops.inFront };
+      expect(await deliver(a(), "two", opts, ops2)).toEqual({ via: "socket" });
+      expect(later.typed).toEqual([]);
+    } finally {
+      setKnownPids(() => []);
+    }
   });
 
   test("no tab anywhere: the inbox, and doctor can tell there is no typing route", async () => {

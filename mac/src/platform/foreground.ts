@@ -52,7 +52,7 @@ const CLAUDE_COMMAND = /^(\S*\/)?claude(\s|$)/;
  *   group is a `claude` program.
  * False when `pid` isn't running any more, or has no terminal.
  */
-export function inFront(procs: Proc[], pid: number, tty: string | null): boolean {
+export function inFront(procs: Proc[], pid: number, tty: string | null, others: number[] = []): boolean {
   const me = procs.find((p) => p.pid === pid);
   if (!me) return false;
   const name = tty === null ? me.tty : tty.replace(/^\/dev\//, "");
@@ -60,11 +60,18 @@ export function inFront(procs: Proc[], pid: number, tty: string | null): boolean
   if (me.tty === name) return me.tpgid > 0 && me.pgid === me.tpgid;
   const onTty = procs.filter((p) => p.tty === name);
   const fg = onTty[0]?.tpgid ?? 0;
-  return fg > 0 && onTty.some((p) => p.pgid === fg && CLAUDE_COMMAND.test(p.command));
+  // A `claude` that is another known session's own process is not this session's viewer.
+  return (
+    fg > 0 && onTty.some((p) => p.pgid === fg && CLAUDE_COMMAND.test(p.command) && !others.includes(p.pid))
+  );
 }
 
 /** `inFront`, read from the system now. False when `ps` fails. */
-export async function claudeInFront(pid: number, tty: string | null): Promise<boolean> {
+export async function claudeInFront(
+  pid: number,
+  tty: string | null,
+  others: number[] = [],
+): Promise<boolean> {
   const res = await run(PS_ARGS, { timeoutMs: 5000 });
-  return res.code === 0 && inFront(parseProcs(res.out), pid, tty);
+  return res.code === 0 && inFront(parseProcs(res.out), pid, tty, others);
 }

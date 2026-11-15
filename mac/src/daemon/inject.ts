@@ -114,7 +114,7 @@ export interface TypeOps {
    * on `tty` (platform/foreground.ts). Relay types into tmux and terminal apps only then: otherwise the keys would
    * go to a shell (Claude suspended or exited) or another program. `relay shell` checks this itself.
    */
-  inFront(pid: number, tty: string | null): Promise<boolean>;
+  inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
   /** Enter alone, for a message that sat typed and unsent. Absent: no check is made. */
   enterPty?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmuxEnter?(socket: string, pane: string): Promise<void>;
@@ -362,7 +362,16 @@ async function typeIntoTerminal(
  * the message then goes on to the next route, the inbox at the latest.
  */
 async function claudeIsInFront(session: SessionRecord, tty: string | null, ops: TypeOps): Promise<boolean> {
-  const front = session.pid ? await ops.inFront(session.pid, tty).catch(() => false) : false;
+  let front = session.pid ? await ops.inFront(session.pid, tty, knownPids()).catch(() => false) : false;
+  // A tab that isn't the process's own terminal (the one it was typed into before, or its viewer's) is this
+  // session's only while its viewer is still there: another session may run in it now, in a background host too.
+  if (front && tty !== null && session.pid && ops.viewerTtyOf) {
+    const own = await ops.ttyOf(session.pid).catch(() => null);
+    if (own !== tty) {
+      const viewer = await ops.viewerTtyOf(session.pid, session.cwd).catch(() => null);
+      front = viewer === tty;
+    }
+  }
   if (!front)
     log.info("not typing: Claude Code isn't the program in front of its terminal", {
       sessionId: session.id,
