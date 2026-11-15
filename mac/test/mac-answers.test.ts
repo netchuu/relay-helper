@@ -7,7 +7,7 @@ import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { type HookEnvelope, HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
+import { type HookEnvelope, HookHandler, notePhoneTyped, phoneTypePending } from "../src/daemon/hooks.ts";
 import { type KeyOps, PHONE_PREFIX, STOP_MESSAGE } from "../src/daemon/inject.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { type HookEnv, publicSession, Registry } from "../src/daemon/registry.ts";
@@ -368,6 +368,74 @@ describe("a message Claude Code adds itself: state around it", () => {
     expect(s.localActivity()).toBe(1);
     // The notification arrives while "Rewrite the checkout" runs, so it's part of that turn (midturn-notice.test.ts).
     expect(s.startedPrompts(id)).toEqual(["Rewrite the checkout", "and add tests for the cart"]);
+  });
+
+  describe("text the phone sent that differs from what is typed", () => {
+    const cases: [string, string, string][] = [
+      ["CRLF", "first line\r\nsecond line", "first line\nsecond line"],
+      ["a lone CR", "first line\rsecond line", "first line\nsecond line"],
+      [
+        "an escape character",
+        "he\u001b[31mllo there, please run the tests",
+        "he[31mllo there, please run the tests",
+      ],
+      ["a C1 character", "run the\u0085 tests\u009b now", "run the tests now"],
+      ["a zero-width character", "run the\u200b tests now please", "run the tests now please"],
+      ["a short caption and a photo", "look\n/Users/x/attachments/abc/photo.png", "look [Image #1]"],
+    ];
+    for (const [name, sent, reported] of cases) {
+      test(`${name}: the prompt is the phone's, not presence`, async () => {
+        const s = setup();
+        const id = sid();
+        notePhoneTyped(id, sent);
+        expect(phoneTypePending(id, sent)).toBe(true);
+        await s.hook("UserPromptSubmit", id, { prompt: reported });
+        expect(s.localActivity()).toBe(0);
+        expect(phoneTypePending(id, sent)).toBe(false);
+      });
+    }
+
+    test("a prompt really typed at the Mac still counts as presence", async () => {
+      const s = setup();
+      const id = sid();
+      notePhoneTyped(id, "first line\r\nsecond line");
+      await s.hook("UserPromptSubmit", id, { prompt: "something else entirely" });
+      expect(s.localActivity()).toBe(1);
+    });
+  });
+
+  describe("a photo sent without a caption", () => {
+    const PHOTO = "/Users/x/.relay/attachments/abc/photo.png";
+
+    test("the prompt that shows [Image #1] is the phone's, not presence", async () => {
+      const s = setup();
+      const id = sid();
+      notePhoneTyped(id, PHOTO);
+      await s.hook("UserPromptSubmit", id, { prompt: "[Image #1]" });
+      expect(s.localActivity()).toBe(0);
+      expect(phoneTypePending(id, PHOTO)).toBe(false);
+    });
+
+    test("a prompt typed at the Mac meanwhile still counts as presence", async () => {
+      const s = setup();
+      const id = sid();
+      notePhoneTyped(id, PHOTO);
+      await s.hook("UserPromptSubmit", id, { prompt: "something else entirely" });
+      expect(s.localActivity()).toBe(1);
+      expect(phoneTypePending(id, PHOTO)).toBe(true);
+    });
+
+    test("a notification with no open turn doesn't use it up", async () => {
+      const s = setup();
+      const id = sid();
+      notePhoneTyped(id, PHOTO);
+      await s.hook("UserPromptSubmit", id, { prompt: NOTIFICATION });
+      expect(s.localActivity()).toBe(0);
+      expect(phoneTypePending(id, PHOTO)).toBe(true);
+      await s.hook("UserPromptSubmit", id, { prompt: "[Image #1]" });
+      expect(s.localActivity()).toBe(0);
+      expect(phoneTypePending(id, PHOTO)).toBe(false);
+    });
   });
 
   test("the phone's inbox Stop still pending: a notification before the stop message doesn't spend it", async () => {

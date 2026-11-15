@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { TURN_MESSAGES_MAX, type Turn, type TurnStats } from "../../../protocol/index.ts";
 import type { RelayConfig } from "../config.ts";
 import { log } from "../log.ts";
+import { cleanTypedText } from "../shell/typedText.ts";
 import { attachmentFields } from "./attachments.ts";
 import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
+import { splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { notePromptSubmitted } from "./promptLine.ts";
@@ -45,15 +47,45 @@ export interface HookDeps {
 const NO_OUTPUT: HookReply = { stdout: "" };
 
 /** Text recently typed into a tmux pane on the phone's behalf, so it isn't mistaken for local presence. */
-const phoneTyped = new Map<string, { text: string; at: number }>();
+const phoneTyped = new Map<string, { text: string; head: string; paths: string[]; at: number }>();
+
+/** Whitespace squashed and zero-width characters dropped, so two renderings of one message compare equal. */
+function squash(t: string): string {
+  return t
+    .replace(/[\u200b-\u200f\u2060\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * What Claude Code reports back for `text` after the phone typed it: the cleaned text (what is really typed), without
+ * trailing attachment paths (a pasted image path comes back as "[Image #N]"), squashed, its first 40 characters.
+ */
+function typedHead(clean: string): string {
+  return squash(splitAttachmentPaths(clean).body).slice(0, 40);
+}
+
 export function notePhoneTyped(sessionId: string, text: string): void {
-  phoneTyped.set(sessionId, { text, at: Date.now() });
+  const clean = cleanTypedText(text);
+  const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
+  phoneTyped.set(sessionId, { text: clean, head: typedHead(clean), paths, at: Date.now() });
+}
+
+/**
+ * Whether the prompt Claude Code reported is the text the phone typed. An empty prompt never is; with no caption,
+ * only a prompt that shows the image ("[Image #N]" first, or the path itself) is.
+ */
+function matchesPhoneTyped(typed: { head: string; paths: string[] }, prompt: string): boolean {
+  const s = squash(prompt);
+  if (s === "") return false;
+  if (typed.head !== "") return s.includes(typed.head);
+  return s.startsWith("[Image #") || typed.paths.some((p) => s.includes(squash(p)));
 }
 
 /** Whether the phone's text typed at `since` hasn't come back as a UserPromptSubmit hook yet (it isn't submitted). */
 export function phoneTypePending(sessionId: string, text: string): boolean {
   const typed = phoneTyped.get(sessionId);
-  return typed !== undefined && typed.text === text;
+  return typed !== undefined && typed.text === cleanTypedText(text);
 }
 
 /**
@@ -122,7 +154,7 @@ export class HookHandler {
           return NO_OUTPUT;
         }
         const typed = phoneTyped.get(sessionId);
-        const fromPhone = typed && Date.now() - typed.at < 15_000 && prompt.includes(typed.text.slice(0, 40));
+        const fromPhone = typed && Date.now() - typed.at < 15_000 && matchesPhoneTyped(typed, prompt);
         if (fromPhone) phoneTyped.delete(sessionId);
         // The stop message the helper sent through the inbox: it cut the old turn off, which ends as stopped.
         const inboxStop = this.d.stopper?.takeInboxStop(sessionId, prompt) ?? null;
