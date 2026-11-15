@@ -475,6 +475,11 @@ export const Prompt = z.object({
   resolvedAt: z.number().nullable(),
   /** What was decided, in a few words ("SwiftData", "Allowed", "Revised: add tests"); null while open or unknown. */
   outcome: z.string().nullable().optional(),
+  /**
+   * Optional: true when a long text in `payload` was cut so a snapshot or a list fits the relay's limit; each cut
+   * ends with "… (N more characters)". Absent when nothing was cut.
+   */
+  truncated: z.boolean().optional(),
 });
 export type Prompt = z.infer<typeof Prompt>;
 

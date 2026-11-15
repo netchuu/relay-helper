@@ -12,9 +12,9 @@ import {
 } from "./auth.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
-import type { RpcOutcome } from "./rpc.ts";
+import type { RpcOpts, RpcOutcome } from "./rpc.ts";
 
-type Rpc = (method: string, params: unknown, actor: string) => Promise<RpcOutcome>;
+type Rpc = (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome>;
 
 /**
  * The relay's frame limit (cloud/src/index.ts MAX_FRAME): an attachment chunk is about 175 KB of JSON
@@ -84,7 +84,11 @@ export class ClientSession {
 
     if (!this.device) return this.reply(id, { error: { code: "unauthorized", message: "say hello first" } });
     if (!isDeviceActive(this.deps.db, this.device.id)) return this.fatal("device revoked");
-    this.reply(id, await this.deps.rpc(req.method, req.params, `device:${this.device.id}`), req.method);
+    this.reply(
+      id,
+      await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, { overRelay: true }),
+      req.method,
+    );
   }
 
   close(): void {

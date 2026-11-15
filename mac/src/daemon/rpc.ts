@@ -31,6 +31,7 @@ import { DeliveryError, deliver, type TypeOps, WaitForPause, WaitForUnlock } fro
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
+import { fitPrompts } from "./promptFit.ts";
 import { publicSession, type Registry, type SessionRecord } from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
@@ -78,9 +79,13 @@ export const INLINE_PAUSE_WAIT = { inlineMs: 12_000, pollMs: 500 };
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
 
+/** `overRelay`: the reply goes in one relay frame, so long prompt texts in it are cut. Direct callers pass none. */
+export type RpcOpts = { overRelay?: boolean };
+
 type Handler<M extends RpcMethod> = (
   params: z.infer<(typeof RpcSchemas)[M]>,
   actor: string,
+  opts: RpcOpts,
 ) => Promise<unknown> | unknown;
 
 class RpcFailure extends Error {
@@ -150,18 +155,24 @@ function isHighSurrogate(code: number): boolean {
 
 export function createRpc(
   d: RpcDeps,
-): (method: string, params: unknown, actor: string) => Promise<RpcOutcome> {
+): (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome> {
   const handlers: { [M in RpcMethod]: Handler<M> } = {
-    sync: ({ sinceSeq }) => {
+    sync: ({ sinceSeq }, _actor, opts) => {
       const oldest = d.events.oldestSeq();
       const latestSeq = d.events.latestSeq();
       // Too far behind (events pruned) or first connect: send a snapshot plus the current seq.
       if (sinceSeq === 0 || sinceSeq < oldest - 1) {
+        const sessions = d.registry.list().map(publicSession);
+        const presence = d.presence.get();
+        // The prompts get what the sessions and presence leave of one reply; long texts in them are cut if needed.
+        const room = REPLY_DATA_BYTES - Buffer.byteLength(JSON.stringify({ sessions, presence })) - 1024;
         return {
           snapshot: {
-            sessions: d.registry.list().map(publicSession),
-            prompts: d.broker.listOpen(),
-            presence: d.presence.get(),
+            sessions,
+            prompts: opts.overRelay
+              ? fitPrompts(d.broker.listOpen(), Math.max(room, 0), "first")
+              : d.broker.listOpen(),
+            presence,
           },
           events: [],
           latestSeq,
@@ -331,9 +342,11 @@ export function createRpc(
       return { ok: true };
     },
 
-    "prompts.open": () => d.broker.listOpen(),
+    "prompts.open": (_params, _actor, opts) =>
+      opts.overRelay ? fitPrompts(d.broker.listOpen(), REPLY_DATA_BYTES, "first") : d.broker.listOpen(),
 
-    "prompts.recent": ({ limit }) => d.broker.listRecent(limit),
+    "prompts.recent": ({ limit }, _actor, opts) =>
+      opts.overRelay ? fitPrompts(d.broker.listRecent(limit)) : d.broker.listRecent(limit),
 
     "turn.full": ({ turnId, offset }) => {
       if (turnId.startsWith(TRANSCRIPT_TURN_PREFIX)) {
@@ -571,7 +584,7 @@ export function createRpc(
     return d.attachments;
   }
 
-  return async (method, params, actor) => {
+  return async (method, params, actor, opts = {}) => {
     // Own keys only: "toString", "constructor" and "__proto__" are `in` every object.
     if (!Object.hasOwn(RpcSchemas, method))
       return { error: { code: "bad_request", message: `unknown method ${method}` } };
@@ -586,7 +599,7 @@ export function createRpc(
       };
     try {
       const handler = handlers[m] as Handler<typeof m>;
-      return { result: await handler(parsed.data as never, actor) };
+      return { result: await handler(parsed.data as never, actor, opts) };
     } catch (err) {
       if (err instanceof RpcFailure) return { error: { code: err.code, message: err.message } };
       log.error("rpc failed", { method, err: errMessage(err) });
