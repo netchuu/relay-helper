@@ -120,7 +120,10 @@ export function hookOutputFor(
   let decision: Record<string, unknown>;
   switch (answer.kind) {
     case "question":
-      decision = { behavior: "allow", updatedInput: { ...toolInput, answers: answer.answers } };
+      decision = {
+        behavior: "allow",
+        updatedInput: { ...toolInput, answers: originalAnswers(toolInput.questions, answer.answers) },
+      };
       break;
     case "plan":
       if (answer.action === "approve") decision = { behavior: "allow", updatedInput: toolInput };
@@ -168,6 +171,39 @@ export function stopHookOutput(): string {
       decision: { behavior: "deny", message: "The user stopped this from their phone.", interrupt: true },
     },
   });
+}
+
+/**
+ * The phone shows the questions redacted and answers under the shown text. Claude Code matches answers to the
+ * original questions, so the keys go back to the original question text and a chosen option's label (alone or in a
+ * "A, B" multi-select list) back to its original label. Anything else (free text) passes through unchanged.
+ */
+export function originalAnswers(
+  rawQuestions: unknown,
+  answers: Record<string, string>,
+): Record<string, string> {
+  if (!Array.isArray(rawQuestions)) return answers;
+  const out: Record<string, string> = { ...answers };
+  for (const q of rawQuestions as Question[]) {
+    if (typeof q?.question !== "string") continue;
+    const shown = redact(q.question);
+    const value = answers[shown] ?? answers[q.question];
+    if (value === undefined) continue;
+    const labels = (Array.isArray(q.options) ? q.options : [])
+      .map((o) => o?.label)
+      .filter((l): l is string => typeof l === "string");
+    const byShown = new Map<string, string>();
+    for (const l of labels) if (!byShown.has(redact(l))) byShown.set(redact(l), l);
+    let restored = byShown.get(value);
+    if (restored === undefined && q.multiSelect !== false && value.includes(", "))
+      restored = value
+        .split(", ")
+        .map((part) => byShown.get(part) ?? part)
+        .join(", ");
+    if (shown !== q.question) delete out[shown];
+    out[q.question] = restored ?? value;
+  }
+  return out;
 }
 
 /** Validates a question answer against the open prompt so typos from the client fail loudly. */
