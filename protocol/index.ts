@@ -365,6 +365,11 @@ export const Session = z.object({
   effort: z.string().optional(),
   /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
   usage: Usage.optional(),
+  /**
+   * The next message Claude Code suggests in its prompt (one line, redacted), present only while the session is idle
+   * and the helper can read the suggestion off the terminal screen. Absent when there is none. Older apps ignore it.
+   */
+  suggestion: z.string().optional(),
   /** Present (true) while a reply to this session waits for approval at the Mac (`reply.held`); absent otherwise. */
   heldAtMac: z.literal(true).optional(),
   /**

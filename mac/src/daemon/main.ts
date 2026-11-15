@@ -30,6 +30,7 @@ import { createRpc } from "./rpc.ts";
 import { brewCandidates, SelfUpdater, underServiceManager } from "./selfUpdate.ts";
 import { StepTracker } from "./steps.ts";
 import { TurnStopper } from "./stop.ts";
+import { SuggestionWatcher } from "./suggestion.ts";
 
 export async function runDaemon(): Promise<void> {
   ensureHome();
@@ -130,7 +131,19 @@ export async function runDaemon(): Promise<void> {
     openPrompt: (input, signal) => hooks.openPrompt(input, signal),
   });
   registry.ownedByHelper = (id) => headless.has(id);
-  const deps = { ...baseDeps, held, stopper, steps, messages, background, replies, attachments, headless };
+  const suggestions = new SuggestionWatcher({ registry });
+  const deps = {
+    ...baseDeps,
+    held,
+    stopper,
+    steps,
+    messages,
+    background,
+    replies,
+    attachments,
+    headless,
+    suggestions,
+  };
   const hooks = new HookHandler(deps);
   const rpc = createRpc(deps);
 

@@ -20,6 +20,7 @@ import { sessionModels } from "./model.ts";
 import { paneTargetOf } from "./paneTerminals.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
+import { suggestionOf } from "./suggestion.ts";
 import { transcriptLastActivity, transcriptPathFor } from "./transcript.ts";
 import { usageOf } from "./usage.ts";
 
@@ -197,7 +198,14 @@ export function publicSession(s: SessionRecord): Session {
     ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
     // What is left of the limits (usage-left); an ended session shows none.
     ...(s.status === "ended" ? {} : usageField(s.id)),
+    // Claude Code's suggested next message (suggestion): only while idle, and only where messages can be sent.
+    ...(s.status === "idle" && s.canReceive ? suggestionField(s.id) : {}),
   };
+}
+
+function suggestionField(id: string): { suggestion?: string } {
+  const suggestion = suggestionOf(id);
+  return suggestion ? { suggestion } : {};
 }
 
 function usageField(id: string): { usage?: Usage } {

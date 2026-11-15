@@ -20,6 +20,7 @@ import type { HookEnv, Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
+import type { SuggestionWatcher } from "./suggestion.ts";
 import { head } from "./text.ts";
 import { answerOwner, interruptedTurn, isSystemMessage } from "./transcript.ts";
 import { forgetUsage, noteUsageAll, parseUsage } from "./usage.ts";
@@ -45,6 +46,8 @@ export interface HookDeps {
   messages?: MessageTracker;
   /** What runs in the background (background-work); one is made when absent. */
   background?: BackgroundTracker;
+  /** Claude Code's suggested next message, read off the terminal after a turn; absent in tests that don't need it. */
+  suggestions?: SuggestionWatcher;
   /** Replies Claude Code holds at the Mac (held-replies); absent in tests that don't need it. */
   held?: HeldReplies;
 }
@@ -217,6 +220,8 @@ export class HookHandler {
         const system = isSystemMessage(raw);
         // Only a real submit empties the input box; a notice leaves the typed draft where it was.
         if (!system) notePromptSubmitted(sessionId);
+        // A new turn: the suggestion shown for the last one is gone (the status change below publishes that).
+        this.d.suggestions?.clear(sessionId);
         // A background task finished: Claude Code tells the session with a notification (background-work).
         if (system) this.background.notified(sessionId, raw);
         const prompt = system ? "" : raw;
@@ -300,6 +305,7 @@ export class HookHandler {
         if (this.d.stopper?.justStopped(sessionId)) {
           if (session.status !== "idle" && session.status !== "ended")
             this.d.registry.setStatus(sessionId, "idle");
+          this.d.suggestions?.turnEnded(sessionId);
           return NO_OUTPUT;
         }
         const stopAt = Date.now();
@@ -321,6 +327,7 @@ export class HookHandler {
           this.d.registry.setStatus(sessionId, next && next.id !== turn.id ? "working" : "idle", {
             lastSummary: turn.summary,
           });
+          if (!(next && next.id !== turn.id)) this.d.suggestions?.turnEnded(sessionId);
           if (failed)
             this.d.events.emit({
               type: "session.notice",
@@ -360,6 +367,7 @@ export class HookHandler {
         this.steps.clear(sessionId);
         this.messages.clear(sessionId);
         forgetUsage(sessionId);
+        this.d.suggestions?.clear(sessionId);
         this.d.registry.setStatus(sessionId, "ended");
         sessionModels.forget(sessionId);
         return NO_OUTPUT;

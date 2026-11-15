@@ -23,7 +23,7 @@ import {
   paneTargetOf,
   paneType,
 } from "./paneTerminals.ts";
-import { afterBreak, noKeySincePrompt, promptDraft } from "./promptLine.ts";
+import { afterBreak, noKeySincePrompt, promptDraft, promptSuggestionRead } from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
@@ -588,6 +588,42 @@ export async function typingRouteFor(
   const routes = ops.routes(session.terminal);
   const found = routes.length ? await findTab(session, routes, ops) : null;
   return found ? found.app : null;
+}
+
+/**
+ * Claude Code's suggested next message in the session's terminal (tmux, iTerm2 or Terminal): the text, null when the
+ * screen shows none, undefined when the screen can't be read (no tab found, other terminals, mid-redraw, an error).
+ * Reads quietly: no log line when a tab is missing.
+ */
+export async function readSuggestion(
+  session: SessionRecord,
+  ops: TypeOps = defaultTypeOps,
+): Promise<string | null | undefined> {
+  try {
+    if (session.tmuxPane && session.tmuxSocket) {
+      const screen = await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane);
+      if (screen !== null) return promptSuggestionRead(screen);
+    }
+    const routes = ops.routes(session.terminal);
+    if (!routes.length) return undefined;
+    const { ttys } = await candidateTtys(session, ops);
+    for (const { tty } of ttys)
+      for (const app of routes) {
+        const tab = await ops.peek(app, tty);
+        if (!tab) continue;
+        foundTty.set(session.id, tty);
+        // No attributes in the tab's text: with no key pressed here since the prompt was submitted, what the prompt
+        // shows is the suggestion, not typing.
+        return tab.screen === null
+          ? undefined
+          : promptSuggestionRead(tab.screen, {
+              noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true,
+            });
+      }
+  } catch {
+    // the screen can't be read right now
+  }
+  return undefined;
 }
 
 /** What Claude reads when the phone's Stop goes through the inbox (session.interrupt). */

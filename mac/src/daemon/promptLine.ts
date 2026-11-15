@@ -92,6 +92,37 @@ export interface PromptOptions {
  * (another app in the tab, a dialog, a terminal Relay can't read).
  */
 export function promptDraft(screen: string, opts: PromptOptions = {}): string | null {
+  const read = readPrompt(screen, opts);
+  return read && !read.suggestion ? read.text : null;
+}
+
+/**
+ * Claude Code's suggested next message in the empty prompt of `screen` (one line), or null when the prompt holds
+ * typing, nothing, or the `Try "…"` hint, or when the suggestion can't be told from typing (a terminal with no
+ * attributes and no `noKeySincePrompt`).
+ */
+export function promptSuggestion(screen: string, opts: PromptOptions = {}): string | null {
+  return promptSuggestionRead(screen, opts) ?? null;
+}
+
+/** As `promptSuggestion`, but undefined when no prompt box is on the screen (not drawn yet, or mid-redraw). */
+export function promptSuggestionRead(screen: string, opts: PromptOptions = {}): string | null | undefined {
+  const read = readPrompt(screen, opts);
+  if (!read) return undefined;
+  if (!read.suggestion || read.placeholder) return null;
+  const line = read.text.replace(/\s+/g, " ").trim();
+  return line || null;
+}
+
+interface PromptRead {
+  text: string;
+  /** The text is a suggestion (dimmed, or no key was pressed since the prompt was submitted), not typing. */
+  suggestion: boolean;
+  /** The `Try "…"` hint, which isn't a message. */
+  placeholder: boolean;
+}
+
+function readPrompt(screen: string, opts: PromptOptions): PromptRead | null {
   const styled = screen
     .replace(/\r/g, "")
     .split("\n")
@@ -120,9 +151,11 @@ export function promptDraft(screen: string, opts: PromptOptions = {}): string | 
     .map((l) => l.trim())
     .join("\n")
     .trim();
-  if (!text || PLACEHOLDER.test(text)) return null;
-  if (opts.noKeySincePrompt || allDim(styled.slice(top + 1, bottom))) return null;
-  return text;
+  // An empty prompt box is a prompt that holds nothing (neither draft nor suggestion), not a screen we can't read.
+  if (!text) return { text, suggestion: true, placeholder: true };
+  if (PLACEHOLDER.test(text)) return { text, suggestion: true, placeholder: true };
+  const suggestion = opts.noKeySincePrompt === true || allDim(styled.slice(top + 1, bottom));
+  return { text, suggestion, placeholder: false };
 }
 
 /**

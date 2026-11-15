@@ -196,6 +196,13 @@ const sessionUsage = Session.parse({
   }),
 });
 
+// An idle session whose Claude Code prompt shows a suggested next message (suggestion).
+const sessionSuggestion = Session.parse({
+  ...session,
+  status: "idle",
+  suggestion: "run the tests and fix what fails",
+});
+
 // A turn the user stopped from the phone (session.interrupt): what Claude wrote before it stopped.
 const turnStopped = Turn.parse({
   id: "t_stop",
@@ -802,6 +809,7 @@ write("usage.json", {
   contextOnly: Session.parse({ ...session, usage: { contextLeftPercent: 8 } }),
   none: session,
 });
+write("suggestion.json", { shown: sessionSuggestion, none: session });
 write("messages.json", messages);
 write("timeline.json", { ...timeline, agent: agentProgress });
 write("background.json", background);
