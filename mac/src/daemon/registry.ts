@@ -17,6 +17,7 @@ import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { heldField, permissionModeField } from "./held.ts";
 import { sessionModels } from "./model.ts";
+import { paneTargetOf } from "./paneTerminals.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { transcriptLastActivity, transcriptPathFor } from "./transcript.ts";
@@ -44,6 +45,10 @@ interface SessionRow {
   socket_token: string | null;
   pty_socket: string | null;
   pty_token: string | null;
+  wezterm_pane: string | null;
+  wezterm_socket: string | null;
+  kitty_listen_on: string | null;
+  kitty_window_id: string | null;
   transcript: string | null;
   started_at: number;
   updated_at: number;
@@ -60,6 +65,11 @@ export interface SessionRecord extends Session {
   /** `relay shell`'s socket and token when the session runs in one (Zed's terminal). */
   ptySocket: string | null;
   ptyToken: string | null;
+  /** The WezTerm pane or kitty window it runs in (paneTerminals.ts). */
+  weztermPane: string | null;
+  weztermSocket: string | null;
+  kittyListenOn: string | null;
+  kittyWindowId: string | null;
   transcript: string | null;
 }
 
@@ -74,6 +84,10 @@ export interface HookEnv {
   entrypoint?: string | null;
   pty?: string | null;
   ptyToken?: string | null;
+  weztermPane?: string | null;
+  weztermSocket?: string | null;
+  kittyListenOn?: string | null;
+  kittyWindowId?: string | null;
 }
 
 /**
@@ -102,6 +116,10 @@ export function defaultSocketPath(pid: number | null): string | null {
   return null;
 }
 
+/** A session with the pane its terminal reported (the columns are NULL for a session without one). */
+const SELECT_SESSIONS = `SELECT s.*, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id`;
+
 function toRecord(r: SessionRow): SessionRecord {
   const socketPath = r.socket_path ?? defaultSocketPath(r.pid);
   return {
@@ -118,7 +136,19 @@ function toRecord(r: SessionRow): SessionRecord {
     status: r.status as SessionStatus,
     title: r.title,
     terminal: r.terminal,
-    canReceive: r.status !== "ended" && Boolean(socketPath || r.pty_socket || (r.tmux_pane && r.tmux_socket)),
+    canReceive:
+      r.status !== "ended" &&
+      Boolean(
+        socketPath ||
+          r.pty_socket ||
+          (r.tmux_pane && r.tmux_socket) ||
+          paneTargetOf({
+            weztermPane: r.wezterm_pane,
+            weztermSocket: r.wezterm_socket,
+            kittyListenOn: r.kitty_listen_on,
+            kittyWindowId: r.kitty_window_id,
+          }),
+      ),
     startedAt: r.started_at,
     updatedAt: r.updated_at,
     lastSummary: r.last_summary,
@@ -129,6 +159,10 @@ function toRecord(r: SessionRow): SessionRecord {
     socketToken: r.socket_token,
     ptySocket: r.pty_socket ?? null,
     ptyToken: r.pty_token ?? null,
+    weztermPane: r.wezterm_pane ?? null,
+    weztermSocket: r.wezterm_socket ?? null,
+    kittyListenOn: r.kitty_listen_on ?? null,
+    kittyWindowId: r.kitty_window_id ?? null,
     transcript: r.transcript,
   };
 }
@@ -182,7 +216,7 @@ export function replyRouteOf(s: SessionRecord): {
   if (s.status === "ended") return {};
   // A message to the helper's own process is an ordinary user message.
   if (s.runsInHelper) return { replyRoute: "typed" };
-  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket)) return { replyRoute: "typed" };
+  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket) || paneTargetOf(s)) return { replyRoute: "typed" };
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
   if (s.terminal === "iTerm.app") return { replyRoute: "typed" };
   // The Claude desktop app and the editor extension: typed with Accessibility, which the phone can point to.
@@ -207,7 +241,7 @@ function isAppSession(s: SessionRecord): boolean {
  * desktop app and editors, which are typed into with Accessibility only.
  */
 function modelChangeable(s: SessionRecord): boolean {
-  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket)) return true;
+  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket) || paneTargetOf(s)) return true;
   if (s.terminal === "iTerm.app") return true;
   return !isAppSession(s);
 }
@@ -258,7 +292,7 @@ export class Registry {
   }
 
   get(id: string): SessionRecord | null {
-    const row = this.db.query("SELECT * FROM sessions WHERE id = ?").get(id) as SessionRow | null;
+    const row = this.db.query(`${SELECT_SESSIONS} WHERE s.id = ?`).get(id) as SessionRow | null;
     return row ? this.mark(toRecord(row)) : null;
   }
 
@@ -266,8 +300,8 @@ export class Registry {
     const rows = this.db
       .query(
         includeEnded
-          ? "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT 200"
-          : "SELECT * FROM sessions WHERE status != 'ended' ORDER BY updated_at DESC",
+          ? `${SELECT_SESSIONS} ORDER BY s.updated_at DESC LIMIT 200`
+          : `${SELECT_SESSIONS} WHERE s.status != 'ended' ORDER BY s.updated_at DESC`,
       )
       .all() as SessionRow[];
     return rows.map((r) => this.mark(toRecord(r)));
@@ -312,6 +346,7 @@ export class Registry {
           now,
           now,
         );
+      this.notePanes(id, env);
       void this.refreshGit(id, cwd);
       return { session: this.get(id) as SessionRecord, created: true };
     }
@@ -356,7 +391,27 @@ export class Registry {
         now,
         id,
       );
+    this.notePanes(id, env);
     return { session: this.get(id) as SessionRecord, created: false };
+  }
+
+  /**
+   * Stores the WezTerm pane and kitty window a hook reported. A variable the hook client doesn't send (an older one)
+   * keeps what was stored; one it sends as null (not set where Claude Code runs now: another terminal, or kitty
+   * without remote control) is forgotten.
+   */
+  private notePanes(id: string, env: HookEnv): void {
+    const fields = [env.weztermPane, env.weztermSocket, env.kittyListenOn, env.kittyWindowId];
+    if (fields.every((f) => f === undefined)) return;
+    const pair = (v: string | null | undefined) => [v !== undefined ? 1 : 0, v ?? null] as const;
+    const keep = (col: string) => `${col} = CASE WHEN ? THEN ? ELSE ${col} END`;
+    this.db
+      .query(
+        `INSERT INTO session_panes (session_id, wezterm_pane, wezterm_socket, kitty_listen_on, kitty_window_id)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET ${["wezterm_pane", "wezterm_socket", "kitty_listen_on", "kitty_window_id"].map(keep).join(", ")}`,
+      )
+      .run(id, ...fields.map((f) => f ?? null), ...fields.flatMap(pair));
   }
 
   /** The hooks recorded turns for this session and every one of them has ended. */

@@ -14,11 +14,30 @@ import { platform } from "../platform/index.ts";
 import type { TabView, TypingRoute } from "../platform/types.ts";
 import type { TypeReply, TypeRequest } from "../shell/ptyShell.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
+import {
+  type PaneInfo,
+  type PaneTarget,
+  paneEnter,
+  paneInfo,
+  paneScreen,
+  paneTargetOf,
+  paneType,
+} from "./paneTerminals.ts";
 import { afterBreak, noKeySincePrompt, promptDraft } from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
-export type DeliveryRoute = "pty" | "tmux" | "iterm" | "terminal" | "desktop" | "ide" | "socket" | "headless";
+export type DeliveryRoute =
+  | "pty"
+  | "tmux"
+  | "wezterm"
+  | "kitty"
+  | "iterm"
+  | "terminal"
+  | "desktop"
+  | "ide"
+  | "socket"
+  | "headless";
 
 /** The Claude Code processes the helper owns (headless.ts): a message for one of their sessions goes to its stdin. */
 export interface HeadlessRoute {
@@ -59,7 +78,7 @@ export class WaitForPause extends Error {
 }
 
 /** Terminals Relay types into, as opposed to the desktop app, the editor extension and the inbox. */
-export type TerminalRoute = "pty" | "tmux" | TypingRoute;
+export type TerminalRoute = "pty" | "tmux" | PaneTarget["kind"] | TypingRoute;
 
 /** The keyboard has to be still this long before Relay types into a tab you are in front of. */
 export const PAUSE_SECONDS = 3;
@@ -112,6 +131,11 @@ export interface TypeOps {
   tmux(socket: string, pane: string, text: string): Promise<void>;
   /** The tty of the pane's own terminal; null when tmux can't tell. Absent: the pane isn't checked against the process. */
   tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
+  /** WezTerm panes and kitty windows (paneTerminals.ts): the pane's text, typing, Enter, and what it tells about itself. */
+  paneScreen?(target: PaneTarget): Promise<string | null>;
+  paneType?(target: PaneTarget, text: string): Promise<void>;
+  paneEnter?(target: PaneTarget): Promise<void>;
+  paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null): Promise<string | null>;
   /**
@@ -142,6 +166,10 @@ export const defaultTypeOps: TypeOps = {
   tmuxScreen,
   tmux: tmuxType,
   tmuxPaneTty,
+  paneScreen,
+  paneType: (target, text) => paneType(target, text, splitAttachmentPaths),
+  paneEnter,
+  paneInfo,
   routes: (t) => platform.typing.routes(t),
   ttyOf: (pid) => ttyOf(pid),
   viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
@@ -258,6 +286,11 @@ async function promptAfterTyping(
         : null;
     return screen === null ? null : promptDraft(screen);
   }
+  if (route === "wezterm" || route === "kitty") {
+    const target = paneTargetOf(session);
+    const screen = target && ops.paneScreen ? await ops.paneScreen(target) : null;
+    return screen === null ? null : promptDraft(screen);
+  }
   const tty = foundTty.get(session.id) ?? (await ops.ttyOf(session.pid));
   const tab = tty ? await ops.peek(route, tty) : null;
   return tab?.screen == null ? null : promptDraft(tab.screen);
@@ -273,6 +306,12 @@ async function pressEnter(session: SessionRecord, route: TerminalRoute, ops: Typ
       if (!session.tmuxSocket || !session.tmuxPane || !ops.tmuxEnter) return false;
       if (!(await claudeIsInFrontInPane(session, ops))) return false;
       await ops.tmuxEnter(session.tmuxSocket, session.tmuxPane);
+      return true;
+    }
+    if (route === "wezterm" || route === "kitty") {
+      const target = paneTargetOf(session);
+      if (!target || !ops.paneEnter || !(await claudeIsInPaneTerminal(session, target, ops))) return false;
+      await ops.paneEnter(target);
       return true;
     }
     const tty = foundTty.get(session.id) ?? (await ops.ttyOf(session.pid));
@@ -360,6 +399,20 @@ async function typeIntoTerminal(
       }
     }
   }
+  const pane = paneTargetOf(session);
+  if (pane && ops.paneScreen && ops.paneType) {
+    const screen = await ops.paneScreen(pane);
+    if (screen !== null && (await claudeIsInPaneTerminal(session, pane, ops))) {
+      const draft = promptDraft(screen);
+      if (!anyway && (draft || active)) throw new WaitForPause(pane.kind, draft ? "draft" : "typing");
+      try {
+        await ops.paneType(pane, draft ? afterBreak(text) : text);
+        return pane.kind;
+      } catch {
+        // try the next route
+      }
+    }
+  }
   const routes = ops.routes(session.terminal);
   if (!routes.length) return null;
   const found = await findTab(session, routes, ops);
@@ -435,6 +488,37 @@ async function claudeIsInFrontInPane(
   return ops.inFront(session.pid, null).catch(() => false);
 }
 
+/**
+ * Whether the session's Claude Code is in front in its WezTerm pane or kitty window: the process runs on the
+ * pane's own terminal (WezTerm tells the pane's tty; kitty lists the processes in front in the window), and is
+ * the foreground program there. A session resumed in another terminal has a process elsewhere, and the pane
+ * may be a bare shell by now.
+ */
+async function claudeIsInPaneTerminal(
+  session: SessionRecord,
+  target: PaneTarget,
+  ops: Pick<TypeOps, "paneInfo" | "ttyOf" | "inFront">,
+): Promise<boolean> {
+  if (!session.pid || !ops.paneInfo) return false;
+  const [info, procTty] = await Promise.all([
+    ops.paneInfo(target).catch(() => null),
+    ops.ttyOf(session.pid).catch(() => null),
+  ]);
+  const inPane = info
+    ? info.tty !== undefined
+      ? sameTty(info.tty, procTty)
+      : (info.pids ?? []).includes(session.pid)
+    : false;
+  if (!inPane) {
+    log.info(`not typing into ${target.kind}: Claude Code isn't running in that pane`, {
+      sessionId: session.id,
+      pid: session.pid,
+    });
+    return false;
+  }
+  return ops.inFront(session.pid, null).catch(() => false);
+}
+
 /** The tty a session's tab was last found by, so the follow-up checks (Enter, the prompt's text) use the same one. */
 const foundTty = new Map<string, string>();
 
@@ -499,6 +583,8 @@ export async function typingRouteFor(
     (await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane)) !== null
   )
     return "tmux";
+  const pane = paneTargetOf(session);
+  if (pane && ops.paneScreen && (await ops.paneScreen(pane)) !== null) return pane.kind;
   const routes = ops.routes(session.terminal);
   const found = routes.length ? await findTab(session, routes, ops) : null;
   return found ? found.app : null;

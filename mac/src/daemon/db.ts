@@ -160,6 +160,15 @@ const MIGRATIONS: string[] = [
    );`,
   // 15: the Inbox history (newest closed prompts) reads this index instead of sorting every closed prompt.
   `CREATE INDEX IF NOT EXISTS prompts_recent ON prompts(status, resolved_at);`,
+  // 16: the WezTerm pane and the kitty window a session runs in (paneTerminals.ts), to type replies there. A table of
+  // its own, so it also runs on a database that was moved back to an older version.
+  `CREATE TABLE IF NOT EXISTS session_panes (
+     session_id      TEXT PRIMARY KEY,
+     wezterm_pane    TEXT,
+     wezterm_socket  TEXT,
+     kitty_listen_on TEXT,
+     kitty_window_id TEXT
+   );`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

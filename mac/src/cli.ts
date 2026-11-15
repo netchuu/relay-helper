@@ -20,6 +20,7 @@ import { EventLog } from "./daemon/events.ts";
 import { checkFcmConfig } from "./daemon/fcm.ts";
 import { typingRouteFor } from "./daemon/inject.ts";
 import { runDaemon } from "./daemon/main.ts";
+import { kittyDoctorNote } from "./daemon/paneTerminals.ts";
 import { liveTmuxSockets } from "./daemon/presence.ts";
 import { loadApnsConfig } from "./daemon/push.ts";
 import { pinnedFirst, Registry } from "./daemon/registry.ts";
@@ -347,6 +348,8 @@ async function doctorTyping(ok: (m: string) => void, warn: (m: string) => void):
       if (s.kind === "background" || !s.pid || (await typingRouteFor(s)) !== null) continue;
       without.push(`${s.name ?? s.project} (${s.id.slice(0, 8)})`);
     }
+    const kitty = kittyDoctorNote(registry.list());
+    if (kitty) warn(kitty);
     without.length
       ? warn(
           `typing: no terminal found for ${without.join(", ")}; messages from the phone reach these as notes`,

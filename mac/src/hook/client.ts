@@ -59,6 +59,11 @@ async function main(): Promise<void> {
       termProgram: env.TERM_PROGRAM ?? null,
       tmux: env.TMUX ?? null,
       tmuxPane: env.TMUX_PANE ?? null,
+      // WezTerm and kitty name the pane Claude Code runs in; kitty sets the socket only with remote control on.
+      weztermPane: env.WEZTERM_PANE ?? null,
+      weztermSocket: env.WEZTERM_UNIX_SOCKET ?? null,
+      kittyListenOn: env.KITTY_LISTEN_ON ?? null,
+      kittyWindowId: env.KITTY_WINDOW_ID ?? null,
       claudePid: Number.isFinite(pid) && pid > 1 ? pid : null,
       entrypoint: env.CLAUDE_CODE_ENTRYPOINT ?? null,
       // Set by `relay shell` (Zed's terminal): lets the helper type replies into this tab.

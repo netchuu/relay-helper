@@ -53,6 +53,25 @@ describe("the prompt line (promptDraft)", () => {
     expect(promptDraft(claudeScreen("❯"))).toBeNull();
   });
 
+  test("WezTerm's escape form (charset designations, colon colours) reads like plain text", () => {
+    const e = "\u001b";
+    const reset = `${e}(B${e}[0m`;
+    const wezRule = `${e}(B${e}[0;2;38:2::90:90:90m${RULE}${reset}`;
+    const screen = (...prompt: string[]) =>
+      [" Claude Code", "", wezRule, ...prompt, wezRule, "  ⏵⏵ bypass permissions on"].join("\n");
+    // empty prompt with the inverse cursor
+    expect(promptDraft(screen(`❯ ${e}(B${e}[0;7m ${reset}`))).toBeNull();
+    // the dim suggestion, first letter under the cursor
+    const dim = `${e}(B${e}[0;2m`;
+    expect(promptDraft(screen(`❯ ${e}(B${e}[0;7mc${dim}ontinue, but use edit tool${reset}`))).toBeNull();
+    expect(promptDraft(screen(`❯ ${dim}continue, but use edit tool${reset}`))).toBeNull();
+    // a draft, in a colour with blue 2 (must not read as dim)
+    expect(promptDraft(screen(`❯ ${e}(B${e}[0;38:2::10:20:2malso check the signup${reset}`))).toBe(
+      "also check the signup",
+    );
+    expect(promptDraft(screen(`❯ ${e}(B${e}[0;38;2;10;20;2malso check${reset}`))).toBe("also check");
+  });
+
   test("with escape codes, an all-dim prompt is a suggestion and normal text is a draft", () => {
     const dim = (s: string) => `\u001b[2m${s}\u001b[22m`;
     expect(promptDraft(claudeScreen(`❯ ${dim("continue, but use edit tool")}`))).toBeNull();

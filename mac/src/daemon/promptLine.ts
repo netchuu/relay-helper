@@ -44,7 +44,7 @@ export function styledLine(raw: string): StyledLine {
   const out: StyledLine = { text: "", dim: [], reverse: [] };
   let dim = false;
   let reverse = false;
-  const re = new RegExp(`${ESC}\\[([0-9;:]*)([A-Za-z])|${ESC}[^\\[]?`, "gy");
+  const re = new RegExp(`${ESC}[()*+].?|${ESC}\\[([0-9;:]*)([A-Za-z])|${ESC}[^\\[]?`, "gy");
   let i = 0;
   while (i < raw.length) {
     re.lastIndex = i;
@@ -52,9 +52,13 @@ export function styledLine(raw: string): StyledLine {
     if (m) {
       i = re.lastIndex;
       if (m[2] === "m") {
-        const params = (m[1] ?? "").split(/[;:]/).map((p) => (p === "" ? 0 : Number(p)));
+        // ';' separates parameters; a ':' group (`38:2::R:G:B`, `58:5:N`) is one parameter led by its first number
+        const params = (m[1] ?? "").split(";").map((g) => {
+          const [head, sub] = g.split(":", 2);
+          return { p: head === "" ? 0 : Number(head), grouped: sub !== undefined };
+        });
         for (let k = 0; k < params.length; k++) {
-          const p = params[k];
+          const { p, grouped } = params[k] as { p: number; grouped: boolean };
           if (p === 0) {
             dim = false;
             reverse = false;
@@ -62,7 +66,7 @@ export function styledLine(raw: string): StyledLine {
           else if (p === 22) dim = false;
           else if (p === 7) reverse = true;
           else if (p === 27) reverse = false;
-          else if (p === 38 || p === 48) k += params[k + 1] === 2 ? 4 : 2; // a colour's own numbers
+          else if ((p === 38 || p === 48 || p === 58) && !grouped) k += params[k + 1]?.p === 2 ? 4 : 2; // a colour's own numbers
         }
       }
       continue;
