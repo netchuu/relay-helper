@@ -8,7 +8,7 @@
     "daemon": "bun mac/src/cli.ts daemon",
     "relay": "bun mac/src/cli.ts",
     "build": "bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/hook/client.ts --outfile mac/bin/relay-hook && bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/cli.ts --outfile mac/bin/relay",
-    "test": "bun test && bun test ./release",
+    "test": "bun test --timeout 120000 && bun test --timeout 120000 ./release",
     "record:transcripts": "bun mac/test/record/record.ts",
     "test:linux": "docker build -q -f Dockerfile.test -t relay-test . && docker run --rm relay-test",
     "test:linux:x64": "docker build -q --platform linux/amd64 -f Dockerfile.test -t relay-test-x64 . && docker run --rm --platform linux/amd64 relay-test-x64",

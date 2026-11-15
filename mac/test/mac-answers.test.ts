@@ -14,6 +14,7 @@ import { type HookEnv, publicSession, Registry } from "../src/daemon/registry.ts
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * Questions answered at the Mac, and messages Claude Code adds itself:
@@ -445,7 +446,7 @@ describe("a message Claude Code adds itself: state around it", () => {
     await s.hook("UserPromptSubmit", id, { prompt: "Rewrite the checkout" }, INBOX);
     const before = s.localActivity();
     const stop = s.rpc("session.interrupt", { sessionId: id }, "device:d1");
-    await Bun.sleep(20);
+    await waitFor(() => s.inboxSent.length >= 1, 30_000, "the stop message in the inbox");
     expect(s.inboxSent).toEqual([STOP_MESSAGE]);
     await s.hook("UserPromptSubmit", id, { prompt: NOTIFICATION }, INBOX);
     await s.hook(

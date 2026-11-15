@@ -24,6 +24,7 @@ import { parsePeek } from "../src/platform/darwin.ts";
 import { platform } from "../src/platform/index.ts";
 import type { TabView, TypingRoute } from "../src/platform/types.ts";
 import { answerRequest, DraftTracker, type RequestContext } from "../src/shell/ptyShell.ts";
+import { waitFor } from "./support/wait.ts";
 
 // A phone message is always typed into its terminal, never sent through the inbox. When typing now could
 // mix into what the person at the Mac is typing, it waits for a pause.
@@ -350,7 +351,7 @@ describe("deliver: typed into the terminal, or waiting for a pause", () => {
     const s = setup({ termProgram: "WarpTerminal", claudePid: 4242, socket: box.path });
     const t = fakeTerminals({ tab: { front: true, screen: EMPTY } });
     expect(await deliver(s.session(), "from the phone", opts(0), t.ops)).toEqual({ via: "socket" });
-    await Bun.sleep(30);
+    await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
     expect(box.got).toHaveLength(1);
     expect(box.got[0]).toContain("from the phone");
     box.server.close();
@@ -522,7 +523,7 @@ describe("session.send: waits for a pause, in order", () => {
     const res = await rpcFor(s, t.ops)("session.send", { sessionId: "s1", text: "hello" }, "phone");
     expect(res).toEqual({ result: { via: "socket" } });
     expect(s.queue.list()).toEqual([]);
-    await Bun.sleep(30);
+    await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
     expect(box.got).toHaveLength(1);
     box.server.close();
   });

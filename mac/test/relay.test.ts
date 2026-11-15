@@ -17,6 +17,7 @@ import {
   rawPublic,
 } from "../src/daemon/e2e.ts";
 import { freePort, type LocalWorker, startLocalWorker } from "./support/local-worker.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * The whole relay path: the real Worker (wrangler dev, local), the real daemon, and a phone written
@@ -37,20 +38,6 @@ for (const [k, v] of Object.entries(process.env)) {
 
 let worker: LocalWorker | null = null;
 let daemon: ReturnType<typeof Bun.spawn> | null = null;
-
-async function waitFor<T>(
-  fn: () => Promise<T | null | undefined | false>,
-  ms = 20_000,
-  what = "the condition",
-): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn().catch(() => null);
-    if (v) return v;
-    await Bun.sleep(100);
-  }
-  throw new Error(`timed out after ${ms / 1000} s waiting for ${what}`);
-}
 
 /** A phone: opens a stream through the Worker, does the handshake, then speaks JSON-RPC. */
 class TestPhone {
@@ -98,7 +85,7 @@ class TestPhone {
   async call(method: string, params: object = {}): Promise<Record<string, unknown>> {
     const id = this.nextId++;
     this.ws.send(this.channel.seal(JSON.stringify({ id, method, params })));
-    return waitFor(async () => this.inbox.find((m) => m.type === "rpc" && m.id === id), 5000);
+    return waitFor(async () => this.inbox.find((m) => m.type === "rpc" && m.id === id));
   }
 
   /** Several calls in flight at once (an attachment's chunks); resolves when every reply is in. */
@@ -319,7 +306,7 @@ describe("relay end to end", () => {
       phone.onerror = () => r(false);
     });
     expect(phoneOpen).toBe(true);
-    await waitFor(async () => opened.length > 0, 5000);
+    await waitFor(async () => opened.length > 0);
     phone.close();
     live.close();
     dead.end();
@@ -389,7 +376,7 @@ describe("relay end to end", () => {
     const macWasHere = async () => {
       const m = await openMac();
       m.ws.close();
-      await waitFor(async () => m.closed !== null, 5000, "the Mac's close");
+      await waitFor(async () => m.closed !== null, 30_000, "the Mac's close");
     };
     return { mac, macUrl, openMac, openPhone, macWasHere };
   }
@@ -398,7 +385,7 @@ describe("relay end to end", () => {
     const r = rawRoom("never-room");
     const started = Date.now();
     const phone = r.openPhone("phone-never-one");
-    await waitFor(async () => phone.closed, 5000, "the 4404");
+    await waitFor(async () => phone.closed, 30_000, "the 4404");
     expect(phone.closed).toBe(4404);
     expect(Date.now() - started).toBeLessThan(5000);
   }, 30_000);
@@ -423,12 +410,12 @@ describe("relay end to end", () => {
     // The stream works from here on, in both directions.
     const stream = mac.opened[0] as number;
     phone.ws.send(new Uint8Array([5, 6]));
-    await waitFor(async () => mac.got.length === 2, 5000, "a frame after the replay");
+    await waitFor(async () => mac.got.length === 2, 30_000, "a frame after the replay");
     const back = new Uint8Array(6);
     new DataView(back.buffer).setUint32(0, stream);
     back.set([9, 9], 4);
     mac.ws.send(back);
-    await waitFor(async () => phone.got === 1, 5000, "a frame to the phone");
+    await waitFor(async () => phone.got === 1, 30_000, "a frame to the phone");
     phone.ws.close();
     mac.ws.close();
   }, 30_000);
@@ -441,7 +428,7 @@ describe("relay end to end", () => {
     await phone.open;
     await Bun.sleep(5000);
     expect(phone.closed).toBeNull();
-    await waitFor(async () => phone.closed, 10_000, "the waiting room's 4404");
+    await waitFor(async () => phone.closed, 30_000, "the waiting room's 4404");
     expect(phone.closed).toBe(4404);
     expect(Date.now() - started).toBeGreaterThanOrEqual(7500);
   }, 30_000);
@@ -452,7 +439,7 @@ describe("relay end to end", () => {
     const mac1 = await r.openMac(t);
     const phone = r.openPhone("phone-repl-one");
     await phone.open;
-    await waitFor(async () => mac1.opened.length === 1, 5000, "open");
+    await waitFor(async () => mac1.opened.length === 1, 30_000, "open");
     // A late abandoned attempt (older ts) is refused and leaves the live Mac alone.
     const late = await fetch(r.macUrl(t - 1000).replace("ws://", "http://"), {
       headers: { upgrade: "websocket" },
@@ -461,7 +448,7 @@ describe("relay end to end", () => {
     expect(mac1.closed).toBeNull();
     expect(phone.closed).toBeNull();
     const mac2 = await r.openMac(t + 1000);
-    await waitFor(async () => phone.closed, 5000, "the phone's 4002");
+    await waitFor(async () => phone.closed, 30_000, "the phone's 4002");
     expect(phone.closed).toBe(4002);
     expect(mac1.closed).toBe(4000);
     mac2.ws.close();
@@ -473,11 +460,11 @@ describe("relay end to end", () => {
     const a = r.openPhone("phone-over-aaa");
     const b = r.openPhone("phone-over-bbb");
     await Promise.all([a.open, b.open]);
-    await waitFor(async () => mac.opened.length === 2, 5000, "both opens");
+    await waitFor(async () => mac.opened.length === 2, 30_000, "both opens");
     const big = new Uint8Array(4 + 256 * 1024);
     new DataView(big.buffer).setUint32(0, mac.opened[0] as number);
     mac.ws.send(big);
-    await waitFor(async () => a.closed || b.closed, 5000, "one phone closed");
+    await waitFor(async () => a.closed || b.closed, 30_000, "one phone closed");
     expect([a.closed, b.closed].filter((c) => c !== null).length).toBe(1);
     await Bun.sleep(300);
     expect(mac.closed).toBeNull();

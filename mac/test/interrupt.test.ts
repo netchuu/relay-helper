@@ -17,6 +17,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
 import { transcriptTurns } from "../src/daemon/transcript.ts";
 import { answerRequest, KEY_BYTES, type RequestContext } from "../src/shell/ptyShell.ts";
+import { waitFor } from "./support/wait.ts";
 
 // The phone's Stop ends Claude's current turn, like Esc; the session stays open.
 
@@ -224,7 +225,7 @@ describe("session.interrupt: Esc in the terminal", () => {
     await working("s1", TMUX);
     tx(partial);
     const pending = rpc("session.interrupt", { sessionId: "s1" }, "device:d1");
-    await Bun.sleep(60);
+    await waitFor(() => keys.tmux.length === 1, 30_000, "the Escape to reach tmux");
     tx(partial, marker);
     const out = (await pending) as { result: { via: string; turnId: string } };
     expect(out.result.via).toBe("tmux");
@@ -287,10 +288,10 @@ describe("session.interrupt: Esc in the terminal", () => {
   });
 
   test("a message queued at the computer, submitted by the Esc: the old turn is stopped, the new one keeps working", async () => {
-    const { working, rpc, hook, registry, turnsDone, tx } = setup();
+    const { working, rpc, hook, registry, turnsDone, tx, keys } = setup();
     await working("s1", TMUX);
     const pending = rpc("session.interrupt", { sessionId: "s1" }, "d");
-    await Bun.sleep(30);
+    await waitFor(() => keys.tmux.length === 1, 30_000, "the Escape to reach tmux");
     tx(partial, marker);
     await hook("UserPromptSubmit", "s1", { prompt: "queued one" }, TMUX);
     tx(partial, marker, { type: "user", message: { content: "queued one" } });
@@ -328,7 +329,7 @@ describe("session.interrupt: through the inbox", () => {
     await working("s1", INBOX);
     tx(partial);
     const pending = rpc("session.interrupt", { sessionId: "s1" }, "d");
-    await Bun.sleep(30);
+    await waitFor(() => inboxSent.length === 1, 30_000, "the stop message in the inbox");
     expect(inboxSent).toEqual([STOP_MESSAGE]);
     // What Claude Code 2.1.318 does: the turn is cut off and one with the message starts at once. Its answer
     // to the message comes later and belongs to the new turn, not the stopped one.
@@ -364,7 +365,7 @@ describe("session.interrupt: through the inbox", () => {
     await working("s1", INBOX);
     await rpc("session.interrupt", { sessionId: "s1" }, "d");
     await hook("UserPromptSubmit", "s1", { prompt: STOP_MESSAGE }, INBOX);
-    await Bun.sleep(30);
+    await waitFor(() => turnsDone().length === 1, 30_000, "the old turn to end");
     expect(turnsDone()[0]?.stopped).toBe(true);
   });
 
@@ -620,7 +621,12 @@ describe("the key transports", () => {
     await new Promise<void>((r) => server.listen(path, r));
     try {
       await postToInbox(path, "tok", STOP_MESSAGE, 2000, "now");
-      await Bun.sleep(50);
+      await waitFor(
+        () => got.trim().split("\n").length >= 2,
+        30_000,
+        "both inbox lines",
+        () => got,
+      );
       const [auth, line] = got
         .trim()
         .split("\n")

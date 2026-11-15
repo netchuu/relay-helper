@@ -11,6 +11,7 @@ import {
   type RelayEvent,
 } from "../../protocol/index.ts";
 import { freePort } from "./support/local-worker.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * Attachments sent from a phone, over the real daemon and hook client: files uploaded in chunks (through the admin
@@ -57,16 +58,6 @@ async function runHook(payload: object, extraEnv: Record<string, string> = {}) {
     env: { ...env, ...extraEnv },
   });
   await proc.exited;
-}
-
-async function waitFor<T>(fn: () => Promise<T | undefined | null | false>, ms = 8000): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn().catch(() => null);
-    if (v) return v;
-    await Bun.sleep(50);
-  }
-  throw new Error("timed out waiting");
 }
 
 const base = (event: string, sessionId = SID) => ({

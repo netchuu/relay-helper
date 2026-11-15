@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { InterruptResult, RelayEvent, Session, Turn } from "../../protocol/index.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * The phone's Stop over the real daemon and the real hook client, with a real tmux on a private server
@@ -41,16 +42,6 @@ const hasTmux = Bun.which("tmux") !== null;
 let daemon: ReturnType<typeof Bun.spawn> | null = null;
 let pane = "";
 let tmuxEnv: Record<string, string> = {};
-
-async function waitFor<T>(fn: () => Promise<T | undefined | null | false>, ms = 8000): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn().catch(() => null);
-    if (v) return v;
-    await Bun.sleep(50);
-  }
-  throw new Error("timed out waiting");
-}
 
 async function startDaemon() {
   daemon = Bun.spawn(["bun", join(REPO, "mac/src/cli.ts"), "daemon"], {
@@ -119,8 +110,13 @@ async function phone(token: string) {
     ws.send(JSON.stringify({ id, method, params }));
     return id;
   };
-  const reply = (id: number, ms = 10_000) =>
-    waitFor(async () => frames.find((f) => f.type === "rpc" && f.id === id), ms);
+  const reply = (id: number, ms = 30_000) =>
+    waitFor(
+      () => frames.find((f) => f.type === "rpc" && f.id === id),
+      ms,
+      `the reply to rpc ${id}`,
+      () => `frames so far: ${JSON.stringify(frames)}`,
+    );
   return { ws, frames, send, reply, call: (m: string, p: object) => reply(send(m, p)) };
 }
 
@@ -135,6 +131,28 @@ const status = async (token: string) => {
   const r = (await httpRpc(token, "sessions.list", {}).then((x) => x.json())) as { result: Session[] };
   return r.result.find((s) => s.id === SID)?.status;
 };
+/** What the pane shows right now, for a failure message. */
+const paneContents = async () =>
+  `pane ${pane} contents:\n${await tmux("capture-pane", "-p", "-t", pane)}\nrecorded bytes: ${JSON.stringify(recorded())}`;
+/**
+ * Waits until the pane has seen everything sent to it so far: tmux hands keys to the pane in order, so a probe
+ * byte typed now shows up after any earlier byte. Returns the recorded bytes without the probes. This replaces a
+ * fixed wait before asserting "nothing else arrived".
+ */
+async function flushed(): Promise<string> {
+  const probe = "5a";
+  const probes = () =>
+    recorded()
+      .split("\n")
+      .filter((b) => b === probe).length;
+  const before = probes();
+  await tmux("send-keys", "-t", pane, "-l", "Z");
+  await waitFor(() => probes() > before, 30_000, "the pane to receive the probe byte", paneContents);
+  return recorded()
+    .split("\n")
+    .filter((b) => b !== probe)
+    .join("\n");
+}
 const recorded = () => (existsSync(RECORDED) ? readFileSync(RECORDED, "utf8").trim() : "");
 const line = (o: object) =>
   appendFileSync(TRANSCRIPT, `${JSON.stringify({ timestamp: new Date().toISOString(), ...o })}\n`);
@@ -164,7 +182,7 @@ appendFileSync(${JSON.stringify(RECORDED)}, "");
     // The hook reports the pane's program as Claude Code (CLAUDE_PID), which the daemon checks runs in that pane.
     const panePid = await tmux("display-message", "-p", "-t", "relaytest", "#{pane_pid}");
     tmuxEnv = { TMUX: `${TMUX_SOCK},${pid},0`, TMUX_PANE: pane, CLAUDE_PID: panePid };
-    await waitFor(async () => existsSync(RECORDED));
+    await waitFor(() => existsSync(RECORDED), 30_000, "the pane's program to start recording", paneContents);
   }
   await startDaemon();
 });
@@ -193,8 +211,7 @@ describe.skipIf(!hasTmux)("turn-stop over the real daemon and a private tmux", (
       r.json(),
     )) as Frame;
     expect(gone.error?.code).toBe("not_found");
-    await Bun.sleep(200);
-    expect(recorded()).toBe("");
+    expect(await flushed()).toBe("");
   });
 
   test("no token, a wrong token or a revoked phone can't stop anything", async () => {
@@ -221,15 +238,14 @@ describe.skipIf(!hasTmux)("turn-stop over the real daemon and a private tmux", (
       pb.send("session.interrupt", { sessionId: SID }),
     ];
     // What Claude Code does once the ESC reaches it.
-    await waitFor(async () => recorded().includes("1b"));
+    await waitFor(() => recorded().includes("1b"), 30_000, "the ESC byte in the pane", paneContents);
     line({ type: "user", message: { content: [{ type: "text", text: "[Request interrupted by user]\n" }] } });
     const [ra, rb] = await Promise.all([pa.reply(ia), pb.reply(ib)]);
     const res = ra.result as InterruptResult;
     expect(res.via).toBe("tmux");
     expect(typeof res.turnId).toBe("string");
     expect(rb.result).toEqual(res);
-    await Bun.sleep(300);
-    expect(recorded().split("\n")).toEqual(["1b"]);
+    expect((await flushed()).split("\n")).toEqual(["1b"]);
     for (const p of [pa, pb]) {
       const done = await waitFor(async () =>
         p.frames.filter((f) => f.event?.type === "turn.done").map((f) => (f.event as { turn: Turn }).turn),
@@ -246,8 +262,7 @@ describe.skipIf(!hasTmux)("turn-stop over the real daemon and a private tmux", (
     stoppedId = res.turnId as string;
     // Tapped again once it's over: conflict, and no second ESC (two would open Claude Code's rewind menu).
     expect((await pa.call("session.interrupt", { sessionId: SID })).error?.code).toBe("conflict");
-    await Bun.sleep(200);
-    expect(recorded().split("\n")).toEqual(["1b"]);
+    expect((await flushed()).split("\n")).toEqual(["1b"]);
     pa.ws.close();
     pb.ws.close();
   });

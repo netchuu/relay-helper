@@ -4,6 +4,7 @@ import { openDb, setSetting } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { liveTmuxSockets, PresenceMonitor } from "../src/daemon/presence.ts";
 import { platform } from "../src/platform/index.ts";
+import { waitFor } from "./support/wait.ts";
 
 // The platform's reading is faked: no real key-idle or lock calls.
 type Reading = { idleSeconds: number | null; locked?: boolean };
@@ -131,7 +132,7 @@ test("poll passes the tmux sockets of live sessions only", async () => {
 test("start polls at once and on a timer; stop ends it", async () => {
   const { monitor } = make("auto");
   monitor.start(10);
-  await Bun.sleep(60);
+  await waitFor(() => seen.length >= 2, 30_000, "two polls");
   monitor.stop();
   const n = seen.length;
   expect(n).toBeGreaterThanOrEqual(2);

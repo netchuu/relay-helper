@@ -19,6 +19,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { inFront, parseProcs } from "../src/platform/foreground.ts";
 import { platform } from "../src/platform/index.ts";
 import type { TabView } from "../src/platform/types.ts";
+import { waitFor } from "./support/wait.ts";
 
 // A phone message is typed into the session's tab after the session was resumed under a new id, after
 // the helper restarted, and when the process's own tty is not a tab (a background host); it goes through the inbox only
@@ -206,7 +207,7 @@ describe("typed delivery after a resume, a restart, a host", () => {
     const session = registry.get("closed") as SessionRecord;
     expect(await typingRouteFor(session, t.ops)).toBeNull();
     expect(await deliver(session, "hi", opts, t.ops)).toEqual({ via: "socket" });
-    await Bun.sleep(30);
+    await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
     expect(box.got).toHaveLength(1);
     const ok = terminals({ tabs: ["/dev/ttys004"] });
     registry.touch("open", { cwd: "/p", env: ITERM });

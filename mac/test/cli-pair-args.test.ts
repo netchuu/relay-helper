@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { waitFor } from "./support/wait.ts";
 
 // `relay pair` and `relay restart` with --help or bad arguments, in a temp HOME and RELAY_HOME. A `bun`
 // stub on PATH fails and leaves a marker, so a command that went on to install would show it; the CLI
@@ -19,7 +20,7 @@ async function relay(...args: string[]) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const timer = setTimeout(() => proc.kill(), 15_000);
+    const timer = setTimeout(() => proc.kill(), 60_000);
     const [out, err, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),

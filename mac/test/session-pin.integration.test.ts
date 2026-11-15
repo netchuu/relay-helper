@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RelayEvent, Session } from "../../protocol/index.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * Pinning a session over the real daemon: two paired phones, a revoked one, a restart, a session that
@@ -37,16 +38,6 @@ async function admin<T>(method: string, params: object = {}): Promise<T> {
   const body = (await res.json()) as { result?: T; error?: { message: string } };
   if (body.error) throw new Error(body.error.message);
   return body.result as T;
-}
-
-async function waitFor<T>(fn: () => Promise<T | undefined | null | false>, ms = 8000): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn().catch(() => null);
-    if (v) return v;
-    await Bun.sleep(50);
-  }
-  throw new Error("timed out waiting");
 }
 
 async function startDaemon() {

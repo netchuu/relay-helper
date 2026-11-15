@@ -6,6 +6,7 @@ import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
+import { waitFor } from "./support/wait.ts";
 
 // Method names every JavaScript object inherits are unknown methods, not crashes; a throw while handling one
 // message on the direct connection answers that call and leaves the helper running.
@@ -48,8 +49,12 @@ test("a handler that throws answers that call and the connection keeps working",
     await new Promise((r) => (ws.onopen = r));
     ws.send(JSON.stringify({ id: 1, method: "boom", params: {} }));
     ws.send(JSON.stringify({ id: 2, method: "fine", params: {} }));
-    for (let i = 0; i < 100 && !(replies.some((r) => r.id === 1) && replies.some((r) => r.id === 2)); i++)
-      await Bun.sleep(20);
+    await waitFor(
+      () => replies.some((r) => r.id === 1) && replies.some((r) => r.id === 2),
+      30_000,
+      "both replies",
+      () => JSON.stringify(replies),
+    );
     const boom = replies.find((r) => r.id === 1);
     expect(boom?.error).toEqual({ code: "internal", message: "internal error" });
     expect(replies.find((r) => r.id === 2)?.result).toEqual({ ok: true });

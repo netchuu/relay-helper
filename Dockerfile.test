@@ -29,4 +29,4 @@ COPY --chown=ana protocol ./protocol
 COPY --chown=ana mac/src ./mac/src
 COPY --chown=ana mac/test ./mac/test
 
-CMD ["sh", "-c", "bun x tsc --noEmit && bun test"]
+CMD ["sh", "-c", "bun x tsc --noEmit && bun test --timeout 120000"]

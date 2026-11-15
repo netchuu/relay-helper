@@ -25,6 +25,7 @@ import {
 } from "../src/integrations/claudeDesktop.ts";
 import { isIdeSessionSync, recentAnswerSnippets } from "../src/integrations/ideExtension.ts";
 import { platform } from "../src/platform/index.ts";
+import { waitFor } from "./support/wait.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "relay-dide-"));
 const line = (o: object) => `${JSON.stringify(o)}\n`;
@@ -240,7 +241,7 @@ describe("session.send while locked", () => {
     const res = await rpcFor(s)("session.send", { sessionId: "s1", text: "hi from the phone" }, "phone");
     expect(res).toEqual({ result: { via: "socket" } });
     expect(s.queue.list()).toEqual([]);
-    await Bun.sleep(50);
+    await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
     expect(box.got).toEqual([`${PHONE_PREFIX}\nhi from the phone`]);
     box.server.close();
   });

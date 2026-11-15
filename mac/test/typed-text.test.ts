@@ -4,6 +4,7 @@ import { asTyped } from "../src/platform/darwin.ts";
 import { answerRequest, type RequestContext, typedBytes } from "../src/shell/ptyShell.ts";
 import { cleanTypedText } from "../src/shell/typedText.ts";
 import { fakeTerminals, ITERM, inbox, opts, sessionWith, TMUX } from "./support/terminals.ts";
+import { waitFor } from "./support/wait.ts";
 
 // A reply from the phone must reach Claude Code as text and nothing else: no keys (Enter, the end of a bracketed
 // paste, Ctrl-C…) hidden in it, on any route.
@@ -123,7 +124,7 @@ describe("deliver: the text is cleaned on every route", () => {
     const box = await inbox();
     const t = fakeTerminals(false);
     await deliver(sessionWith({ ...TMUX, socket: box.path }), HOSTILE, opts, t.ops);
-    await Bun.sleep(30);
+    await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
     expect(box.got).toEqual([`${PHONE_PREFIX}\n${cleanTypedText(HOSTILE)}`]);
     box.server.close();
   });

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { watchAccessibility } from "../src/daemon/accessibilityWatch.ts";
+import { waitFor } from "./support/wait.ts";
 
 // The phone's "allow Relay in Accessibility" hint should go away by itself once it's allowed:
 // a change in the permission re-announces the sessions.
@@ -13,7 +14,12 @@ test("a change is reported once, both ways; no change, nothing; the first readin
     onChange: (a) => seen.push(a),
     everyMs: 5,
   });
-  await Bun.sleep(60);
+  await waitFor(
+    () => seen.length >= 2,
+    30_000,
+    "both changes",
+    () => JSON.stringify(seen),
+  );
   stop();
   expect(seen).toEqual([true, false]);
 });
@@ -30,7 +36,8 @@ test("a check that throws is skipped, not reported", async () => {
     onChange: (a) => seen.push(a),
     everyMs: 5,
   });
-  await Bun.sleep(40);
+  // Four checks: the first remembered, the second throws, the third changes, the fourth is unchanged.
+  await waitFor(() => n >= 4, 30_000, "four checks");
   stop();
   expect(seen).toEqual([true]);
 });

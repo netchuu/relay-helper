@@ -10,6 +10,7 @@ import { Notifier } from "../src/daemon/notifier.ts";
 import { publicSession, Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps, type RpcOutcome } from "../src/daemon/rpc.ts";
 import { sealedTitle, TEST_PUSH_KEY } from "./support/sealed.ts";
+import { waitFor } from "./support/wait.ts";
 
 // Renaming a session from a phone, edge cases: the 60-character limit, blank names, params, state, what every reader
 // sees, privacy and the migration.
@@ -326,19 +327,29 @@ describe("session-rename: what every reader sees", () => {
     const presence = { get: () => ({ mode: "auto", present: false, idleSeconds: 0, locked: false }) };
     const notifier = new Notifier(db, events, presence as never, registry, broker, { apns } as never);
     notifier.start();
-    const ask = async () => {
+    const ask = async (pushes: number) => {
       broker.open({ session_id: "s1", tool_name: "Bash", tool_input: { command: "ls" } });
-      await Bun.sleep(20);
+      await waitFor(
+        () => titles.length >= pushes,
+        30_000,
+        `push number ${pushes}`,
+        () => JSON.stringify(titles),
+      );
     };
     await rename("Cart bug");
-    await ask();
+    await ask(1);
     await rename(null);
-    await ask();
+    await ask(2);
     registry.touch("s2", { cwd: "/Users/me/Projects/api" });
     result(await rename("Temp", "s2"));
     result(await rename(null, "s2"));
     broker.open({ session_id: "s2", tool_name: "Bash", tool_input: { command: "ls" } });
-    await Bun.sleep(20);
+    await waitFor(
+      () => titles.length >= 3,
+      30_000,
+      "push number 3",
+      () => JSON.stringify(titles),
+    );
     notifier.stop();
     expect(titles).toEqual([
       "Cart bug wants to run Bash",

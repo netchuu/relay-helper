@@ -10,6 +10,7 @@ import { EventLog } from "../src/daemon/events.ts";
 import { alertFor, apnsPayload, Category, Notifier } from "../src/daemon/notifier.ts";
 import { Apns, isDeadToken, loadApnsConfig } from "../src/daemon/push.ts";
 import { openSealed, TEST_PUSH_KEY as PUSH_KEY } from "./support/sealed.ts";
+import { waitFor } from "./support/wait.ts";
 
 const prompt = (payload: Prompt["payload"]): Prompt => ({
   id: "p_1",
@@ -293,7 +294,7 @@ describe("waiting reminders", () => {
     const { broker, sent, setPresent, ask } = setup();
     await setPresent(false);
     const p = ask("s1", "ls");
-    await Bun.sleep(20);
+    await waitFor(() => sent.length >= 1, 30_000, "the push for the prompt");
     expect(sent.map((s) => s.title)).toEqual(["aalam-3d wants to run Bash"]);
     await setPresent(true);
     await setPresent(false);

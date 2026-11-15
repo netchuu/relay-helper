@@ -24,6 +24,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { resetLiveSteps, StepTracker, stepFor } from "../src/daemon/steps.ts";
 import { transcriptTurns } from "../src/daemon/transcript.ts";
 import { countHooks, mergeHooks, relayHooks } from "../src/install.ts";
+import { waitFor } from "./support/wait.ts";
 
 // Turn steps, case by case: the words for every tool, files, commands, the 80-character limit, what is never sent,
 // live steps, sync, a finished turn's list, the hooks, the fixtures, and the same end to end over the hook socket.
@@ -1062,15 +1063,6 @@ describe("end to end over the hook socket", () => {
     const body = (await res.json()) as { result?: T; error?: { message: string } };
     if (body.error) throw new Error(body.error.message);
     return body.result as T;
-  };
-  const waitFor = async <T>(fn: () => Promise<T | undefined | null | false>, ms = 6000): Promise<T> => {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      const v = await fn().catch(() => null);
-      if (v) return v;
-      await Bun.sleep(50);
-    }
-    throw new Error("timed out waiting");
   };
   const liveStep = () => admin<{ step?: TurnStep } | null>("session.live", { sessionId: sid });
 

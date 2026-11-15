@@ -29,6 +29,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { StepTracker } from "../src/daemon/steps.ts";
 import { transcriptTurns } from "../src/daemon/transcript.ts";
 import { formatEvent } from "../src/tailFormat.ts";
+import { waitFor } from "./support/wait.ts";
 
 // Live messages: what Claude writes between its tool calls, followed while the turn runs and kept with the finished turn.
 
@@ -274,7 +275,7 @@ describe("live", () => {
     const path = tempFile();
     await t.hook("UserPromptSubmit", { prompt: "Fix it", transcript_path: path });
     append(path, text("m1", "Thinking out loud."));
-    await Bun.sleep(80);
+    await waitFor(() => t.sent().length >= 1, 30_000, "the message read from the transcript");
     expect(t.sent()).toEqual(["Thinking out loud."]);
     await t.hook("SessionEnd");
   });

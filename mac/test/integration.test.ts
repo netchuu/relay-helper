@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join, resolve } from "node:path";
 import type { Prompt, RelayEvent, Session } from "../../protocol/index.ts";
+import { waitFor } from "./support/wait.ts";
 
 /**
  * End-to-end: the real daemon process and the real hook client, talking over the real sockets.
@@ -41,16 +42,6 @@ async function admin<T>(method: string, params: object = {}): Promise<T> {
   const body = (await res.json()) as { result?: T; error?: { message: string } };
   if (body.error) throw new Error(body.error.message);
   return body.result as T;
-}
-
-async function waitFor<T>(fn: () => Promise<T | undefined | null | false>, ms = 5000): Promise<T> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    const v = await fn().catch(() => null);
-    if (v) return v;
-    await Bun.sleep(50);
-  }
-  throw new Error("timed out waiting");
 }
 
 const base = (event: string, sessionId = "sess-1") => ({

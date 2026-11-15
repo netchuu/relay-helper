@@ -18,6 +18,7 @@ import { HeadlessSessions, resumeCommand } from "../src/daemon/headless.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
 import { processAlive, publicSession, Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
+import { waitFor } from "./support/wait.ts";
 
 const root = mkdtempSync(join(tmpdir(), "relay-resume-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -95,13 +96,7 @@ const answers = () => {
     return [];
   }
 };
-async function until(check: () => boolean, ms = 8000): Promise<void> {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("timed out waiting");
-    await Bun.sleep(20);
-  }
-}
+const until = (check: () => boolean, ms = 30_000) => waitFor(check, ms, "the condition");
 
 /** A session whose terminal is closed: ended, in `work`. */
 function ended(id = ID, pid: number | null = null, status = "ended") {

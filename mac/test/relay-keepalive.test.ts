@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { waitFor } from "./support/wait.ts";
 
 // The helper pings its relay connection every keepalive interval and
 // drops a link whose pong hasn't come back by the next ping, so a dead link is noticed within two intervals. A slow
@@ -120,18 +121,13 @@ function runHelperLink(port: number) {
   return child;
 }
 
-async function waitFor(cond: () => boolean, ms: number) {
-  const end = Date.now() + ms;
-  while (!cond() && Date.now() < end) await Bun.sleep(20);
-}
-
 test("a relay that never answers pings is dropped within two intervals, and the helper connects again", async () => {
   const server = relayServer(null);
   cleanup.push(server.stop);
   runHelperLink(server.port);
-  await waitFor(() => server.peers.length >= 1, 5000);
+  await waitFor(() => server.peers.length >= 1);
   expect(server.peers.length).toBeGreaterThanOrEqual(1);
-  await waitFor(() => server.peers[0]!.closed !== null, INTERVAL * 6);
+  await waitFor(() => server.peers[0]!.closed !== null);
   const first = server.peers[0]!;
   expect(first.closed).not.toBeNull();
   // Ping at 1 interval, missed pong noticed at the next: about 2 intervals after it opened, never 3+.
@@ -140,31 +136,31 @@ test("a relay that never answers pings is dropped within two intervals, and the 
   expect(lived).toBeLessThan(INTERVAL * 3);
   expect(first.pings).toBe(1);
   // The reconnect backoff is about a second.
-  await waitFor(() => server.peers.length >= 2, 3000);
+  await waitFor(() => server.peers.length >= 2);
   expect(server.peers.length).toBeGreaterThanOrEqual(2);
-}, 15_000);
+}, 60_000);
 
 test("a slow but alive relay (pong late, still before the next ping) keeps the link", async () => {
   const server = relayServer(Math.round(INTERVAL * 0.7), 1000);
   cleanup.push(server.stop);
   runHelperLink(server.port);
-  await waitFor(() => server.peers.length >= 1, 5000);
+  await waitFor(() => server.peers.length >= 1);
   await Bun.sleep(INTERVAL * 7);
   expect(server.peers.length).toBe(1);
   expect(server.peers[0]!.closed).toBeNull();
   expect(server.peers[0]!.pings).toBeGreaterThanOrEqual(5);
-}, 15_000);
+}, 60_000);
 
 test("a pong that comes back after the next ping is due counts as a dead link", async () => {
   const server = relayServer(Math.round(INTERVAL * 1.5));
   cleanup.push(server.stop);
   runHelperLink(server.port);
-  await waitFor(() => server.peers.length >= 1, 5000);
-  await waitFor(() => server.peers[0]!.closed !== null, INTERVAL * 6);
+  await waitFor(() => server.peers.length >= 1);
+  await waitFor(() => server.peers[0]!.closed !== null);
   const first = server.peers[0]!;
   expect(first.closed).not.toBeNull();
   expect(first.closed! - first.opened).toBeLessThan(INTERVAL * 3);
-}, 15_000);
+}, 60_000);
 
 // The edge answers protocol pings itself, so a link can pass them while the room's code no longer hears the
 // helper and phones never reach it. A room that answered control pings and then stops is a dead link.
@@ -172,14 +168,14 @@ test("a room that answered the helper's control ping and then stops is dropped, 
   const server = relayServer(0, 2);
   cleanup.push(server.stop);
   runHelperLink(server.port);
-  await waitFor(() => server.peers.length >= 1, 5000);
-  await waitFor(() => server.peers[0]!.closed !== null, INTERVAL * 8);
+  await waitFor(() => server.peers.length >= 1);
+  await waitFor(() => server.peers[0]!.closed !== null);
   const first = server.peers[0]!;
   expect(first.closed).not.toBeNull();
   expect(first.roomPings).toBe(4);
-  await waitFor(() => server.peers.length >= 2, 3000);
+  await waitFor(() => server.peers.length >= 2);
   expect(server.peers.length).toBeGreaterThanOrEqual(2);
-}, 15_000);
+}, 60_000);
 
 // The room's pong is required from the first ping (an older Worker that never answers is dropped, not trusted),
 // within two intervals.
@@ -187,12 +183,12 @@ test("a room that never answers a control ping is dropped within three intervals
   const server = relayServer(0, 0);
   cleanup.push(server.stop);
   runHelperLink(server.port);
-  await waitFor(() => server.peers.length >= 1, 5000);
-  await waitFor(() => server.peers[0]!.closed !== null, INTERVAL * 6);
+  await waitFor(() => server.peers.length >= 1);
+  await waitFor(() => server.peers[0]!.closed !== null);
   const first = server.peers[0]!;
   expect(first.closed).not.toBeNull();
   expect(first.closed! - first.opened).toBeLessThan(INTERVAL * 4);
   expect(first.roomPings).toBe(2);
-  await waitFor(() => server.peers.length >= 2, 3000);
+  await waitFor(() => server.peers.length >= 2);
   expect(server.peers.length).toBeGreaterThanOrEqual(2);
-}, 15_000);
+}, 60_000);

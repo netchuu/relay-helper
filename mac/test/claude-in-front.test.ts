@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { deliver, PHONE_PREFIX } from "../src/daemon/inject.ts";
 import { inFront, parseProcs } from "../src/platform/foreground.ts";
 import { fakeTerminals, ITERM, inbox, opts, PROMPT, RULE, sessionWith, TMUX } from "./support/terminals.ts";
+import { waitFor } from "./support/wait.ts";
 
 // A reply from the phone is typed into the session's terminal only while Claude Code is the program in front of
 // it. Otherwise (Claude suspended with Ctrl-Z, exited, another program in front) the keys would reach a shell or
@@ -90,7 +91,7 @@ describe("deliver: only into Claude Code in front", () => {
       const res = await deliver(sessionWith({ ...env, socket: box.path }), "run the tests", opts, t.ops);
       expect(res).toEqual({ via: "socket" });
       expect(t.typed).toEqual([]);
-      await Bun.sleep(30);
+      await waitFor(() => box.got.length >= 1, 30_000, "the inbox line");
       expect(box.got).toEqual([`${PHONE_PREFIX}\nrun the tests`]);
       box.server.close();
     });

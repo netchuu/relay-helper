@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tmuxType, tmuxTypeSteps } from "../src/daemon/inject.ts";
+import { waitFor } from "./support/wait.ts";
 
 const BODIES = ["x;", ";", "say \\;", "\\;", "a;b", "const x = 1;", "a;;"];
 
@@ -26,12 +27,14 @@ describe("tmux typing keeps a trailing semicolon", () => {
   const hasTmux = Bun.which("tmux") !== null;
   test.skipIf(!hasTmux)("a private tmux server receives each body unchanged", async () => {
     const dir = mkdtempSync(join(tmpdir(), "relay-tmux-"));
-    const sock = join(dir, "s");
+    let sock = "";
     const tmux = (...a: string[]) => Bun.spawnSync(["tmux", "-S", sock, ...a]);
+    const text = (...a: string[]) => new TextDecoder().decode(tmux(...a).stdout);
     try {
-      for (const body of BODIES) {
-        tmux("kill-server");
-        tmux(
+      for (const [n, body] of BODIES.entries()) {
+        // A server of its own per body: a killed server that is still shutting down can't swallow the next one.
+        sock = join(dir, `s${n}`);
+        const started = tmux(
           "-f",
           "/dev/null",
           "new-session",
@@ -47,13 +50,26 @@ describe("tmux typing keeps a trailing semicolon", () => {
           "#{pane_id}",
           "cat",
         );
-        const pane = new TextDecoder()
-          .decode(tmux("display-message", "-p", "-t", "t", "#{pane_id}").stdout)
-          .trim();
+        if (started.exitCode !== 0) throw new Error(`tmux new-session failed: ${started.stderr.toString()}`);
+        const screen = () => text("capture-pane", "-p", "-t", "t");
+        const detail = () => `body ${JSON.stringify(body)}; pane contents:\n${screen()}`;
+        // new-session returns before the pane's program runs: keys sent now could land before cat reads them.
+        await waitFor(
+          () => text("list-panes", "-t", "t", "-F", "#{pane_current_command}").trim() === "cat",
+          30_000,
+          "cat to run in the pane",
+          detail,
+        );
+        const pane = text("display-message", "-p", "-t", "t", "#{pane_id}").trim();
         await tmuxType(sock, pane, body);
-        await Bun.sleep(200);
-        const out = new TextDecoder().decode(tmux("capture-pane", "-p", "-t", pane).stdout);
-        expect(out.split("\n").filter((l) => l === body).length).toBe(2);
+        // cat echoes the typed line, then the line it read: two copies of the body.
+        const copies = () =>
+          screen()
+            .split("\n")
+            .filter((l) => l === body).length;
+        await waitFor(() => copies() === 2, 30_000, "the body to appear twice in the pane", detail);
+        expect(copies()).toBe(2);
+        tmux("kill-server");
       }
     } finally {
       tmux("kill-server");
