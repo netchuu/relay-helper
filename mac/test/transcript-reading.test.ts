@@ -6,7 +6,7 @@ import type { RelayEvent, Turn } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
-import { interruptedTurn, transcriptTurns } from "../src/daemon/transcript.ts";
+import { answerOwner, interruptedTurn, transcriptTurns } from "../src/daemon/transcript.ts";
 import { FIXTURE_CWD, FIXTURE_START, sanitizeEntry, sanitizeTranscript } from "./record/sanitize.ts";
 import { waitFor } from "./support/wait.ts";
 
@@ -551,6 +551,36 @@ describe("the recorded index", () => {
 });
 
 describe("lines that parse but are not entries", () => {
+  const junk = ["null", "42", "[]", '"s"', "true"];
+  const real = [user(0, "one"), assistant(1, text("a")), user(2, "two"), assistant(3, text("b"))];
+  const file = (body: string) => {
+    const path = join(scratch(), "t.jsonl");
+    writeFileSync(path, body);
+    return path;
+  };
+
+  test("answerOwner gives the same owner with such a line between entries", () => {
+    const turns = [
+      { id: "t1", prompt: "one", startedAt: FIXTURE_START },
+      { id: "t2", prompt: "two", startedAt: FIXTURE_START + 2000 },
+    ];
+    const clean = answerOwner(file(lines(...real)), "a", turns);
+    expect(clean).toBe("t1");
+    for (const j of junk)
+      expect(
+        answerOwner(file(lines(real[0] as string, j, real[1] as string, j, ...real.slice(2))), "a", turns),
+      ).toBe(clean);
+  });
+
+  test("interruptedTurn ignores such a line", () => {
+    const since = FIXTURE_START + 2000;
+    const clean = interruptedTurn(file(lines(...real)), since, undefined, null, "two");
+    for (const j of junk)
+      expect(
+        interruptedTurn(file(lines(real[0] as string, j, ...real.slice(1))), since, undefined, null, "two"),
+      ).toEqual(clean);
+  });
+
   test("null, numbers, arrays, strings and booleans are skipped like bad lines", () => {
     for (const odd of ["null", "42", "[]", '"s"', "true"]) {
       const file = join(scratch(), "s.jsonl");

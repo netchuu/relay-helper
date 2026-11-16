@@ -93,6 +93,16 @@ interface Draft {
   messages: RawMessage[];
 }
 
+/** A transcript line as an entry; null for a line that isn't JSON or parses to something else than an object (`null`, `42`, `[]`). */
+function parseEntry(line: string): Entry | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Entry) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The user entry Claude Code writes on interrupt ("[Request interrupted by user]", or "... for tool use"); no hook marks it. */
 const INTERRUPT_MARKER = "[Request interrupted by user";
 
@@ -146,11 +156,8 @@ export function answerOwner(
     entries = readTail(path)
       .split("\n")
       .flatMap((line) => {
-        try {
-          return line ? [JSON.parse(line) as Entry] : [];
-        } catch {
-          return [];
-        }
+        const entry = line ? parseEntry(line) : null;
+        return entry ? [entry] : [];
       });
   } catch {
     return undefined;
@@ -268,13 +275,10 @@ export function interruptedTurn(
   const from = since - 10_000;
   for (const line of lines) {
     if (!line) continue;
-    try {
-      const entry = JSON.parse(line) as Entry;
-      const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
-      if (!Number.isNaN(ts) && ts >= from) entries.push({ entry, ts });
-    } catch {
-      // not JSON
-    }
+    const entry = parseEntry(line);
+    if (!entry) continue;
+    const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+    if (!Number.isNaN(ts) && ts >= from) entries.push({ entry, ts });
   }
   const empty = {
     interrupted: false,
