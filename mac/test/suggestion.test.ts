@@ -22,7 +22,7 @@ const screen = (...prompt: string[]) =>
 afterEach(() => {
   for (const id of ["s1", "s2"]) new SuggestionWatcher({ registry: nobody }).clear(id);
 });
-const nobody = { get: () => null, publish() {} };
+const nobody = { get: () => null, list: () => [], publish() {} };
 
 test("promptSuggestion takes a dimmed prompt as the suggestion, never typing or the Try hint", () => {
   expect(promptSuggestion(screen(`❯ ${dim("run the tests and fix what fails")}`))).toBe(

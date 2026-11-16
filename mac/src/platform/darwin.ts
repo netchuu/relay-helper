@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { log } from "../log.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
 import { type Runner, run } from "./exec.ts";
-import { readKeyIdleSeconds } from "./keyIdle.ts";
+import { readInputIdleSeconds, readKeyIdleSeconds } from "./keyIdle.ts";
 import type {
   Platform,
   PresenceReading,
@@ -129,7 +129,10 @@ export function pinnedIdleSeconds(
 async function readPresence(): Promise<PresenceReading> {
   const pinned = pinnedIdleSeconds();
   if (pinned !== null) return { idleSeconds: pinned, locked: false, source: "pinned for a test" };
-  const [idleSeconds, locked] = await Promise.all([readIdleSeconds(), readLocked()]);
+  const [idleSeconds, locked] = await Promise.all([
+    Promise.resolve(readInputIdleSeconds()).then((s) => s ?? readIdleSeconds()),
+    readLocked(),
+  ]);
   return { idleSeconds, locked, source: "keyboard and mouse" };
 }
 

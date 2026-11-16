@@ -17,6 +17,7 @@ import {
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import type { HookEnvelope, HookHandler } from "./hooks.ts";
+import type { Phones } from "./phones.ts";
 import type { RpcOutcome } from "./rpc.ts";
 import { wellFormedJSON } from "./text.ts";
 
@@ -111,17 +112,25 @@ interface WsData {
   device: Device;
   unsubscribe: () => void;
   stopRevokeWatch?: () => void;
+  leave?: () => void;
 }
 
 /** 4401: app-defined "unauthorized"; the client reconnects, gets a 401 and shows pairing again. */
 function closeRevoked(ws: ServerWebSocket<WsData>): void {
   ws.data.unsubscribe();
   ws.data.stopRevokeWatch?.();
+  ws.data.leave?.();
   ws.close(4401, "device revoked");
 }
 
 /** App API on 127.0.0.1 only; the phone reaches it through `tailscale serve`. */
-export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog; db: DB }): Server<WsData> {
+export function startAppServer(opts: {
+  port: number;
+  rpc: Rpc;
+  events: EventLog;
+  db: DB;
+  phones?: Phones;
+}): Server<WsData> {
   return Bun.serve<WsData>({
     hostname: "127.0.0.1",
     port: opts.port,
@@ -163,6 +172,7 @@ export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog;
       idleTimeout: 120,
       sendPings: true,
       open(ws: ServerWebSocket<WsData>) {
+        ws.data.leave = opts.phones?.join();
         ws.data.unsubscribe = opts.events.subscribe((event: RelayEvent) => {
           // Revoked while connected: stop at once; the reconnect gets a 401 and the phone asks to re-pair.
           if (!isDeviceActive(opts.db, ws.data.device.id)) return closeRevoked(ws);
@@ -202,6 +212,7 @@ export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog;
       close(ws) {
         ws.data.unsubscribe();
         ws.data.stopRevokeWatch?.();
+        ws.data.leave?.();
       },
     },
   });

@@ -20,6 +20,7 @@ import { HookHandler } from "./hooks.ts";
 import { setKnownPids } from "./inject.ts";
 import { MessageTracker } from "./messages.ts";
 import { Notifier } from "./notifier.ts";
+import { Phones } from "./phones.ts";
 import { PresenceMonitor } from "./presence.ts";
 import { Apns, loadApnsConfig } from "./push.ts";
 import { Registry } from "./registry.ts";
@@ -48,7 +49,10 @@ export async function runDaemon(): Promise<void> {
       if (s.status !== "waiting") registry.setStatus(sessionId, "waiting");
     } else if (s.status === "waiting") registry.setStatus(sessionId, "working");
   });
-  const presence = new PresenceMonitor(db, events, config.idleAwaySeconds);
+  const phones = new Phones();
+  const presence = new PresenceMonitor(db, events, config.idleAwaySeconds, () =>
+    replies.list().some((r) => r.waitsFor === "unlock"),
+  );
   const apnsConfig = loadApnsConfig();
   let apns: Pick<Apns, "send"> | null = null;
   if (config.relayUrl) {
@@ -132,7 +136,8 @@ export async function runDaemon(): Promise<void> {
   });
   registry.ownedByHelper = (id) => headless.has(id);
   stopper.headless = headless;
-  const suggestions = new SuggestionWatcher({ registry });
+  const suggestions = new SuggestionWatcher({ registry, phoneConnected: () => phones.connected });
+  phones.onFirst(() => suggestions.lookNow());
   const deps = {
     ...baseDeps,
     held,
@@ -168,12 +173,17 @@ export async function runDaemon(): Promise<void> {
     db,
     publicUrl: () => config.publicUrl,
   });
-  const app = startAppServer({ port: config.port, rpc, events, db });
+  const app = startAppServer({ port: config.port, rpc, events, db, phones });
   presence.start();
   notifier?.start();
   let relayLink: RelayLink | null = null;
   if (config.relayUrl) {
-    relayLink = new RelayLink(config.relayUrl, loadOrCreateIdentity(paths.identity), { rpc, events, db });
+    relayLink = new RelayLink(config.relayUrl, loadOrCreateIdentity(paths.identity), {
+      rpc,
+      events,
+      db,
+      phones,
+    });
     relayLink.start();
   }
 

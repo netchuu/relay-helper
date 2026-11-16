@@ -12,6 +12,7 @@ import {
 } from "./auth.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import type { Phones } from "./phones.ts";
 import { fitEvent } from "./promptFit.ts";
 import type { RpcOpts, RpcOutcome } from "./rpc.ts";
 
@@ -26,6 +27,7 @@ const MAX_REPLY_BYTES = RELAY_FRAME_BYTES - 1024;
 export class ClientSession {
   private device: Device | null = null;
   private unsubscribe: (() => void) | null = null;
+  private leave: (() => void) | null = null;
   private stopRevokeWatch: (() => void) | null = null;
   private failedAuth = 0;
   private closed = false;
@@ -36,7 +38,7 @@ export class ClientSession {
 
   constructor(
     private readonly send: (text: string) => void,
-    private readonly deps: { rpc: Rpc; events: EventLog; db: DB },
+    private readonly deps: { rpc: Rpc; events: EventLog; db: DB; phones?: Phones },
     private readonly onFatal: () => void,
   ) {}
 
@@ -91,6 +93,8 @@ export class ClientSession {
     this.unsubscribe = null;
     this.stopRevokeWatch?.();
     this.stopRevokeWatch = null;
+    this.leave?.();
+    this.leave = null;
   }
 
   private authenticated(device: Device): void {
@@ -101,6 +105,7 @@ export class ClientSession {
       if (id === device.id) this.fatal("device revoked");
     });
     if (!this.unsubscribe) {
+      this.leave ??= this.deps.phones?.join() ?? null;
       this.unsubscribe = this.deps.events.subscribe((event: RelayEvent) => this.sendEvent(event));
     }
   }

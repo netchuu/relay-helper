@@ -37,10 +37,12 @@ export function cleanSuggestion(text: string): string | null {
 }
 
 export interface SuggestionDeps {
-  registry: Pick<Registry, "get" | "publish">;
+  registry: Pick<Registry, "get" | "list" | "publish">;
   /** Reads the suggestion off the session's terminal; tests swap it. */
   read?: typeof readSuggestion;
   sleep?: (ms: number) => Promise<void>;
+  /** False when no phone is connected: nothing is read then. Default: always. */
+  phoneConnected?: () => boolean;
   now?: () => number;
 }
 
@@ -58,6 +60,13 @@ export class SuggestionWatcher {
     void this.watch(sessionId, id).catch((err) =>
       log.warn("suggestion watch", { sessionId, err: errMessage(err) }),
     );
+  }
+
+  /** A phone connected: look at the idle sessions now, since nothing was read while none was. */
+  lookNow(): void {
+    for (const s of this.d.registry.list()) {
+      if (s.status === "idle" && s.canReceive && !this.watches.has(s.id)) this.turnEnded(s.id);
+    }
   }
 
   /** A turn started, or the session ended: the suggestion is gone. Returns whether one was showing. */
@@ -89,6 +98,10 @@ export class SuggestionWatcher {
             ? WATCH_IDLE_EVERY_MS
             : WATCH_EVERY_MS;
       await sleep(wait);
+      if (this.d.phoneConnected && !this.d.phoneConnected()) {
+        if (shown.has(sessionId)) this.set(sessionId, null);
+        break;
+      }
       if (this.watches.get(sessionId) !== id) return;
       const session = this.d.registry.get(sessionId);
       if (!session || session.status !== "idle" || !session.canReceive) {

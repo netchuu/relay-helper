@@ -4,6 +4,7 @@ import { ClientSession } from "./clientSession.ts";
 import type { DB } from "./db.ts";
 import { connectProof, type Identity, MacChannel } from "./e2e.ts";
 import type { EventLog } from "./events.ts";
+import type { Phones } from "./phones.ts";
 import type { RpcOutcome } from "./rpc.ts";
 
 type Rpc = (method: string, params: unknown, actor: string) => Promise<RpcOutcome>;
@@ -103,7 +104,7 @@ export class RelayLink {
   constructor(
     private readonly relayUrl: string,
     private readonly identity: Identity,
-    private readonly deps: { rpc: Rpc; events: EventLog; db: DB },
+    private readonly deps: { rpc: Rpc; events: EventLog; db: DB; phones?: Phones },
     private readonly opts: RelayLinkOptions = {},
   ) {
     this.clock = opts.clock ?? realClock;

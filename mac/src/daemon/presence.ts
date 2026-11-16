@@ -20,6 +20,8 @@ export class PresenceMonitor {
     private readonly db: DB,
     private readonly events: EventLog,
     private readonly idleAwaySeconds: number,
+    /** True while a reply waits for the unlock: the only use of the lock state outside "auto". */
+    private readonly lockWanted: () => boolean = () => false,
   ) {
     // "away" unless someone picked a mode on the phone: every prompt and finished turn is pushed, so people know
     // first and look at the phone, also while they're at the computer. "auto" (no push
@@ -59,6 +61,12 @@ export class PresenceMonitor {
   }
 
   async poll(): Promise<void> {
+    // Outside "auto" idle time can't change anything, so the Mac is only asked while a reply waits for the unlock.
+    const savedMode = getSetting<PresenceMode>(this.db, "presence.mode", DEFAULT_PRESENCE_MODE);
+    if (savedMode !== "auto" && !this.lockWanted()) {
+      this.update({ mode: savedMode, present: savedMode === "here", idleSeconds: -1, locked: false });
+      return;
+    }
     const reading = await platform.presence.read({ tmuxSockets: liveTmuxSockets(this.db) });
     // The saved mode, read after the await: a choice made while the read was running wins over the old one.
     const mode = getSetting<PresenceMode>(this.db, "presence.mode", DEFAULT_PRESENCE_MODE);
