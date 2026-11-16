@@ -555,12 +555,65 @@ export function attachmentsInPrompt(
   return found.length ? found : undefined;
 }
 
-/** `{attachments}` for a Turn or turn.started, or nothing. */
+/** The finished attachments stored at these paths, in the order of the paths; ids of the ones that are known. */
+export function attachmentIdsAtPaths(db: DB, sessionId: string, paths: string[]): string[] {
+  if (paths.length === 0) return [];
+  let rows: Row[];
+  try {
+    rows = db
+      .query(
+        "SELECT * FROM attachments WHERE session_id = ? AND path IS NOT NULL AND finished_at IS NOT NULL",
+      )
+      .all(sessionId) as Row[];
+  } catch {
+    return [];
+  }
+  const ids: string[] = [];
+  for (const p of paths) {
+    const row = rows.find((r) => r.path === p);
+    if (row && !ids.includes(row.id)) ids.push(row.id);
+  }
+  return ids;
+}
+
+/** Records which attachments a turn was typed with (turn_attachments), in order. */
+export function recordTurnAttachments(db: DB, turnId: string, attachmentIds: string[]): void {
+  attachmentIds.forEach((id, i) => {
+    db.query(
+      "INSERT OR REPLACE INTO turn_attachments (turn_id, attachment_id, position) VALUES (?, ?, ?)",
+    ).run(turnId, id, i);
+  });
+}
+
+/** The attachments recorded with a turn, in order. */
+function storedAttachments(db: DB, sessionId: string, turnId: string): AttachmentRef[] {
+  try {
+    const rows = db
+      .query(
+        "SELECT a.* FROM turn_attachments t JOIN attachments a ON a.id = t.attachment_id WHERE t.turn_id = ? AND a.session_id = ? ORDER BY t.position",
+      )
+      .all(turnId, sessionId) as Row[];
+    return rows.map(toRef);
+  } catch {
+    return []; // a database from before this table
+  }
+}
+
+/**
+ * `{attachments}` for a Turn or turn.started, or nothing: the ones recorded with the turn (`turnId`) first, then
+ * any whose path the prompt still holds, each once.
+ */
 export function attachmentFields(
   db: DB,
   sessionId: string,
   prompt: string | null | undefined,
+  turnId?: string,
 ): { attachments?: AttachmentRef[] } {
-  const attachments = attachmentsInPrompt(db, sessionId, prompt);
-  return attachments ? { attachments } : {};
+  const all = [
+    ...(turnId ? storedAttachments(db, sessionId, turnId) : []),
+    ...(attachmentsInPrompt(db, sessionId, prompt) ?? []),
+  ];
+  const seen = new Set<string>();
+  const attachments = all.filter((a) => !seen.has(a.id) && seen.add(a.id));
+  return attachments.length ? { attachments } : {};
 }

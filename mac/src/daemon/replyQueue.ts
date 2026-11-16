@@ -14,7 +14,7 @@ import { platform } from "../platform/index.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import type { HeldReplies } from "./held.ts";
-import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
+import { dropPhoneTyped, notePhoneTyped, phoneTypePending } from "./hooks.ts";
 import {
   deliver,
   type HeadlessRoute,
@@ -235,6 +235,8 @@ export function deliverQueued(opts: {
       );
     } catch (err) {
       watch?.cancel();
+      // Nothing was typed: a prompt the person types at the Mac next must not match this message.
+      dropPhoneTyped(session.id, text);
       throw err;
     }
     // Through the inbox: the watch runs on without holding the queue up, and tells the phone if it is held.

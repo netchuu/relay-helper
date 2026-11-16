@@ -30,7 +30,7 @@ import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import type { HeldReplies } from "./held.ts";
-import { notePhoneTyped, phoneTypePending } from "./hooks.ts";
+import { dropPhoneTyped, notePhoneTyped, phoneTypePending } from "./hooks.ts";
 import { DeliveryError, deliver, PHONE_PREFIX, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
@@ -278,7 +278,10 @@ export function createRpc(
           "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at <= ? ORDER BY ended_at DESC LIMIT ?",
         )
         .all(sessionId, before ?? Number.MAX_SAFE_INTEGER, limit) as TurnRow[];
-      const recorded = rows.map((r) => ({ ...toTurn(r), ...attachmentFields(d.db, sessionId, r.prompt) }));
+      const recorded = rows.map((r) => ({
+        ...toTurn(r),
+        ...attachmentFields(d.db, sessionId, r.prompt, r.id),
+      }));
       if (recorded.length >= limit) return fitReply(recorded);
       // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
       const session = d.registry.get(sessionId);
@@ -514,7 +517,7 @@ export function createRpc(
         .get(sessionId) as { id: string; prompt: string | null; started_at: number } | null;
       if (!row) return null;
       const step = liveStep(sessionId, row.id);
-      const files = attachmentFields(d.db, sessionId, row.prompt);
+      const files = attachmentFields(d.db, sessionId, row.prompt, row.id);
       const messages = liveMessages(sessionId, row.id);
       const actions = liveActions(sessionId, row.id);
       return {
@@ -704,6 +707,8 @@ export function createRpc(
         return res;
       } catch (err) {
         watch?.cancel();
+        // Nothing was typed: a prompt the person types at the Mac next must not match this message.
+        dropPhoneTyped(sessionId, text);
         if (err instanceof WaitForUnlock && d.replies) {
           d.replies.add(sessionId, text, arrived, "unlock");
           d.replies.setReason(sessionId, "locked");

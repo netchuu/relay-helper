@@ -169,6 +169,15 @@ const MIGRATIONS: string[] = [
      kitty_listen_on TEXT,
      kitty_window_id TEXT
    );`,
+  // 17: the attachments the phone typed with a turn's prompt, in order. Claude Code reports a pasted photo as
+  // "[Image #N]", so the prompt alone doesn't say which files belong to the turn. A table of its own, so it also
+  // runs on a database that was moved back to an older version.
+  `CREATE TABLE IF NOT EXISTS turn_attachments (
+     turn_id       TEXT NOT NULL,
+     attachment_id TEXT NOT NULL,
+     position      INTEGER NOT NULL,
+     PRIMARY KEY (turn_id, position)
+   );`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

@@ -3,7 +3,7 @@ import { TURN_MESSAGES_MAX, type Turn, type TurnStats } from "../../../protocol/
 import type { RelayConfig } from "../config.ts";
 import { log } from "../log.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
-import { attachmentFields } from "./attachments.ts";
+import { attachmentFields, attachmentIdsAtPaths, recordTurnAttachments } from "./attachments.ts";
 import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
@@ -79,6 +79,11 @@ export function notePhoneTyped(sessionId: string, text: string): void {
   phoneTyped.set(sessionId, { text: clean, head: typedHead(clean), paths, at: Date.now() });
 }
 
+/** Forgets what `notePhoneTyped` stored when nothing was typed (queued, failed), so a Mac prompt can't match it. */
+export function dropPhoneTyped(sessionId: string, text: string): void {
+  if (phoneTyped.get(sessionId)?.text === cleanTypedText(text)) phoneTyped.delete(sessionId);
+}
+
 /** First messages of sessions the phone is starting: their id isn't known until the launch returns. */
 const phoneLaunches = new Set<{ cwd: string; head: string; paths: string[]; text: string; taken: boolean }>();
 
@@ -105,15 +110,15 @@ export function notePhoneLaunch(
 }
 
 /** Whether `prompt` in `cwd` is the first message of a session the phone is starting; it is used up then. */
-function takePhoneLaunch(cwd: string | undefined, prompt: string): boolean {
-  if (!cwd) return false;
+function takePhoneLaunch(cwd: string | undefined, prompt: string): string[] | null {
+  if (!cwd) return null;
   for (const l of phoneLaunches) {
     if (!l.taken && l.cwd === cwd && matchesPhoneTyped(l, prompt)) {
       l.taken = true;
-      return true;
+      return l.paths;
     }
   }
-  return false;
+  return null;
 }
 
 /**
@@ -236,12 +241,28 @@ export class HookHandler {
         }
         const typed = phoneTyped.get(sessionId);
         let fromPhone = typed && Date.now() - typed.at < 15_000 && matchesPhoneTyped(typed, prompt);
-        if (fromPhone) phoneTyped.delete(sessionId);
-        else if (!system && takePhoneLaunch(str("cwd") ?? session.cwd, prompt)) fromPhone = true;
+        // The files the phone typed with this message: the prompt only says "[Image #N]" for them.
+        let typedPaths: string[] = [];
+        if (fromPhone && typed) {
+          phoneTyped.delete(sessionId);
+          typedPaths = typed.paths;
+        } else if (!system) {
+          const launched = takePhoneLaunch(str("cwd") ?? session.cwd, prompt);
+          if (launched) {
+            fromPhone = true;
+            typedPaths = launched;
+          }
+        }
         // The stop message the helper sent through the inbox: it cut the old turn off, which ends as stopped.
         const inboxStop = this.d.stopper?.takeInboxStop(sessionId, prompt) ?? null;
         if (!fromPhone && !inboxStop && !system) this.d.presence.noteLocalActivity();
-        this.beginTurn(sessionId, prompt, session.transcript ?? str("transcript_path") ?? null, session.cwd);
+        this.beginTurn(
+          sessionId,
+          prompt,
+          session.transcript ?? str("transcript_path") ?? null,
+          session.cwd,
+          attachmentIdsAtPaths(this.d.db, sessionId, typedPaths),
+        );
         inboxStop?.finish();
         this.d.registry.setStatus(
           sessionId,
@@ -420,15 +441,20 @@ export class HookHandler {
     prompt: string,
     transcript: string | null,
     cwd: string | null,
+    attachmentIds: string[] = [],
   ): string {
-    const { turnId, startedAt } = this.startTurn(sessionId, prompt);
+    const { turnId, startedAt } = this.startTurn(sessionId, prompt, attachmentIds);
     this.steps.turnStarted(sessionId, turnId);
     // The turn's own start time, so live and finished thinking lines are timed from the same moment.
     this.messages.turnStarted(sessionId, turnId, transcript, startedAt, cwd);
     return turnId;
   }
 
-  private startTurn(sessionId: string, prompt: string): { turnId: string; startedAt: number } {
+  private startTurn(
+    sessionId: string,
+    prompt: string,
+    attachmentIds: string[],
+  ): { turnId: string; startedAt: number } {
     const now = Date.now();
     this.d.db
       .query("UPDATE turns SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL")
@@ -438,6 +464,7 @@ export class HookHandler {
     this.d.db
       .query("INSERT INTO turns (id, session_id, prompt, started_at) VALUES (?, ?, ?, ?)")
       .run(turnId, sessionId, shown, now);
+    recordTurnAttachments(this.d.db, turnId, attachmentIds);
     // The phone shows the prompt at once, not only when the answer is done.
     this.d.events.emit({
       type: "turn.started",
@@ -445,7 +472,7 @@ export class HookHandler {
       sessionId,
       prompt: shown,
       startedAt: now,
-      ...attachmentFields(this.d.db, sessionId, shown),
+      ...attachmentFields(this.d.db, sessionId, shown, turnId),
     });
     return { turnId, startedAt: now };
   }
@@ -626,7 +653,7 @@ export class HookHandler {
       endedAt,
       ...timeline,
       ...turnMessageFields(messages),
-      ...attachmentFields(this.d.db, sessionId, open?.prompt),
+      ...attachmentFields(this.d.db, sessionId, open?.prompt, open?.id),
     };
     this.d.events.emit({ type: "turn.done", turn });
     return turn;

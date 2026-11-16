@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { RelayEvent } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
+import { phoneTypePending } from "../src/daemon/hooks.ts";
 import {
   type DeliverOptions,
   DeliveryError,
@@ -428,6 +429,22 @@ describe("session.send: waits for a pause, in order", () => {
     expect(s.queue.list()).toEqual([]);
     expect(box.got).toEqual([]);
     box.server.close();
+  });
+
+  test("a message queued for a pause leaves no phone entry behind, typed or not yet", async () => {
+    const s = setup(ITERM);
+    const t = fakeTerminals({ tab: { front: true, screen: EMPTY } });
+    const rpc = rpcFor(s, t.ops);
+    const photo = "/tmp/relay-queued-photo.png";
+    expect(await rpc("session.send", { sessionId: "s1", text: photo }, "phone")).toEqual({
+      result: { via: "queued", reason: "typing" },
+    });
+    // Nothing typed: a Mac prompt "[Image #1]" now must not count as this photo.
+    expect(phoneTypePending("s1", photo)).toBe(false);
+    const deliverIt = deliverQueued({ preferTyping: true, hasOpenPrompt: () => false, typeOps: t.ops });
+    await s.queue.drain(false, deliverIt);
+    expect(t.typed).toEqual([]);
+    expect(phoneTypePending("s1", photo)).toBe(false);
   });
 
   test("several waiting messages arrive in the order they were sent", async () => {

@@ -333,7 +333,7 @@ export class TurnStopper {
       ...(stopped ? { stopped: true } : {}),
       ...timeline,
       ...turnMessageFields(messages),
-      ...attachmentFields(this.d.db, row.session_id, row.prompt),
+      ...attachmentFields(this.d.db, row.session_id, row.prompt, row.id),
     };
     this.d.events.emit({ type: "turn.done", turn });
     if (row.ended_at === null) {
