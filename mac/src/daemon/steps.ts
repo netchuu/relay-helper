@@ -12,11 +12,7 @@ import type { EventLog } from "./events.ts";
 import { redact } from "./redact.ts";
 import { actionFields, type TimelineEntry, TimelineReader } from "./timeline.ts";
 
-/**
- * Turn steps: the words the phones show for what Claude is doing, built here
- * so both phones show the same text. Only short, redacted labels leave the Mac: never file contents, edit
- * text, the rest of a command, tool output, URL paths, search queries or agent prompts.
- */
+/** Turn steps: short, redacted labels for what Claude is doing, shared by both phones; never contents, outputs, URL paths or prompts. */
 
 export type Tense = "live" | "done";
 
@@ -38,14 +34,8 @@ function clip(text: string, max: number): string {
   return g.length > max ? `${g.slice(0, max - 1).join("")}…` : text;
 }
 
-/**
- * At most TURN_STEP_LABEL_MAX characters as people see them and TURN_STEP_LABEL_UNITS UTF-16 units (many
- * combining marks on one character), cut between characters with "…".
- */
-/**
- * Without invisible text-direction controls (embeddings, overrides, isolates, marks): in a label they can reverse
- * what follows on the phone, as in `build \u202Egnp.exe` showing as "exe.png".
- */
+/** At most TURN_STEP_LABEL_MAX characters and TURN_STEP_LABEL_UNITS UTF-16 units, cut between characters with "…". */
+/** Without invisible text-direction controls, which can reverse a label on the phone (`build \u202Egnp.exe` showing as "exe.png"). */
 export function withoutBidiControls(text: string): string {
   return text.replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g, "");
 }
@@ -69,10 +59,7 @@ function clipStart(text: string, max: number): string {
   return g.length > max ? `…${g.slice(g.length - (max - 1)).join("")}` : text;
 }
 
-/**
- * Relative to the session's folder when inside it (after resolving `..`), else only the file name; long
- * paths keep their end.
- */
+/** Relative to the session's folder when inside it, else only the file name; long paths keep their end. */
 export function shortPath(file: string, cwd: string | null): string {
   const dir = cwd ? normalize(cwd).replace(/\/+$/, "") : null;
   const full = normalize(isAbsolute(file) || !dir ? file : join(dir, file));
@@ -288,9 +275,7 @@ export function parseStepsJson(json: string | null | undefined): {
   }
 }
 
-// ---------------------------------------------------------------------------------------------------
 // Live steps
-// ---------------------------------------------------------------------------------------------------
 
 /** The current step of each working session, read by `session.live` and `publicSession`. */
 const current = new Map<string, { turnId: string; step: TurnStep }>();
@@ -336,20 +321,15 @@ interface TurnState {
 }
 
 /**
- * Follows the tool hooks of each running turn and emits `turn.step`: at most once per `throttleMs` per session
- * (the newest step wins), never the same label twice in a row, "Thinking" `thinkingDelayMs` after the last
- * tool ends unless another starts. Async hooks arrive late and not always in order, so a PreToolUse whose
- * tool already finished is ignored.
+ * Follows each running turn's tool hooks and emits `turn.step`, throttled per session, never the same label twice in a row.
+ * Async hooks arrive late and out of order, so a PreToolUse whose tool already finished is ignored.
  */
 /** How many replaced turns keep their steps for a late Stop. */
 const SUPERSEDED_KEPT = 32;
 
 export class StepTracker {
   private readonly turns = new Map<string, TurnState>();
-  /**
-   * Steps of turns a new prompt replaced before their Stop arrived (a prompt queued at the computer), by turn id,
-   * for that Stop. A few are kept; a Stop that never comes doesn't keep them forever.
-   */
+  /** Steps of turns a new prompt replaced before their Stop, by turn id; only a few are kept. */
   private readonly superseded = new Map<string, TurnStep[]>();
   private readonly throttleMs: number;
   private readonly thinkingDelayMs: number;
@@ -402,8 +382,7 @@ export class StepTracker {
     state.sawPre = true;
     const id = call.toolUseId ?? `anon-${Date.now()}-${Math.random()}`;
     if (state.ended.has(id)) return;
-    // Claude Code asks about one tool at a time: a new tool starting means the one whose prompt closed
-    // at the terminal was answered. After Yes its end hook still comes (and is recorded); after No none does.
+    // Prompts come one tool at a time: a new tool starting means the terminal-closed one was answered (a No sends no end hook).
     for (const stale of state.unresolved) {
       if (state.running.delete(stale)) state.dropped.add(stale);
     }
@@ -414,11 +393,7 @@ export class StepTracker {
     this.show(sessionId, state, step);
   }
 
-  /**
-   * A permission prompt opened. The hook carries no tool_use_id, but its PreToolUse comes right before it, so
-   * the prompt belongs to the newest running tool of the same name and input that has no prompt yet.
-   * Returns that tool's id (null when there is none).
-   */
+  /** A permission prompt opened. It has no tool_use_id, so it belongs to the newest running tool of the same name and input that has no prompt yet; returns its id. */
   promptOpened(
     sessionId: string,
     toolName: string,
@@ -436,20 +411,14 @@ export class StepTracker {
     return match[0];
   }
 
-  /**
-   * A permission prompt closed without the phone answering it (answered or dismissed at the terminal):
-   * marks the tool it was tied to, if that is still running.
-   */
+  /** A permission prompt closed at the terminal: marks its tool, if still running. */
   promptClosed(sessionId: string, toolId: string | null): void {
     const state = this.turns.get(sessionId);
     if (!state || !toolId || !state.running.has(toolId)) return;
     state.unresolved.add(toolId);
   }
 
-  /**
-   * The phone denied a tool's permission prompt: it never runs, so stop showing it now (Thinking follows
-   * when nothing else runs). A late end hook for it is recorded without becoming the live step.
-   */
+  /** The phone denied a tool: it never runs, so stop showing it; a late end hook is recorded without becoming live. */
   toolDenied(sessionId: string, toolId: string | null): void {
     const state = this.turns.get(sessionId);
     if (!state || !toolId || !state.running.delete(toolId)) return;
@@ -565,9 +534,7 @@ export class StepTracker {
   }
 }
 
-// ---------------------------------------------------------------------------------------------------
 // Steps from a transcript
-// ---------------------------------------------------------------------------------------------------
 
 export class TranscriptSteps {
   private readonly reader: TimelineReader;

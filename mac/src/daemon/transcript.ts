@@ -8,11 +8,7 @@ import { redact } from "./redact.ts";
 import { compact, withoutIdeContext } from "./render.ts";
 import { TranscriptSteps, timelineFields } from "./steps.ts";
 
-/**
- * Past turns read from Claude Code's own transcript (~/.claude/projects/<cwd>/<session>.jsonl), for
- * sessions whose turns Relay didn't record: they started before Relay's hooks were installed, or
- * finished while the daemon was down. Read-only; the same redaction applies as for recorded turns.
- */
+/** Past turns read (redacted, read-only) from Claude Code's transcript, for sessions Relay didn't record. */
 
 const PROJECTS = join(homedir(), ".claude", "projects");
 /** Large transcripts are read from the end: the recent turns are what the phone shows. */
@@ -47,11 +43,7 @@ export function transcriptPathFor(session: {
 
 const activityCache = new Map<string, { mtimeMs: number; size: number; at: number | null }>();
 
-/**
- * When the session last did anything: the newest entry timestamp in its transcript (epoch ms). File
- * times can't be used: Claude Code touches every transcript at once in some cases. Read from the last
- * 64 KB and cached by file size and time, so the 20 s reconcile costs one stat per session.
- */
+/** Newest entry timestamp in the transcript (epoch ms); file times are unreliable, Claude Code sometimes touches all. Cached by size and mtime. */
 export function transcriptLastActivity(path: string): number | null {
   try {
     const st = statSync(path);
@@ -101,11 +93,7 @@ interface Draft {
   messages: RawMessage[];
 }
 
-/**
- * What Claude Code writes into the transcript as a user entry when a turn is interrupted: Esc gives
- * "[Request interrupted by user]" (sometimes with a newline after it), a deny-and-interrupt or Esc during a tool
- * "[Request interrupted by user for tool use]". Checked with 2.1.318. No hook event marks an interrupt.
- */
+/** The user entry Claude Code writes on interrupt ("[Request interrupted by user]", or "... for tool use"); no hook marks it. */
 const INTERRUPT_MARKER = "[Request interrupted by user";
 
 function entryText(entry: Entry): string | null {
@@ -127,10 +115,7 @@ function endsEarlierTurn(entry: Entry & { subtype?: string }): boolean {
   );
 }
 
-/**
- * A prompt as it can be compared with its transcript entry: without the phone's line and Claude Code's peer
- * header, which every inbox message shares, and with spaces collapsed.
- */
+/** A prompt for comparing with its transcript entry: without the phone's line and peer header, spaces collapsed. */
 function comparable(text: string): string {
   return text
     .replace(/^\s*Another Claude session sent a message:\s*/, "")
@@ -145,13 +130,8 @@ function isInterruptMarker(entry: Entry): boolean {
 }
 
 /**
- * Which of `turns` the text `answer` answers, by where it stands in the transcript. `turns` are the session's
- * unanswered turns, oldest first, the open one last: a prompt sent while Claude is still answering is reported by
- * its hook at once (and closes the turn before it), but Claude Code starts on it only when that answer is done, or
- * hands it to the running turn. The answer is for the newest turn whose prompt stands before it; a prompt whose
- * entry comes after it is still waiting. Returns that turn's id; null when the answer has no prompt among them
- * (all are still waiting); undefined without evidence (the answer isn't in the transcript yet, or no waiting
- * prompt's entry is), and then the open turn keeps the answer as before.
+ * Which of `turns` (unanswered, oldest first) `answer` answers, by transcript order: the newest whose prompt stands before it.
+ * Null: no prompt among them precedes it; undefined: no evidence yet, so the open turn keeps the answer.
  */
 export function answerOwner(
   path: string,
@@ -183,9 +163,7 @@ export function answerOwner(
     );
   });
   if (answerAt < 0) return undefined;
-  // Only the turn this answer ends counts: from the last prompt before the answer (the one Claude Code was on),
-  // or from the end of an earlier turn if one closed since. Prompts further back were answered long ago; the same
-  // words queued again ("continue" three times) took those old entries for their own.
+  // Only from the last prompt before the answer (or an earlier turn's end): old entries with the same words ("continue") must not match.
   let from = 0;
   for (let i = answerAt - 1; i >= 0; i--) {
     const entry = entries[i] as Entry & { subtype?: string };
@@ -196,20 +174,17 @@ export function answerOwner(
     else continue;
     break;
   }
-  // A prompt as the transcript holds it: its own user entry, or, for one handed to the running turn, the queued
-  // command Claude Code attaches there.
+  // A prompt is its own user entry, or the queued command attached to the running turn.
   const written = (entry: (typeof entries)[number]): string | null => {
     const queued = entry.type === "attachment" && entry.attachment?.type === "queued_command";
     const text = queued ? entry.attachment?.prompt : promptText(entry);
     if (typeof text !== "string" || (queued && isSystemMessage(text.trim()))) return null;
     return sameWords(redact(text));
   };
-  // The hook's prompt and the entry's text are the same words; one may carry more after them (attached files'
-  // paths on lines of their own).
+  // Same words; one may carry more after them (attached file paths).
   const matches = (asked: string, text: string) =>
     text === asked || text.startsWith(`${asked} `) || asked.startsWith(`${text} `);
-  // Oldest first, each turn takes the first entry before the answer that is its prompt and no other turn's: one
-  // written since its hook came (a few seconds of slack for the two clocks), or with no time at all.
+  // Oldest first, each turn takes the first unclaimed entry before the answer, written since its hook (seconds of clock slack) or untimed.
   const taken = new Set<number>();
   let owner: string | null = null;
   let queued = false;
@@ -255,13 +230,8 @@ function sameWords(text: string): string {
 }
 
 /**
- * What the turn that started at `since` (epoch ms) left in the transcript: whether it was interrupted, and
- * Claude's last text and stats so far. Null when the file can't be read.
- *
- * Anchored on the turn's own prompt entry (the user entry nearest `since` whose text has `prompt` in it), not
- * on a time window: a turn can start within a second of the previous one's marker and text (a message queued at
- * the computer, which Esc submits at once; the turn the inbox stop message starts). Without that entry, only
- * entries from `since` on count.
+ * What the turn started at `since` (epoch ms) left in the transcript; null when unreadable.
+ * Anchored on its prompt entry, not a time window: turns can start within a second of the previous one's end.
  */
 export function interruptedTurn(
   path: string,
@@ -283,10 +253,7 @@ export function interruptedTurn(
   thoughts: TurnStep[];
   /** Everything Claude wrote in the turn (live-messages); the last is the answer when it is `text`. */
   messages: RawMessage[];
-  /**
-   * The turn's last conversation entry is Claude's finished answer (text, no tool call after it) and nothing
-   * follows it, no interrupt marker either; `lastAt` is when it was written.
-   */
+  /** The last entry is Claude's finished answer with nothing after it (no interrupt marker); `lastAt` is when it was written. */
   finished: boolean;
   lastAt: number | null;
 } | null {
@@ -321,15 +288,13 @@ export function interruptedTurn(
     finished: false,
     lastAt: null,
   };
-  // Everything up to the previous turn's last entry belongs to that turn, so its prompt entry can never anchor
-  // this one, even with the same text ("continue" twice, or two messages from the phone).
+  // Entries up to the previous turn's last belong to it, so its prompt can't anchor this one even with the same text.
   let boundary = -1;
   entries.forEach(({ entry, ts }, i) => {
     if (ts < since && endsEarlierTurn(entry)) boundary = i;
   });
   const wanted = prompt === null ? null : comparable(prompt);
-  // A turn Claude Code started itself (a background task's notification) is recorded with an empty prompt: its
-  // entry is the system message, not a typed prompt (which would be the next turn's).
+  // A turn Claude Code started itself (background notification) has an empty prompt; a typed prompt would be the next turn's.
   const systemTurn = prompt !== null && prompt.trim() === "";
   let anchor = -1;
   for (let i = boundary + 1; i < entries.length && anchor === -1; i++) {
@@ -346,8 +311,7 @@ export function interruptedTurn(
     )
       anchor = i;
   }
-  // No prompt entry yet (not written, or a transcript without one): only what came after the previous turn
-  // and after this one started counts.
+  // No prompt entry yet: only what came after the previous turn and this one's start counts.
   let rest: { entry: Entry; ts: number }[];
   if (anchor === -1) {
     rest = entries.slice(boundary + 1).filter(({ ts }) => ts >= since);
@@ -438,11 +402,8 @@ function readTail(path: string): string {
 }
 
 /**
- * A message Claude Code puts in the conversation itself, not something you typed: slash-command echoes, local
- * command output, system reminders, background-task notifications, and messages from another Claude session or
- * agent (`<cross-session-message …>`, `<agent-message …>`, after the inbox's "Another Claude session sent a
- * message:" line). Replies from the phone come through the same inbox but start with the phone's own line, so
- * they stay yours.
+ * A message Claude Code inserts itself (command echoes, reminders, notifications, other sessions' or agents' messages).
+ * Phone replies use the same inbox but start with the phone's own line, so they stay yours.
  */
 export function isSystemMessage(text: string): boolean {
   const body = text.trim().replace(/^Another Claude session sent a message:\s*/, "");
@@ -550,12 +511,7 @@ function toTurn(sessionId: string, d: Draft, previewChars: number): Turn {
   };
 }
 
-/**
- * Turns read from the transcript, without those the helper already recorded with no start time (`startless`: their
- * answer and when they ended). Such a record can't keep its own transcript copy out by time, as the others do with
- * their start: the copy ends a moment before the record. It is told by the same answer ending within ten seconds
- * before it, and was otherwise shown twice.
- */
+/** Transcript turns minus those already recorded without a start (`startless`), matched by the same answer ending within ten seconds before. */
 export function withoutRecordedCopies(
   turns: Turn[],
   startless: { summary: string | null; ended_at: number }[],
@@ -568,10 +524,7 @@ export function withoutRecordedCopies(
   );
 }
 
-/**
- * Finished turns from the transcript, newest first. A turn counts as finished once Claude answered with
- * text; the newest one is left out while the session is still working on it.
- */
+/** Finished turns (answered with text), newest first; the newest is left out while the session works. */
 export function transcriptTurns(
   sessionId: string,
   path: string,

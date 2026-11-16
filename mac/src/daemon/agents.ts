@@ -5,18 +5,7 @@ import { redact } from "./redact.ts";
 import { fitLabel, oneLine } from "./steps.ts";
 import { type TimelineEntry, TimelineReader } from "./timeline.ts";
 
-/**
- * Agent progress: what an agent's or workflow's step shows beyond its own row, how
- * many steps the agent has taken, its current one, how long it ran, and its own steps.
- *
- * Where an agent's steps come from (Claude Code 2.1.x): `<session>/subagents/agent-<id>.jsonl` next to the
- * session's transcript, with `agent-<id>.meta.json` naming the Agent call (`toolUseId`), the description and
- * whether it `finished`. Older versions put the agent's entries in the main transcript with `isSidechain: true`;
- * both are read. A workflow's agents have no call of their own in the main transcript: they are the subagents
- * started after the workflow whose `toolUseId` is no Agent call's.
- *
- * Only the same short, redacted labels as for a turn's steps leave the Mac, without details.
- */
+/** Agent progress: step count, current step, duration and own steps of an agent or workflow (redacted labels only). */
 
 export const isAgentTool = (name: string) => name === "Task" || name === "Agent";
 

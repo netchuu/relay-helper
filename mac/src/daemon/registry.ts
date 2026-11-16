@@ -92,9 +92,7 @@ export interface HookEnv {
 }
 
 /**
- * Where Claude Code 2.1.316 binds a session's inbox socket, `<dir>/<pid>.sock`: under $XDG_RUNTIME_DIR when
- * it's set (Linux logins: /run/user/<uid>), otherwise the temp directory ($CLAUDE_CODE_TMPDIR or /tmp), with
- * a per-user `cc-socks-<uid>` variant. Read from the Linux binary; on the Mac it's /tmp/cc-socks.
+ * Where Claude Code binds a session's inbox socket (`<dir>/<pid>.sock`): $XDG_RUNTIME_DIR, else the temp dir; /tmp/cc-socks on the Mac.
  * Hooks report the real path, so this only matters for sessions found by `claude agents`.
  */
 export function socketDirs(env: Record<string, string | undefined>, uid: number | undefined): string[] {
@@ -125,8 +123,7 @@ function toRecord(r: SessionRow): SessionRecord {
   const socketPath = r.socket_path ?? defaultSocketPath(r.pid);
   return {
     id: r.id,
-    // A phone's name wins over Claude Code's everywhere (sync, events, push titles, CLI); Claude Code's stays
-    // visible as originalName.
+    // A phone's name wins everywhere; Claude Code's stays as originalName.
     name: r.custom_name ?? r.name,
     ...(r.custom_name ? { originalName: r.name } : {}),
     ...(r.pinned_at != null ? { pinnedAt: r.pinned_at } : {}),
@@ -193,8 +190,7 @@ export function publicSession(s: SessionRecord): Session {
     ...replyRouteOf(s),
     ...(s.status === "ended" ? {} : { ...heldField(s.id), ...permissionModeField(s.id) }),
     ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
-    // The model and effort, left out for app sessions: the phone shows its picker where a model is known. Both are
-    // what Claude Code reports (hooks and the status line).
+    // Model and effort as Claude Code reports them; left out for app sessions, which get no model picker.
     ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
     // What is left of the limits (usage-left); an ended session shows none.
     ...(s.status === "ended" ? {} : usageField(s.id)),
@@ -213,10 +209,7 @@ function usageField(id: string): { usage?: Usage } {
   return usage ? { usage } : {};
 }
 
-/**
- * How a reply sent now would arrive (desktop-ide-delivery): "typed" as the person's own input, or "labelled"
- * through the inbox. Absent when the session can't take replies at all.
- */
+/** How a reply would arrive: "typed" as the person's own input, or "labelled" through the inbox; absent if none can be sent. */
 export function replyRouteOf(s: SessionRecord): {
   replyRoute?: "typed" | "labelled";
   replyFix?: "accessibility";
@@ -244,10 +237,7 @@ function isAppSession(s: SessionRecord): boolean {
   return desktopTitle(s.id) !== null || isIdeSessionSync(transcriptPathFor(s));
 }
 
-/**
- * Whether `/model` can be typed into the session's own terminal, so the phone may offer the model picker. Not for the
- * desktop app and editors, which are typed into with Accessibility only.
- */
+/** Whether `/model` can be typed into the session's own terminal (not the desktop app or editors), so the phone may offer the picker. */
 function modelChangeable(s: SessionRecord): boolean {
   if (s.ptySocket || (s.tmuxPane && s.tmuxSocket) || paneTargetOf(s)) return true;
   if (s.terminal === "iTerm.app") return true;
@@ -287,10 +277,7 @@ export class Registry {
   /** Ticks when a hook last touched a session: a check that began earlier can't say the session is gone. */
   private readonly touchedAt = new Map<string, number>();
 
-  /**
-   * Whether the helper itself runs this session's Claude Code process (headless.ts, `session.resume`). Such a
-   * session takes replies, is shown as running in the helper, and is never ended for missing from `claude agents`.
-   */
+  /** Whether the helper itself runs this session's process (headless.ts); it is never ended for missing from `claude agents`. */
   ownedByHelper: (id: string) => boolean = () => false;
 
   private mark(r: SessionRecord): SessionRecord {
@@ -358,9 +345,7 @@ export class Registry {
       void this.refreshGit(id, cwd);
       return { session: this.get(id) as SessionRecord, created: true };
     }
-    // Only overwrite connection details when the hook actually reported them. A hook that reports no tmux pane
-    // (null, not absent) ran outside tmux: the session was resumed in a plain terminal, and the pane it had
-    // before no longer holds Claude Code, so it is forgotten.
+    // Overwrite connection details only when reported. A null tmux pane (not absent) means resumed outside tmux: forget the old pane.
     const leftTmux = env.tmuxPane === null && !env.tmux;
     this.db
       .query(
@@ -403,11 +388,7 @@ export class Registry {
     return { session: this.get(id) as SessionRecord, created: false };
   }
 
-  /**
-   * Stores the WezTerm pane and kitty window a hook reported. A variable the hook client doesn't send (an older one)
-   * keeps what was stored; one it sends as null (not set where Claude Code runs now: another terminal, or kitty
-   * without remote control) is forgotten.
-   */
+  /** Stores the WezTerm pane and kitty window a hook reported: absent keeps the stored value, null forgets it. */
   private notePanes(id: string, env: HookEnv): void {
     const fields = [env.weztermPane, env.weztermSocket, env.kittyListenOn, env.kittyWindowId];
     if (fields.every((f) => f === undefined)) return;
@@ -432,10 +413,7 @@ export class Registry {
     return row.n > 0 && row.open === 0;
   }
 
-  /**
-   * Without `claude agents` (older Claude Code, or claude not found): a session whose process is gone has
-   * ended, and one "working" with nothing written for half an hour was left open.
-   */
+  /** Without `claude agents`: a session whose process is gone has ended; "working" with nothing written for half an hour was left open. */
   private sweep(): void {
     for (const s of this.list()) {
       if (s.runsInHelper) continue;
@@ -450,10 +428,7 @@ export class Registry {
     }
   }
 
-  /**
-   * Started and last-active times from Claude Code itself: `claude agents` knows when a session started,
-   * and the transcript when it last did something. Hooks only see what happens after Relay started.
-   */
+  /** Started and last-active times from `claude agents` and the transcript; hooks only see what happens after Relay started. */
   private correctTimes(
     session: SessionRecord,
     startedAt: number | undefined,
@@ -515,10 +490,7 @@ export class Registry {
     return this.get(id);
   }
 
-  /**
-   * Pin the session to the top of the Sessions list, or unpin it. Pinning a pinned session keeps its time, so it
-   * doesn't jump. Not activity: updatedAt stays. Ended sessions keep their pin, and get it back when resumed.
-   */
+  /** Pins or unpins a session; re-pinning keeps its time. Not activity: updatedAt stays. Ended sessions keep their pin. */
   pin(id: string, pinned: boolean, now = Date.now()): SessionRecord | null {
     if (!this.get(id)) return null;
     this.db
@@ -548,10 +520,7 @@ export class Registry {
     }
   }
 
-  /**
-   * Reconciles with `claude agents --json`, which lists every live session (interactive and background)
-   * including ones that started before Relay's hooks were installed.
-   */
+  /** Reconciles with `claude agents --json`, which lists every live session, including ones from before Relay's hooks. */
   async reconcile(claudeBin: string): Promise<void> {
     const askedAt = ++this.tick;
     let live: {
@@ -591,12 +560,9 @@ export class Registry {
       const stale = times.lastActivity !== null && Date.now() - times.lastActivity > STALE_MS;
       const reported: SessionStatus | null =
         s.status === "busy" ? "working" : s.status === "idle" ? "idle" : null;
-      // Claude Code also says "busy" while background shells it started keep running after the turn ended (a dev
-      // server, a watcher), with its prompt waiting for you. When the hooks recorded this session's turns and none
-      // is open, it's idle; a background task finishing starts a turn of its own, which shows as working.
+      // "busy" also covers background shells left running after the turn ended: with recorded turns and none open, it's idle.
       let status = reported === "working" && (stale || this.turnsAllEnded(s.sessionId)) ? "idle" : reported;
-      // A prompt that started while `claude agents` ran is newer than its idle report: applying it would clear the
-      // turn's live trackers. The next check sees the truth.
+      // A prompt started while `claude agents` ran is newer than its idle report; applying it would clear live trackers.
       if (status === "idle" && (this.workingAt.get(s.sessionId) ?? 0) > askedAt) status = null;
       if (created || (status && session.status !== status && session.status !== "waiting")) {
         this.setStatus(s.sessionId, status ?? "idle", { keepUpdatedAt: true });
