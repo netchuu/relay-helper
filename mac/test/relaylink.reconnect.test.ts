@@ -233,8 +233,8 @@ test("a dead link (no pong) reconnects without a 2 s wait for onclose", () => {
   current = link;
   link.start();
   sockets[0]!.open();
-  // pings at 5 s and 10 s; the second tick finds the first unanswered and drops
-  clock.advance(10_000);
+  // pings at 5 s and 10 s; the third tick finds two unanswered and drops
+  clock.advance(15_000);
   const droppedAt = clock.now();
   expect(sockets[0]!.terminated).toBe(true);
   expect(link.connected).toBe(false);
@@ -243,7 +243,7 @@ test("a dead link (no pong) reconnects without a 2 s wait for onclose", () => {
   expect(clock.now() - droppedAt).toBeLessThanOrEqual(250);
 });
 
-test("a room that never answers its control ping is dropped within two intervals of the first ping", () => {
+test("a room that never answers its control ping is dropped within three intervals of the first ping", () => {
   const { clock, sockets, link } = setup();
   current = link;
   link.start();
@@ -257,6 +257,43 @@ test("a room that never answers its control ping is dropped within two intervals
   // first ping at 5 s, dropped at 15 s: ping, one missed interval, second missed interval
   expect(s.terminated).toBe(true);
   expect(s.sent.length).toBe(2);
+});
+
+test("a late protocol pong while the room still answers keeps the link", () => {
+  const { clock, sockets, link } = setup();
+  current = link;
+  link.start();
+  const s = sockets[0]!;
+  s.open();
+  for (let i = 0; i < 120; i++) {
+    clock.advance(1000);
+    if (s.pings > 0) s.roomPong(); // the protocol pong never arrives
+  }
+  expect(s.terminated).toBe(false);
+  expect(sockets.length).toBe(1);
+  expect(link.connected).toBe(true);
+});
+
+test("a room that stops answering is dropped on the third keepalive tick, whatever the protocol pong does", () => {
+  const { clock, sockets, link } = setup();
+  current = link;
+  link.start();
+  const s = sockets[0]!;
+  s.open();
+  for (let i = 0; i < 10; i++) {
+    clock.advance(1000);
+    s.pong();
+    s.roomPong();
+  }
+  const lastAnswer = clock.now();
+  let ticks = 0;
+  while (!s.terminated && ticks < 60) {
+    clock.advance(1000);
+    ticks++;
+    s.pong();
+  }
+  expect(s.terminated).toBe(true);
+  expect(clock.now() - lastAnswer).toBeLessThanOrEqual(15_000);
 });
 
 test("a wake while connected reconnects at once", () => {

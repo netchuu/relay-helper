@@ -286,7 +286,7 @@ export class RelayLink {
     };
   }
 
-  /** After sleep or a lost network the socket can look open while nothing gets through: ping, drop it on a missed pong. */
+  /** After sleep or a lost network the socket can look open while nothing gets through: ping, drop it when the room stops answering. */
   private startKeepalive(ws: WebSocket, drop: () => void): void {
     this.stopKeepalive();
     let awaitingPong = false;
@@ -298,10 +298,9 @@ export class RelayLink {
     this.keepalive = this.clock.setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (this.awaitingRoomPong) this.roomMissed++;
-      // The edge answers protocol pings itself; only the room's own pong proves the room still hears this socket.
-      const roomSilent = this.roomMissed >= 2;
-      if (awaitingPong || roomSilent) {
-        log.info("relay connection went quiet; reconnecting", { missedPong: awaitingPong, roomSilent });
+      // The edge answers protocol pings itself, so a late one proves nothing; only the room's pong is the verdict.
+      if (this.roomMissed >= 2) {
+        log.info("relay connection went quiet; reconnecting", { missedPong: awaitingPong, roomSilent: true });
         this.stopKeepalive();
         drop();
         return;

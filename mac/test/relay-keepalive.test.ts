@@ -117,7 +117,7 @@ function runHelperLink(port: number) {
   return child;
 }
 
-test("a relay that never answers pings is dropped within two intervals, and the helper connects again", async () => {
+test("a relay that never answers pings is dropped within three intervals, and the helper connects again", async () => {
   const server = relayServer(null);
   cleanup.push(server.stop);
   runHelperLink(server.port);
@@ -126,11 +126,11 @@ test("a relay that never answers pings is dropped within two intervals, and the 
   await waitFor(() => server.peers[0]!.closed !== null);
   const first = server.peers[0]!;
   expect(first.closed).not.toBeNull();
-  // Ping at 1 interval, missed pong noticed at the next: about 2 intervals after it opened, never 3+.
+  // Ping at 1 interval, two unanswered pings noticed at the third tick: about 3 intervals, never 4+.
   const lived = first.closed! - first.opened;
-  expect(lived).toBeGreaterThanOrEqual(INTERVAL * 1.5);
-  expect(lived).toBeLessThan(INTERVAL * 3);
-  expect(first.pings).toBe(1);
+  expect(lived).toBeGreaterThanOrEqual(INTERVAL * 2.5);
+  expect(lived).toBeLessThan(INTERVAL * 4);
+  expect(first.pings).toBe(2);
   // The reconnect backoff is about a second.
   await waitFor(() => server.peers.length >= 2);
   expect(server.peers.length).toBeGreaterThanOrEqual(2);
@@ -147,15 +147,14 @@ test("a slow but alive relay (pong late, still before the next ping) keeps the l
   expect(server.peers[0]!.pings).toBeGreaterThanOrEqual(5);
 }, 60_000);
 
-test("a pong that comes back after the next ping is due counts as a dead link", async () => {
-  const server = relayServer(Math.round(INTERVAL * 1.5));
+test("a protocol pong that comes back after the next ping is due keeps a link whose room answers", async () => {
+  const server = relayServer(Math.round(INTERVAL * 1.5), 1000);
   cleanup.push(server.stop);
   runHelperLink(server.port);
   await waitFor(() => server.peers.length >= 1);
-  await waitFor(() => server.peers[0]!.closed !== null);
-  const first = server.peers[0]!;
-  expect(first.closed).not.toBeNull();
-  expect(first.closed! - first.opened).toBeLessThan(INTERVAL * 3);
+  await Bun.sleep(INTERVAL * 7);
+  expect(server.peers.length).toBe(1);
+  expect(server.peers[0]!.closed).toBeNull();
 }, 60_000);
 
 // The edge answers protocol pings itself, so a link can pass them while the room's code no longer hears the
