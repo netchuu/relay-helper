@@ -30,11 +30,7 @@ import { compact } from "./render.ts";
 import { type StepTracker, stepsJsonOf, timelineFields } from "./steps.ts";
 import { interruptedTurn, transcriptPathFor } from "./transcript.ts";
 
-/**
- * The phone's Stop (session.interrupt): stops Claude's current turn the way Esc
- * does, and ends that turn as stopped. Claude Code runs no hook after an interrupt, so the helper ends the
- * turn itself, from the transcript's interrupt marker (or, through the inbox, from its own stop message).
- */
+/** The phone's Stop: interrupts the turn like Esc and ends it as stopped, since Claude Code runs no hook after one. */
 
 export class StopError extends Error {
   constructor(
@@ -132,9 +128,8 @@ export class TurnStopper {
     if (running) return running;
     if (session.status !== "working" && session.status !== "waiting")
       throw new StopError("conflict", "nothing to stop: the session isn't working");
-    // A quick second tap: never a second Esc (two open Claude Code's rewind menu), and never a stop of a turn
-    // you haven't seen yet (the first Esc can submit a message queued at the computer, the inbox stop starts a
-    // turn). Same turn still running: the first tap's answer, unless a prompt opened, which is answered (no key).
+    // A quick second tap sends no second Esc (two open the rewind menu) and never stops a turn you haven't seen.
+    // Same turn still running: the first tap's answer, unless a prompt opened, which is answered (no key).
     const recent = this.lastEsc.get(sessionId);
     if (recent && Date.now() - recent.at < this.t.repeatMs) {
       const sameTurn = recent.turnId !== null && recent.turnId === (this.openTurn(sessionId)?.id ?? null);
@@ -285,11 +280,7 @@ export class TurnStopper {
     }
   }
 
-  /**
-   * Ends a turn as stopped and announces it once. Does nothing for a turn a Stop hook already finished. When
-   * the turn was still the session's open one, the session goes idle; when a newer turn already started (a
-   * message queued at the computer, or the inbox stop message), its status is left to that turn.
-   */
+  /** Ends a turn as stopped and announces it once; the session goes idle unless a newer turn already started. */
   endStopped(turnId: string, known?: ReturnType<typeof interruptedTurn>, stopped = true): string | null {
     const row = this.d.db
       .query(

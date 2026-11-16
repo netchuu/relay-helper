@@ -56,17 +56,10 @@ export interface DeliveryResult {
 
 export class DeliveryError extends Error {}
 
-/**
- * The session is in the Claude desktop app, Relay may type there, and the Mac is locked: macOS hides the app's
- * contents then. The reply waits for the unlock (`session.send` answers `via: "queued"`).
- */
+/** The session is in the desktop app and the Mac is locked (macOS hides its contents): the reply waits for the unlock. */
 export class WaitForUnlock extends Error {}
 
-/**
- * The session has a terminal Relay types into, and typing now could mix into what the person at the Mac is typing
- * there, or into a draft in the prompt line. The message waits for a pause and is typed then, never sent through
- * the inbox instead (`session.send` waits a little, then answers `via: "queued"` and the reply queue types it).
- */
+/** Typing now could mix into what the person at the Mac types, or into a prompt draft: the message waits for a pause. */
 export class WaitForPause extends Error {
   constructor(
     /** The terminal it waits to be typed into; null when it waits for something else (an open prompt). */
@@ -138,19 +131,11 @@ export interface TypeOps {
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null): Promise<string | null>;
-  /**
-   * The tty of the terminal tab a session is shown in when Claude Code runs it in a background host (`--bg-pty-host`,
-   * after a resume): the process then has a pseudo-terminal of its own, which no tab has. Null when it isn't hosted
-   * or the tab can't be told for certain.
-   */
+  /** The tty of the tab showing a session that runs in a background host (`--bg-pty-host`); null when unknown. */
   viewerTtyOf?(pid: number, cwd: string): Promise<string | null>;
   peek(route: TypingRoute, tty: string): Promise<TabView | null>;
   type(route: TypingRoute, tty: string, text: string): Promise<boolean>;
-  /**
-   * Whether the Claude Code process `pid` is the program in front of its terminal (`tty` null: tmux) or of the tab
-   * on `tty` (platform/foreground.ts). Relay types into tmux and terminal apps only then: otherwise the keys would
-   * go to a shell (Claude suspended or exited) or another program. `relay shell` checks this itself.
-   */
+  /** Whether process `pid` is in front in its terminal (`tty` null: tmux) or tab; otherwise keys would reach a shell. */
   inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
   /** Enter alone, for a message that sat typed and unsent. Absent: no check is made. */
   enterPty?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
@@ -184,23 +169,8 @@ export const defaultTypeOps: TypeOps = {
 };
 
 /**
- * Delivers free text from the phone into a session, preferring real keyboard input:
- *
- * 1. The session's own terminal, so Claude Code sees an ordinary prompt (no "another session" label, pasted image
- *    paths become images) and the history is exactly as if you typed it: `relay shell` (Zed's terminal) through its
- *    pseudo-terminal, tmux, then iTerm2. When typing now could mix into what you're typing there (you're in front of
- *    that tab and used the keyboard in the last PAUSE_SECONDS; for tmux, any input, as it can't tell which pane you
- *    look at), or into a draft in the prompt line, it throws WaitForPause: the message waits and is typed later,
- *    never sent through the inbox instead. `relay shell` makes the same check itself, per tab. Relay types only
- *    while Claude Code is the program in front of that terminal; when it isn't (suspended with Ctrl-Z, exited,
- *    another program in front), the message goes on to the next route, so keys never reach a shell.
- * 2. The Claude desktop app (Code tab), when Accessibility is allowed: typed in and sent in the
- *    background (integrations/claudeDesktop.ts). While the Mac is locked it can't be, so the reply waits.
- * 3. Otherwise the inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`): works for IDE panels, the desktop app
- *    and background sessions. Claude Code labels it as a message from another session.
- *
- * The text is cleaned first (shell/typedText.ts): no control characters reach any route, only text, newlines and
- * tabs; Relay presses Enter itself.
+ * Delivers free text from the phone into a session: its own terminal (throws WaitForPause rather than mix into typing),
+ * then the desktop app, then the inbox socket. The text is cleaned first; Relay presses Enter itself.
  */
 export async function deliver(
   session: SessionRecord,
@@ -322,12 +292,7 @@ async function pressEnter(session: SessionRecord, route: TerminalRoute, ops: Typ
   }
 }
 
-/**
- * A message typed into a terminal is submitted when its prompt hook arrives, normally within a moment. When it
- * doesn't (the Enter was lost, e.g. Claude Code was still handling a Stop), looks at the prompt: text still
- * there, or a terminal that can't be read (`relay shell`, where an Enter on an empty prompt does nothing), gets
- * Enter once more. Returns false when the message still sat in the prompt after that, so the caller can say so.
- */
+/** If the prompt hook hasn't arrived, presses Enter once more when the text still sits in the prompt (or can't be read). */
 async function confirmSubmitted(
   session: SessionRecord,
   text: string,
@@ -360,11 +325,7 @@ async function confirmSubmitted(
   return null;
 }
 
-/**
- * Types into the session's own terminal. Null when it has none Relay can reach (no such tab, the app isn't
- * running, the pane is gone), so the other routes get their turn. Throws WaitForPause instead of typing into
- * what you're typing.
- */
+/** Types into the session's own terminal; null when none is reachable. Throws WaitForPause rather than mix into typing. */
 async function typeIntoTerminal(
   session: SessionRecord,
   text: string,
@@ -460,11 +421,7 @@ async function claudeIsInFront(
   return front;
 }
 
-/**
- * Whether the session's Claude Code is in front in the tmux pane Relay has stored for it: the process runs on the
- * pane's own terminal, and is the foreground program there. A session resumed in another terminal has a process
- * on a different tty, and the pane may be a bare shell by now.
- */
+/** Whether the session's Claude Code is the foreground program on its stored tmux pane's tty (a resume elsewhere differs). */
 async function claudeIsInFrontInPane(
   session: SessionRecord,
   ops: Pick<TypeOps, "tmuxPaneTty" | "ttyOf" | "inFront">,
@@ -488,12 +445,7 @@ async function claudeIsInFrontInPane(
   return ops.inFront(session.pid, null).catch(() => false);
 }
 
-/**
- * Whether the session's Claude Code is in front in its WezTerm pane or kitty window: the process runs on the
- * pane's own terminal (WezTerm tells the pane's tty; kitty lists the processes in front in the window), and is
- * the foreground program there. A session resumed in another terminal has a process elsewhere, and the pane
- * may be a bare shell by now.
- */
+/** Whether the session's Claude Code is the foreground program in its WezTerm pane or kitty window. */
 async function claudeIsInPaneTerminal(
   session: SessionRecord,
   target: PaneTarget,
@@ -522,12 +474,7 @@ async function claudeIsInPaneTerminal(
 /** The tty a session's tab was last found by, so the follow-up checks (Enter, the prompt's text) use the same one. */
 const foundTty = new Map<string, string>();
 
-/**
- * The terminal tabs a session may be in, in the order to try: the tty of its Claude Code process (every hook
- * reports the process, so a resumed, continued or cleared session, or one from before a helper restart, is found
- * again), then the tty it was last typed into, then the tab it is shown in when its process runs in a background
- * host (the process then has a pseudo-terminal that no tab has).
- */
+/** The ttys a session may be in, in order: its process's, the last one typed into, then its background host's tab. */
 export async function candidateTtys(
   session: SessionRecord,
   ops: Pick<TypeOps, "ttyOf" | "viewerTtyOf">,
@@ -590,11 +537,7 @@ export async function typingRouteFor(
   return found ? found.app : null;
 }
 
-/**
- * Claude Code's suggested next message in the session's terminal (tmux, iTerm2 or Terminal): the text, null when the
- * screen shows none, undefined when the screen can't be read (no tab found, other terminals, mid-redraw, an error).
- * Reads quietly: no log line when a tab is missing.
- */
+/** Claude Code's suggested next message on screen: null when none, undefined when the screen can't be read. Quiet. */
 export async function readSuggestion(
   session: SessionRecord,
   ops: TypeOps = defaultTypeOps,
@@ -656,12 +599,7 @@ export const defaultKeyOps: KeyOps = {
   viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
 };
 
-/**
- * Presses Esc in the session's own terminal, the way you'd stop Claude at the keyboard: `relay shell` (Zed),
- * tmux, then iTerm2. Unlike typing it ignores `preferTyping` (a stop has no inbox equivalent of a key) and
- * the "you're active at the Mac" rules (you asked for it, and Esc doesn't mix into what you type). Returns the
- * route that took it, or null when none could.
- */
+/** Presses Esc in the session's terminal; ignores `preferTyping` and the activity rules. Returns the route, or null. */
 export async function pressEscape(
   session: SessionRecord,
   ops: KeyOps = defaultKeyOps,
@@ -715,11 +653,7 @@ function pressed(session: SessionRecord, route: EscapeRoute): EscapeRoute {
   return route;
 }
 
-/**
- * Asks `relay shell` to type `text` into its tab. It waits up to 15 s for you to stop typing there and refuses a
- * draft in the prompt line, unless `force` (the message waited long enough): then it types at once, after a clean
- * break from a draft. A `relay shell` from before `force` ignores it.
- */
+/** Asks `relay shell` to type `text`; it waits up to 15 s for a pause and refuses a draft unless `force`. */
 export function typeIntoPty(
   socketPath: string,
   token: string,
@@ -787,10 +721,8 @@ export function sameTty(a: string | null, b: string | null): boolean {
 }
 
 /**
- * The tab a session running in a background host is shown in. Claude Code (2.1.32x) resumes a session as a
- * `--bg-pty-host` child whose pseudo-terminal belongs to no tab; the `claude` the person sees in the tab is a viewer
- * that talks to it through Claude Code's daemon. Nothing links the two but the folder, so the viewer is taken only when
- * it is the one `claude` process in that folder, on a terminal, that no other known session is running as.
+ * The tab of a session in a background host: its pty has no tab, and only the folder links it to the viewer `claude`.
+ * The viewer counts only when it is the one such process in that folder that no other known session uses.
  */
 export async function viewerTtyOf(
   pid: number,
@@ -841,11 +773,7 @@ async function sh(cmd: string[]): Promise<string> {
   return out;
 }
 
-/**
- * Wire format confirmed in Claude Code 2.1.316: an optional auth line, then one JSON line per message.
- * Open the connection only when the message is ready: Claude Code closes connections that send no
- * complete line within 30 seconds.
- */
+/** Wire format: an optional auth line, then one JSON line per message. Claude Code drops idle connections after 30 s. */
 export function postToInbox(
   socketPath: string,
   token: string | null,
@@ -906,11 +834,7 @@ async function tmuxPaneTty(socket: string, pane: string): Promise<string | null>
   return (await proc.exited) === 0 && out ? out : null;
 }
 
-/**
- * A message that ends in attachment paths, split: the text, then each path (one per line, `"`-quoted or not, inside
- * an `attachments` folder). Claude Code turns a pasted prompt into "[Image #N]" only when the paste is one path and
- * nothing else; a paste of text and paths on several lines stays text, and Claude reads the file with a tool.
- */
+/** Splits a message ending in attachment paths into text and paths; Claude makes "[Image #N]" only from a lone path paste. */
 export function splitAttachmentPaths(text: string): { body: string; paths: string[] } {
   const lines = text.split("\n");
   const paths: string[] = [];

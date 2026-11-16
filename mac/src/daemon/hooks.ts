@@ -87,11 +87,7 @@ export function dropPhoneTyped(sessionId: string, text: string): void {
 /** First messages of sessions the phone is starting: their id isn't known until the launch returns. */
 const phoneLaunches = new Set<{ cwd: string; head: string; paths: string[]; text: string; taken: boolean }>();
 
-/**
- * The phone is starting a session in `cwd` with `text`. The first prompt's hook can arrive before the launch
- * returns the session id, so it is matched by folder and text meanwhile. `done(sessionId)` then marks it for that
- * session (when no hook took it yet); `abort()` drops it when the launch failed.
- */
+/** The phone starts a session in `cwd`: its first hook can beat the session id, so it is matched by folder and text. */
 export function notePhoneLaunch(
   cwd: string,
   text: string,
@@ -138,11 +134,7 @@ export function phoneTypePending(sessionId: string, text: string): boolean {
   return typed !== undefined && typed.text === cleanTypedText(text);
 }
 
-/**
- * A Claude Code notice (a background task finishing) that arrives while the session's turn is still running and
- * no Stop has come yet belongs to that turn: Claude takes it in mid-answer. If that turn's Stop then comes within
- * this time, the notice was really the next turn (the two hooks raced), and a turn starts for it after the Stop.
- */
+/** A notice during a running turn belongs to it; a Stop within this time means it was the next turn (hooks raced). */
 const HELD_NOTICE_MS = 2000;
 
 export class HookHandler {
@@ -218,9 +210,7 @@ export class HookHandler {
         return NO_OUTPUT;
 
       case "UserPromptSubmit": {
-        // What the person typed: the IDE extension's context blocks are for Claude, not for the phone.
-        // A background task's notification or another message Claude Code adds itself starts a turn too, but
-        // nobody typed it: the phone shows no bubble for it, and it isn't presence at the computer.
+        // IDE context blocks are for Claude, not the phone. System messages start a turn but nobody typed them.
         const raw = withoutIdeContext(str("prompt") ?? "");
         const system = isSystemMessage(raw);
         // Only a real submit empties the input box; a notice leaves the typed draft where it was.
@@ -407,11 +397,8 @@ export class HookHandler {
     const { prompt, reply } = this.d.broker.open(input);
     this.d.registry.setStatus(input.session_id, "waiting");
     log.info("prompt opened", { promptId: prompt.id, kind: prompt.kind, tool: input.tool_name });
-    // Claude Code ends the waiting hook when the dialog is answered in the terminal (Yes, No, Esc, plan
-    // feedback), the turn is interrupted or Claude exits. After No, Esc or feedback no other hook event
-    // follows, so this is the only sign: close the prompt, or the phone keeps showing it, reminders
-    // repeat it, and an answer from the phone goes nowhere. (Its own timeout is 24 h, like the prompt's.)
-    // Tie the prompt to its tool now: PreToolUse(dN) comes right before PermissionRequest(dN).
+    // The hook ends when the dialog is answered in the terminal; nothing else follows a No or Esc, so close it here.
+    // PreToolUse(dN) comes right before PermissionRequest(dN): tie the prompt to its tool.
     const toolId = this.steps.promptOpened(
       input.session_id,
       input.tool_name,
@@ -477,12 +464,7 @@ export class HookHandler {
     return { turnId, startedAt: now };
   }
 
-  /**
-   * The turn a Stop ends. Usually the open one; but the Stop can also arrive just after the next prompt's hook
-   * (both are async). Then the open turn is that new one, and the answer belongs to the turn before it, which the
-   * new prompt closed unanswered. Told apart by the transcript: the answer is that turn's last text, and not among
-   * the new turn's.
-   */
+  /** The turn a Stop ends: usually the open one, but a Stop after the next prompt's hook belongs to the turn before (told by the transcript). */
   private stopOwner(
     sessionId: string,
     picked: OpenTurn | null,
@@ -496,11 +478,8 @@ export class HookHandler {
         "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND id != ? AND ended_at = ? AND full_text IS NULL AND stopped = 0 ORDER BY started_at DESC LIMIT 1",
       )
       .get(sessionId, picked.id, picked.started_at) as OpenTurn | null;
-    // Prompts sent while Claude was still answering (from the phone, or queued at the computer): each one's hook
-    // came before this Stop and closed the turn before it, but Claude Code starts on them only now, and in the
-    // transcript the answer stands before them. The answer is for the newest of these turns whose prompt stands
-    // before it (or nobody's prompt), and the later ones wait: the new turn was shown as done with the previous
-    // answer under it, and its own answer then landed under the next message.
+    // Prompts queued during an answer closed the earlier turn before this Stop. The answer goes to the newest turn
+    // whose prompt precedes it in the transcript; later ones wait, or their answers land under the next message.
     const waiting = this.unansweredUpTo(sessionId, picked);
     const owner = answerOwner(
       transcript,
@@ -512,9 +491,7 @@ export class HookHandler {
       return waiting.find((t) => t.id === owner) ?? null;
     }
     if (!before?.started_at) return picked;
-    // Only on positive evidence: the answer is the earlier turn's own last text, that turn wasn't interrupted
-    // (Esc, then a new prompt), and the new turn hasn't written it. A lagging transcript or an API error keeps
-    // the Stop with the open turn.
+    // Only on positive evidence (the earlier turn's own last text, not interrupted); a lagging transcript keeps the open turn.
     const same = (m: { raw: string }) => m.raw.trim() === answer.trim();
     const earlier = interruptedTurn(transcript, before.started_at, picked.started_at, cwd, before.prompt);
     const last = earlier?.messages.at(-1);
