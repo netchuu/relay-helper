@@ -27,9 +27,8 @@ export function savedSettingsPath(saved: string | undefined): string | undefined
 }
 
 /**
- * Recognises Relay's own entries (idempotent install/uninstall): a command whose program is a file named
- * exactly `relay-hook`, wherever it lives (older installs used other paths), optionally quoted or with
- * arguments. Someone else's `slack-relay-hook.sh` is not Relay's.
+ * Recognises Relay's own entries: a command whose program is a file named exactly `relay-hook`, wherever it
+ * lives. Someone else's `slack-relay-hook.sh` is not Relay's.
  */
 const RELAY_HOOK_COMMAND = /(^|[/\\])relay-hook(["']?)(\s|$)/;
 
@@ -135,9 +134,8 @@ export function statusLineKey(settingsPath: string): string {
 }
 
 /**
- * What `relay install` saved about the person's own status lines, so uninstall can give them back.
- * `files` holds one per settings file by key; `previous` is the one an install of an earlier version saved for
- * every file, still used by a status line command that has no key.
+ * The person's own status lines, saved so uninstall can give them back: `files` by settings-file key,
+ * `previous` the shared one from older installs.
  */
 export type SavedStatusLine = { previous: StatusLine | null; files?: Record<string, StatusLine | null> };
 
@@ -231,10 +229,8 @@ export function serviceContext(): ServiceContext {
 }
 
 /**
- * `relay uninstall --purge`: deletes Relay's data directory (~/.relay), with the paired phones, the keys made at
- * pairing, the database, attachments and logs. A phone paired before can't reach this computer again. Refuses a
- * directory that is the filesystem root or the home directory itself, in case RELAY_HOME points there.
- * Returns false when there was nothing to delete.
+ * `relay uninstall --purge`: deletes Relay's data directory, paired phones included. Refuses the filesystem
+ * root or the home directory, in case RELAY_HOME points there. Returns false when nothing was there.
  */
 export function purgeData(home: string, userHome = homedir()): boolean {
   const dir = resolve(home);

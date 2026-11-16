@@ -1,10 +1,4 @@
-/**
- * relay-hook: the command Claude Code runs for every Relay hook event.
- *
- * Contract: FAIL OPEN. If the daemon is not running or anything goes wrong, print nothing and exit 0,
- * so Claude Code behaves exactly as if Relay were not installed. Keep this file dependency-free: it is
- * compiled to a standalone binary and its startup time is paid on every hook event.
- */
+/** relay-hook: fails open (prints nothing, exits 0 on any error) and stays dependency-free: startup is paid on every hook. */
 import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -15,9 +9,8 @@ const NON_BLOCKING_TIMEOUT_MS = 5000;
 const STDOUT_FLUSH_TIMEOUT_MS = 10_000;
 
 /**
- * Write the reply and wait until it is flushed. Exiting right after `write` cuts a large reply at the
- * pipe's buffer (64 KiB) when the reader is a Node process or a shell. A reader that never reads or
- * has closed the pipe must not hang Claude Code: give up after a timeout or on any error.
+ * Writes the reply and waits for the flush: exiting right after `write` cuts it at the pipe buffer (64 KiB).
+ * Gives up on a timeout or error so a reader that never reads can't hang Claude Code.
  */
 function writeStdout(text: string): Promise<void> {
   return new Promise((resolve) => {
@@ -101,9 +94,8 @@ async function main(): Promise<void> {
 }
 
 /**
- * `relay-hook statusline`: Claude Code's status line command (usage-left). Sends the JSON it was given to the
- * daemon, then runs the status line the person had before Relay (saved in statusline.json by `relay install`) with
- * the same input and prints its output unchanged. Same contract as the hooks: fail open.
+ * `relay-hook statusline`: sends its input to the daemon, then runs the person's earlier status line
+ * (saved in statusline.json) with it and prints that output. Fails open.
  */
 async function statusLine(): Promise<void> {
   const stdin = await Bun.stdin.text();

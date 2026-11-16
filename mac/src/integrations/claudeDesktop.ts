@@ -1,12 +1,4 @@
-/**
- * Typing a phone reply into a Claude Code session in the Claude desktop app (Code tab), in the background,
- * through Accessibility. The app stays where it is: no activation and no
- * `claude://` link (links only switch sessions when the app comes forward).
- *
- * Steps: find the session's title in the app's own session files, press its row in the sidebar, check the
- * header shows it, make sure the composer is empty (a draft means the person is mid-message), put the text in,
- * press Send, check the composer emptied, then switch back to the session that was showing.
- */
+/** Types a phone reply into a session in the Claude desktop app through Accessibility, without bringing the app forward. */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -132,13 +124,8 @@ export function setAccessibilityAskStore(store: { get(): number | null; set(at: 
 }
 
 /**
- * Asks macOS for Accessibility the system way (its own dialog with a button to System Settings, relay already
- * listed there), when the Claude desktop app is installed and relay isn't allowed. Runs in the service, since
- * the permission belongs to the process that uses it.
- *
- * Not nagging: without `force`, at most once every ASK_AGAIN_MS. The service asks when it starts and when a
- * phone reply to a desktop session finds the permission missing; `relay install`/`relay pair` force it, since
- * the person is at the terminal on purpose then.
+ * Asks macOS for Accessibility (system dialog) when the desktop app is installed and relay isn't allowed.
+ * Runs in the service, which owns the permission; without `force` at most once every ASK_AGAIN_MS.
  */
 export function askForAccessibility(
   opts: { force?: boolean; now?: number } = {},
@@ -302,9 +289,8 @@ export async function lastUserMessage(path: string | null): Promise<string | nul
 const TYPED_FILE = () => join(paths.home, "typed.json");
 
 /**
- * What Relay itself typed into each session lately (kept on disk, so a helper restart remembers). The app's
- * Accessibility tree goes stale in the background and keeps showing the sent text; only text Relay typed can be
- * that. Anything else in the composer is the person's draft, even if it equals an earlier message ("yes").
+ * What Relay typed into each session lately (kept on disk). A stale background tree keeps showing sent text;
+ * anything else in the composer is the person's draft, even if it equals an earlier message.
  */
 export function rememberTyped(sessionId: string, text: string): void {
   try {

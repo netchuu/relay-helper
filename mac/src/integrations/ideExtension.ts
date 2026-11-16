@@ -1,13 +1,4 @@
-/**
- * Typing a phone reply into a Claude Code session in the IDE extension (VS Code, Cursor, Windsurf, Antigravity
- * IDE), in the background. The extension's composer is a rich editor two
- * frames deep in a webview and ignores text set through Accessibility, so Relay focuses it through Accessibility
- * and then sends real keystrokes to that app's process (CGEventPostToPid): the app stays where it is.
- *
- * Steps: the session's last answer (from its transcript) picks the Claude Code tab showing it; the composer must
- * be empty (Send disabled; otherwise the person is mid-message); focus it, type, press Return, and confirm by the
- * transcript.
- */
+/** Types a phone reply into the IDE extension's composer: focus via Accessibility, then keystrokes by CGEventPostToPid (it ignores set text). */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { CHILD_PATH } from "../config.ts";
 import { type AxElement as Ax, AxElement, typeToPid } from "../platform/ax.ts";

@@ -99,9 +99,8 @@ export function saveConfig(patch: Partial<RelayConfig>): RelayConfig {
 }
 
 /**
- * Finds the real `claude` executable on PATH, resolving symlinks. Shell aliases (like the user's
- * `claude --append-system-prompt-file …`) are deliberately ignored: daemon-spawned processes must not
- * depend on interactive shell configuration.
+ * Finds the real `claude` executable on PATH. Shell aliases are ignored on purpose: daemon-spawned
+ * processes can't depend on interactive shell configuration.
  */
 export function resolveClaudeBin(config: RelayConfig): string | null {
   if (config.claudeBin && existsSync(config.claudeBin) && !config.claudeBin.includes("/versions/"))

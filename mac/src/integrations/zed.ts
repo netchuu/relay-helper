@@ -1,14 +1,4 @@
-/**
- * Makes Zed's built-in terminal start through `relay shell`, so replies from the phone are typed into
- * Claude Code there (Zed has no outside API to type into its terminal; see ../shell/ptyShell.ts).
- *
- * Zed reads `~/.config/zed/settings.json` (macOS; on Linux `$XDG_CONFIG_HOME/zed/settings.json`), which allows
- * comments and trailing commas. Zed from Flathub (`dev.zed.Zed`) leaves its sandbox at startup but keeps the
- * sandbox's config folder (it passes it on as FLATPAK_XDG_CONFIG_HOME), so it reads
- * `~/.var/app/dev.zed.Zed/config/zed/settings.json` instead. Every one that exists is set up.
- * The file is edited as text, in place, so the person's comments and formatting survive. Only the
- * `terminal.shell` entry is touched, and only when it isn't set already: a custom shell is left alone.
- */
+/** Starts Zed's terminal through `relay shell` by editing its settings as text, so comments survive; a custom shell is left alone. */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -87,9 +77,8 @@ export function flatpakNoEscape(settingsPath: string, e: ZedEnv = realEnv()): bo
 export type ZedState = "ours" | "custom" | "none";
 
 /**
- * Whether install sets up Zed's terminal. An install the helper runs itself (`--from-update` by the daemon,
- * `--from-pair` by `relay pair`) keeps the saved choice, so `relay install --no-zed` stays off; a plain
- * `relay install` run by the person sets the choice again.
+ * Whether install sets up Zed's terminal. Installs run by the helper (`--from-update`, `--from-pair`) keep
+ * the saved choice; a plain `relay install` sets it again.
  */
 export function zedChoice(
   saved: boolean,
