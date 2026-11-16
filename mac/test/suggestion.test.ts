@@ -76,7 +76,7 @@ function ops(over: Partial<TypeOps>): TypeOps {
 const record = (over: Partial<SessionRecord>) =>
   ({ id: "s1", pid: 4242, cwd: "/x", terminal: null, ...over }) as SessionRecord;
 
-test("readSuggestion reads tmux with its attributes, and iTerm2 or Terminal by the no-key rule", async () => {
+test("readSuggestion reads tmux with its attributes, and iTerm2 by the no-key rule", async () => {
   const tmux = record({ tmuxPane: "%1", tmuxSocket: "/tmp/tmux-1/default" });
   expect(await readSuggestion(tmux, ops({ tmuxScreen: async () => screen(`❯ ${dim("ship it")}`) }))).toBe(
     "ship it",

@@ -173,22 +173,6 @@ const SCRIPTS: Record<TypingRoute, string> = {
   end tell
   return "not-found"
 end run`,
-  terminal: `on run argv
-  set targetTty to item 1 of argv
-  set msg to item 2 of argv
-  if application id "com.apple.Terminal" is not running then return "no-app"
-  tell application id "com.apple.Terminal"
-    repeat with w in windows
-      repeat with t in tabs of w
-        if tty of t is targetTty then
-          do script msg in t
-          return "ok"
-        end if
-      end repeat
-    end repeat
-  end tell
-  return "not-found"
-end run`,
 };
 
 /** Looks at one tab: "front" or "back" on the first line, then its visible text; "no-app" or "not-found". */
@@ -214,30 +198,6 @@ export const PEEK_SCRIPTS: Record<TypingRoute, string> = {
             return place & linefeed & screen
           end if
         end repeat
-      end repeat
-    end repeat
-  end tell
-  return "not-found"
-end run`,
-  terminal: `on run argv
-  set targetTty to item 1 of argv
-  if application id "com.apple.Terminal" is not running then return "no-app"
-  tell application id "com.apple.Terminal"
-    set place to "back"
-    if frontmost then
-      try
-        if tty of selected tab of front window is targetTty then set place to "front"
-      end try
-    end if
-    repeat with w in windows
-      repeat with t in tabs of w
-        if tty of t is targetTty then
-          set screen to ""
-          try
-            set screen to contents of t
-          end try
-          return place & linefeed & screen
-        end if
       end repeat
     end repeat
   end tell
@@ -305,21 +265,6 @@ export const ENTER_SCRIPTS: Record<TypingRoute, string> = {
             return "ok"
           end if
         end repeat
-      end repeat
-    end repeat
-  end tell
-  return "not-found"
-end run`,
-  terminal: `on run argv
-  set targetTty to item 1 of argv
-  if application id "com.apple.Terminal" is not running then return "no-app"
-  tell application id "com.apple.Terminal"
-    repeat with w in windows
-      repeat with t in tabs of w
-        if tty of t is targetTty then
-          do script "" in t
-          return "ok"
-        end if
       end repeat
     end repeat
   end tell

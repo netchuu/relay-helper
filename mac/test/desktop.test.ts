@@ -325,7 +325,7 @@ test("replyFix points to Accessibility only where it would help", async () => {
     tmuxPane: null,
     tmuxSocket: null,
   };
-  // A terminal session through the inbox (Terminal.app): labelled, and nothing to switch on.
+  // A terminal session through the inbox (Terminal.app, which has no typing route): labelled, and nothing to switch on.
   const r = replyRouteOf({ ...base, socketPath: "/inbox.sock", terminal: "Apple_Terminal" } as never);
   expect(r).toEqual({ replyRoute: "labelled" });
 });

@@ -59,7 +59,7 @@ const ConfigSchema = z.object({
   /** Directories the manager agent may start sessions in (Phase 3). */
   projectRoots: z.array(z.string()).default([join(homedir(), "Projects")]),
   /**
-   * Deliver free text as real typing (tmux, iTerm2, Terminal.app) when possible, so Claude sees an
+   * Deliver free text as real typing (tmux, iTerm2) when possible, so Claude sees an
    * ordinary prompt; otherwise the session inbox. Never types while you are typing at the Mac.
    */
   preferTyping: z.boolean().default(true),

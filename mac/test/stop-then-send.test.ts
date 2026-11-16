@@ -15,11 +15,11 @@ import type { TypingRoute } from "../src/platform/types.ts";
 const RULE = "─".repeat(100);
 const screen = (...prompt: string[]) => ["⏺ …", RULE, ...prompt, RULE, "  ⏵⏵ bypass"].join("\n");
 
-type Where = "pty" | "tmux" | "iterm" | "terminal";
+type Where = "pty" | "tmux" | "iterm";
 
 /** A session reachable only through `where`. */
 function sessionVia(where: Where, id: string): SessionRecord {
-  const base = { id, pid: 4242, terminal: where === "terminal" ? "Apple_Terminal" : "iTerm.app" };
+  const base = { id, pid: 4242, terminal: "iTerm.app" };
   const extra =
     where === "pty"
       ? { ptySocket: "/tmp/x.sock", ptyToken: "t" }
@@ -59,7 +59,7 @@ function terminals(where: Where, opts: { eatsEnter: number }) {
       log.push(`type:${text}`);
       typedNow(text);
     },
-    routes: () => (where === "iterm" ? ["iterm"] : where === "terminal" ? ["terminal"] : []),
+    routes: () => (where === "iterm" ? ["iterm"] : []),
     ttyOf: async () => "/dev/ttys004",
     peek: async () => ({ front: false, screen: shown() }),
     inFront: async () => true,
@@ -107,7 +107,7 @@ function keys(log: string[]): KeyOps {
 
 const base = { idleSeconds: null, userTypingNow: false, preferTyping: true } as const;
 
-for (const where of ["pty", "tmux", "iterm", "terminal"] as const) {
+for (const where of ["pty", "tmux", "iterm"] as const) {
   describe(`Stop, then a message (${where})`, () => {
     test("a send within a second of the Stop waits for Claude Code to settle, then is typed and submitted", async () => {
       const session = sessionVia(where, `stop-${where}-1`);

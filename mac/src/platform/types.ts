@@ -47,7 +47,7 @@ export interface HostInfo {
 }
 
 /** Terminal apps Relay can type into besides tmux. */
-export type TypingRoute = "iterm" | "terminal";
+export type TypingRoute = "iterm";
 
 /** What Relay can see of a terminal tab before typing into it. */
 export interface TabView {

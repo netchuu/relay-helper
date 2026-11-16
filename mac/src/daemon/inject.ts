@@ -33,7 +33,6 @@ export type DeliveryRoute =
   | "wezterm"
   | "kitty"
   | "iterm"
-  | "terminal"
   | "desktop"
   | "ide"
   | "socket"
@@ -242,7 +241,7 @@ function holdsMessage(draft: string | null, text: string): boolean {
   return head !== "" && squash(draft).includes(head);
 }
 
-/** The prompt's text after typing, when the route can show it (tmux, iTerm2, Terminal); undefined for `relay shell`. */
+/** The prompt's text after typing, when the route can show it (tmux, iTerm2); undefined for `relay shell`. */
 async function promptAfterTyping(
   session: SessionRecord,
   route: TerminalRoute,

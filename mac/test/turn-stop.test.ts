@@ -65,7 +65,7 @@ function setup(opts: Opts = {}) {
     tmux: 0,
     app: 0,
     ptyBadRequest: false,
-    routes: [] as ("iterm" | "terminal")[],
+    routes: [] as "iterm"[],
     tmuxDelayMs: 0,
   };
   const keyOps: KeyOps = {

@@ -32,7 +32,7 @@ interface Keys {
   app: string[];
   ptyReply: { ok: true } | { ok: false; reason: "bad_request" };
   tmuxFails: boolean;
-  routes: ("iterm" | "terminal")[];
+  routes: "iterm"[];
   appOk: boolean;
 }
 
