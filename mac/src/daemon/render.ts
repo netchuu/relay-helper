@@ -153,7 +153,10 @@ export function turnFromTranscript(
     if (!line) continue;
     let entry: Record<string, unknown>;
     try {
-      entry = JSON.parse(line);
+      const value: unknown = JSON.parse(line);
+      // A line like `null`, `42` or `[]` parses but isn't an entry.
+      if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+      entry = value as Record<string, unknown>;
     } catch {
       continue;
     }

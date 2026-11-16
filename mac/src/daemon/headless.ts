@@ -223,6 +223,7 @@ export class HeadlessSessions {
           } catch {
             continue;
           }
+          if (!msg) continue;
           if (msg.type === "system" && msg.subtype === "init" && !ready) {
             ready = true;
             clearTimeout(timer);

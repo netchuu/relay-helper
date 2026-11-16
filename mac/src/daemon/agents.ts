@@ -272,12 +272,14 @@ export class AgentRuns {
     for (const line of chunk.split("\n")) {
       const isCall = line.includes('"tool_use"');
       if (!isCall && !(line.includes('"tool_result"') && line.includes('"is_error"'))) continue;
-      let entry: { timestamp?: string; message?: { content?: unknown } };
+      let entry: { timestamp?: string; message?: { content?: unknown } } | null;
       try {
         entry = JSON.parse(line);
       } catch {
         continue;
       }
+      // A line like `null` parses but isn't an entry.
+      if (!entry) continue;
       const content = entry.message?.content;
       if (!Array.isArray(content)) continue;
       const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
