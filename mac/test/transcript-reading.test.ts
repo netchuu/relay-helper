@@ -544,3 +544,16 @@ describe("the recorded index", () => {
     expect(T0).toBe(new Date(FIXTURE_START).toISOString());
   });
 });
+
+describe("lines that parse but are not entries", () => {
+  test("null, numbers, arrays, strings and booleans are skipped like bad lines", () => {
+    for (const odd of ["null", "42", "[]", '"s"', "true"]) {
+      const file = join(scratch(), "s.jsonl");
+      writeFileSync(
+        file,
+        [user(0, "hi"), odd, assistant(1, [{ type: "text", text: "yo" }])].join("\n") + "\n",
+      );
+      expect(transcriptTurns("s", file, { limit: 5, previewChars: 100, working: false })).toHaveLength(1);
+    }
+  });
+});

@@ -435,6 +435,8 @@ function draftsFrom(path: string, cwd: string | null = null): Draft[] {
     } catch {
       continue;
     }
+    // A line like `null` parses but isn't an entry.
+    if (!entry) continue;
     const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
     if (current && isInterruptMarker(entry)) {
       current.stopped = true;
