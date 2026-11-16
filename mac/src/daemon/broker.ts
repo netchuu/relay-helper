@@ -9,6 +9,7 @@ import {
   payloadFor,
   promptKindFor,
   resolveChoices,
+  restoreCutChoices,
   restoreCutQuestion,
   stopHookOutput,
   validateQuestionAnswer,
@@ -206,7 +207,9 @@ export class Broker {
       const given =
         payload.kind === "question" ? restoreCutQuestion(payload.questions, answer.answers) : answer.answers;
       const answers =
-        payload.kind === "question" ? resolveChoices(payload.questions, given, answer.choices) : given;
+        payload.kind === "question"
+          ? resolveChoices(payload.questions, given, restoreCutChoices(payload.questions, answer.choices))
+          : given;
       forHook = { kind: "question", answers };
       const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };

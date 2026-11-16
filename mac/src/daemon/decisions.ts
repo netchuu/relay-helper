@@ -257,3 +257,17 @@ export function restoreCutQuestion(
     return answers;
   return { [only.question]: answers[key] as string };
 }
+
+/** The `choices` of a cut question's notification, keyed by the whole question like its `answers`. */
+export function restoreCutChoices(
+  questions: Question[],
+  choices: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (!choices) return choices;
+  const keys = Object.keys(choices);
+  const only = questions.length === 1 ? questions[0] : undefined;
+  if (!only || keys.length !== 1) return choices;
+  const key = keys[0] as string;
+  const mapped = Object.keys(restoreCutQuestion(questions, { [key]: "" }))[0];
+  return mapped === undefined || mapped === key ? choices : { [mapped]: choices[key] as number };
+}
