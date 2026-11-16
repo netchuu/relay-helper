@@ -55,6 +55,7 @@ let rpc: ReturnType<typeof createRpc>;
 let tools: string;
 let work: string;
 let inboxCalls: string[];
+let stopperRef: TurnStopper;
 
 const call = (method: string, params: unknown = {}) => rpc(method, params, "device:test");
 const stdinLines = (): { type: string; request?: { subtype: string } }[] => {
@@ -104,6 +105,7 @@ beforeEach(() => {
     timing: { inboxMs: 50, graceMs: 10, markerMs: 100, pollMs: 10 },
   });
   stopper.headless = headless;
+  stopperRef = stopper;
   rpc = createRpc({
     db,
     events,
@@ -172,4 +174,25 @@ test("a process that ignores the interrupt is ended, not left working", async ()
   expect(await headless.interrupt(ID, 150)).toBe("ended");
   expect(headless.has(ID)).toBe(false);
   expect(registry.get(ID)?.status).toBe("ended");
+});
+
+test("a turn that starts during Stop's grace keeps the session working and stoppable", async () => {
+  await resumed(null);
+  db.query("INSERT INTO turns (id, session_id, started_at, prompt) VALUES ('t1', ?, 1000, 'A')").run(ID);
+  // A longer grace than the other tests: Claude starts the queued message B inside it.
+  (stopperRef as unknown as { t: { graceMs: number } }).t.graceMs = 400;
+  const stopping = call("session.interrupt", { sessionId: ID });
+  await waitFor(() => interrupts().length === 1);
+  const now = Date.now();
+  db.query("UPDATE turns SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL").run(now, ID);
+  db.query("INSERT INTO turns (id, session_id, started_at, prompt) VALUES ('t2', ?, ?, 'B')").run(ID, now);
+  registry.setStatus(ID, "working");
+  await stopping;
+  const t2 = db.query("SELECT ended_at FROM turns WHERE id = 't2'").get() as { ended_at: number | null };
+  expect(t2.ended_at).toBeNull();
+  expect(registry.get(ID)?.status).toBe("working");
+  const again = (await call("session.interrupt", { sessionId: ID })) as { error?: unknown };
+  expect(again.error).toBeUndefined();
+  expect(interrupts()).toHaveLength(2);
+  headless.stopAll();
 });

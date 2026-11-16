@@ -176,9 +176,14 @@ export class TurnStopper {
       }
       await Bun.sleep(this.t.graceMs);
       const turnId = open ? this.endStopped(open.id) : null;
-      // No hook follows an interrupt; a process that had to be ended already made the session ended.
-      if (this.d.registry.get(sessionId)?.status !== "ended") this.d.registry.setStatus(sessionId, "idle");
-      return done("headless", turnId);
+      // No hook follows an interrupt; a process that had to be ended already made the session ended. A turn that
+      // opened meanwhile (the process started a queued message) is a new one: it stays working and stoppable.
+      const next = this.openTurn(sessionId) !== null;
+      if (!next && this.d.registry.get(sessionId)?.status !== "ended")
+        this.d.registry.setStatus(sessionId, "idle");
+      const result = done("headless", turnId);
+      if (next) this.lastEsc.delete(sessionId);
+      return result;
     }
 
     // 2. Esc in the session's terminal.
