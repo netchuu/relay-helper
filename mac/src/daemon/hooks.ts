@@ -55,7 +55,10 @@ export interface HookDeps {
 const NO_OUTPUT: HookReply = { stdout: "" };
 
 /** Text recently typed into a tmux pane on the phone's behalf, so it isn't mistaken for local presence. */
-const phoneTyped = new Map<string, { text: string; head: string; paths: string[]; at: number }>();
+const phoneTyped = new Map<
+  string,
+  { text: string; head: string; paths: string[]; at: number; notedAt: number; delivering: boolean }
+>();
 
 /** Whitespace squashed and zero-width characters dropped, so two renderings of one message compare equal. */
 function squash(t: string): string {
@@ -73,10 +76,32 @@ function typedHead(clean: string): string {
   return squash(splitAttachmentPaths(clean).body).slice(0, 40);
 }
 
-export function notePhoneTyped(sessionId: string, text: string): void {
+/** How long what the phone typed can still be matched to a prompt, for its photos (an unsent message submitted late). */
+const PHONE_TYPED_KEEP_MS = 30 * 60_000;
+
+/**
+ * `delivering`: the message is still waiting to be typed (the caller calls `phoneTypeDelivered` when `deliver`
+ * returns), so another prompt must not discard it and its age counts from when it was typed.
+ */
+export function notePhoneTyped(sessionId: string, text: string, delivering = false): void {
   const clean = cleanTypedText(text);
   const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
-  phoneTyped.set(sessionId, { text: clean, head: typedHead(clean), paths, at: Date.now() });
+  phoneTyped.set(sessionId, {
+    text: clean,
+    head: typedHead(clean),
+    paths,
+    at: Date.now(),
+    notedAt: Date.now(),
+    delivering,
+  });
+}
+
+/** The message `notePhoneTyped` stored was typed just now: its age starts here. */
+export function phoneTypeDelivered(sessionId: string, text: string): void {
+  const typed = phoneTyped.get(sessionId);
+  if (typed?.text !== cleanTypedText(text)) return;
+  typed.delivering = false;
+  typed.at = Date.now();
 }
 
 /** Forgets what `notePhoneTyped` stored when nothing was typed (queued, failed), so a Mac prompt can't match it. */
@@ -142,6 +167,17 @@ function matchesPhoneTyped(typed: { head: string; paths: string[] }, prompt: str
   if (s === "") return false;
   if (typed.head !== "") return s.includes(typed.head);
   return s.startsWith("[Image #") || typed.paths.some((p) => s.includes(squash(p)));
+}
+
+/**
+ * A stricter match for a prompt reported long after the phone typed (an unsent message submitted later): it must
+ * start with the caption (after any "[Image #N]" marks) and, when the phone typed files, show an image.
+ */
+function matchesLatePhoneTyped(typed: { head: string; paths: string[] }, prompt: string): boolean {
+  const s = squash(prompt);
+  if (typed.paths.length > 0 && !s.includes("[Image #") && !typed.paths.some((p) => s.includes(squash(p))))
+    return false;
+  return typed.head === "" || s.replace(/^(\[Image #\d+\]\s*)+/, "").startsWith(typed.head);
 }
 
 /** Whether the phone's text typed at `since` hasn't come back as a UserPromptSubmit hook yet (it isn't submitted). */
@@ -246,10 +282,26 @@ export class HookHandler {
           return NO_OUTPUT;
         }
         const typed = phoneTyped.get(sessionId);
-        let fromPhone = typed && Date.now() - typed.at < 15_000 && matchesPhoneTyped(typed, prompt);
+        // Whether this prompt is what the phone typed: the photo goes with it however late Claude Code reports it
+        // (an unsent message the person submits at the Mac later). Only a recent one counts as the phone's own
+        // typing for presence.
+        const age = typed ? Date.now() - typed.at : 0;
+        // Still being delivered: its age isn't known yet, so it counts as just typed.
+        const late = typed !== undefined && !typed.delivering && age >= 15_000;
+        const matched =
+          typed !== undefined &&
+          age < PHONE_TYPED_KEEP_MS &&
+          matchesPhoneTyped(typed, prompt) &&
+          // How strict the match is depends on how long ago the phone typed, delivered or not: a Mac prompt
+          // long after must not take the photo with a bare substring match.
+          (Date.now() - typed.notedAt < 15_000 || matchesLatePhoneTyped(typed, prompt));
+        let fromPhone = matched && typed !== undefined && !late;
         // The files the phone typed with this message: the prompt only says "[Image #N]" for them.
         let typedPaths: string[] = [];
-        if (fromPhone && typed) {
+        // Another prompt after the presence window: the typed message was dropped or replaced, so its photo is not
+        // waiting for a later prompt.
+        if (!system && typed && !matched && late) phoneTyped.delete(sessionId);
+        if (matched && typed) {
           phoneTyped.delete(sessionId);
           typedPaths = typed.paths;
         } else if (!system) {

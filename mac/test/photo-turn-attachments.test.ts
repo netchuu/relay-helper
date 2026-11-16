@@ -7,7 +7,14 @@ import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { dropPhoneTyped, type HookEnvelope, HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
+import {
+  dropPhoneTyped,
+  type HookEnvelope,
+  HookHandler,
+  notePhoneTyped,
+  phoneTypeDelivered,
+  phoneTypePending,
+} from "../src/daemon/hooks.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
@@ -196,4 +203,148 @@ test("dropPhoneTyped leaves an entry for other text", async () => {
   await s.hook("UserPromptSubmit", id, { prompt: "[Image #1]" });
   const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
   expect(ids(started?.attachments)).toEqual(["a1"]);
+});
+
+// Enter was lost, so the message sat typed but unsent; the person submits it at the Mac more than 15 s later.
+async function late(id: string, mid?: (s: ReturnType<typeof setup>) => Promise<void>) {
+  const s = setup(tmpDir());
+  await s.hook("SessionStart", id);
+  const path = s.photo(id, "a1");
+  notePhoneTyped(id, `look\n${path}`);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 16_000;
+  try {
+    await mid?.(s);
+    await s.hook("UserPromptSubmit", id, { prompt: "look [Image #1]" });
+    await s.hook("Stop", id, { last_assistant_message: "Done." });
+  } finally {
+    Date.now = realNow;
+  }
+  const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+  const done = s.seen.filter((e): e is Done => e.type === "turn.done").at(-1);
+  const turns = turnsOf(await s.call("session.turns", { sessionId: id, limit: 10 }));
+  const rows = (s.db.query("SELECT COUNT(*) AS n FROM turn_attachments").get() as { n: number }).n;
+  return { started, done, turns, rows };
+}
+
+test("a prompt reported 16 s after typing still lists the photo", async () => {
+  const r = await late("pt-late");
+  expect(ids(r.started?.attachments)).toEqual(["a1"]);
+  expect(ids(r.done?.turn.attachments)).toEqual(["a1"]);
+  expect(ids(r.turns[0]?.attachments)).toEqual(["a1"]);
+  expect(r.rows).toBe(1);
+});
+
+test("a late prompt gets nothing when another prompt came in between", async () => {
+  const r = await late("pt-late-other", async (s) => {
+    await s.hook("UserPromptSubmit", "pt-late-other", { prompt: "something else" });
+    await s.hook("Stop", "pt-late-other", { last_assistant_message: "Ok." });
+  });
+  expect(ids(r.started?.attachments) ?? []).toEqual([]);
+  expect(r.rows).toBe(0);
+});
+
+test("a late photo is used for one turn only", async () => {
+  const id = "pt-late-once";
+  const r = await late(id);
+  expect(r.rows).toBe(1);
+  const s = setup(tmpDir());
+  await s.hook("SessionStart", id);
+  const path = s.photo(id, "a1");
+  notePhoneTyped(id, `look\n${path}`);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 16_000;
+  try {
+    await s.hook("UserPromptSubmit", id, { prompt: "look [Image #1]" });
+    await s.hook("Stop", id, { last_assistant_message: "Done." });
+    await s.hook("UserPromptSubmit", id, { prompt: "look [Image #1]" });
+    await s.hook("Stop", id, { last_assistant_message: "Again." });
+  } finally {
+    Date.now = realNow;
+  }
+  const turns = turnsOf(await s.call("session.turns", { sessionId: id, limit: 10 }));
+  expect(turns.filter((t) => t.attachments?.length).length).toBe(1);
+});
+
+async function lateWith(id: string, sentText: (p: string) => string, prompt: string, afterMs: number) {
+  const s = setup(tmpDir());
+  await s.hook("SessionStart", id);
+  const path = s.photo(id, "a1");
+  notePhoneTyped(id, sentText(path));
+  const realNow = Date.now;
+  Date.now = () => realNow() + afterMs;
+  try {
+    await s.hook("UserPromptSubmit", id, { prompt });
+  } finally {
+    Date.now = realNow;
+  }
+  return s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+}
+
+test("a short caption inside another late Mac prompt doesn't take the photo", async () => {
+  const started = await lateWith("pt-late-short", (p) => `ok\n${p}`, "look at the logs", 16_000);
+  expect(ids(started?.attachments) ?? []).toEqual([]);
+});
+
+test("a late prompt with the caption but no image doesn't take the photo", async () => {
+  const started = await lateWith("pt-late-noimg", (p) => `fix this\n${p}`, "fix this", 120_000);
+  expect(ids(started?.attachments) ?? []).toEqual([]);
+});
+
+test("a late prompt that doesn't start with the caption doesn't take the photo", async () => {
+  const started = await lateWith(
+    "pt-late-mid",
+    (p) => `fix this\n${p}`,
+    "please fix this [Image #1]",
+    20_000,
+  );
+  expect(ids(started?.attachments) ?? []).toEqual([]);
+});
+
+test("a late prompt with an image placeholder first still takes the photo", async () => {
+  const started = await lateWith("pt-late-first", (p) => `fix this\n${p}`, "[Image #1] fix this", 20_000);
+  expect(ids(started?.attachments)).toEqual(["a1"]);
+});
+
+test("a Mac prompt while the phone's message is still being delivered keeps its entry", async () => {
+  const id = "pt-delivering";
+  const s = setup(tmpDir());
+  await s.hook("SessionStart", id);
+  const path = s.photo(id, "a1");
+  const text = `look\n${path}`;
+  notePhoneTyped(id, text, true);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 15_500;
+  try {
+    await s.hook("UserPromptSubmit", id, { prompt: "something else" });
+    expect(phoneTypePending(id, text)).toBe(true);
+    phoneTypeDelivered(id, text);
+    expect(phoneTypePending(id, text)).toBe(true);
+    await s.hook("Stop", id, { last_assistant_message: "Ok." });
+    Date.now = () => realNow() + 15_500 + 20_000;
+    await s.hook("UserPromptSubmit", id, { prompt: "look [Image #1]" });
+  } finally {
+    Date.now = realNow;
+  }
+  const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+  expect(ids(started?.attachments)).toEqual(["a1"]);
+});
+
+test("a Mac prompt that only contains the caption, long after a delivering message, doesn't take the photo", async () => {
+  const id = "pt-delivering-old";
+  const s = setup(tmpDir());
+  await s.hook("SessionStart", id);
+  const path = s.photo(id, "a1");
+  const text = `ok\n${path}`;
+  notePhoneTyped(id, text, true);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 16_000;
+  try {
+    await s.hook("UserPromptSubmit", id, { prompt: "look at the logs" });
+  } finally {
+    Date.now = realNow;
+  }
+  const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+  expect(ids(started?.attachments) ?? []).toEqual([]);
+  expect(phoneTypePending(id, text)).toBe(true);
 });

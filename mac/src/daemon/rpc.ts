@@ -30,7 +30,7 @@ import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import type { HeldReplies } from "./held.ts";
-import { dropPhoneTyped, notePhoneTyped, phoneTypePending } from "./hooks.ts";
+import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } from "./hooks.ts";
 import { DeliveryError, deliver, PHONE_PREFIX, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
@@ -680,7 +680,7 @@ export function createRpc(
       });
       const waited = Date.now() - arrived;
       // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
-      notePhoneTyped(sessionId, text);
+      notePhoneTyped(sessionId, text, true);
       // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
       const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`, { sendId });
       try {
@@ -699,6 +699,7 @@ export function createRpc(
           },
           d.typeOps,
         );
+        phoneTypeDelivered(sessionId, text);
         if (res.submitted === false) {
           const name = session.name ?? session.project ?? "the session";
           d.events.emit({

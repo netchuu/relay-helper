@@ -14,7 +14,7 @@ import { platform } from "../platform/index.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import type { HeldReplies } from "./held.ts";
-import { dropPhoneTyped, notePhoneTyped, phoneTypePending } from "./hooks.ts";
+import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } from "./hooks.ts";
 import {
   deliver,
   type HeadlessRoute,
@@ -233,7 +233,7 @@ export function deliverQueued(opts: {
     const { idleSeconds, locked } = pause
       ? await platform.presence.read({ tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [] })
       : { idleSeconds: null, locked: false };
-    notePhoneTyped(session.id, text);
+    notePhoneTyped(session.id, text, true);
     const watch = opts.held?.expect(session.id, `${PHONE_PREFIX}\n${text}`, { sendId: reply.sendId });
     let res: Awaited<ReturnType<typeof deliver>>;
     try {
@@ -251,6 +251,7 @@ export function deliverQueued(opts: {
         },
         opts.typeOps,
       );
+      phoneTypeDelivered(session.id, text);
     } catch (err) {
       watch?.cancel();
       // Nothing was typed: a prompt the person types at the Mac next must not match this message.
