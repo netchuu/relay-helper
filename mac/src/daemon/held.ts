@@ -39,7 +39,7 @@ export function forgetHeld(sessionId: string): void {
 /** Zero-width characters, CR and trailing blanks gone; the line breaks stay, they end the text in `seen`. */
 function squash(t: string): string {
   return t
-    .replace(/[​-‏⁠﻿]/g, "")
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g, "")
     .replace(/\r\n?/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
     .trim();

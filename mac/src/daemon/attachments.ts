@@ -97,7 +97,8 @@ export function checkName(raw: string): { name: string; saved: string } {
   const name = raw.normalize("NFC").trim();
   if (!name || name === "." || name.includes("..") || /[/\\]/.test(name)) throw badRequest(words.badName);
   // Control, line separator and bidi characters can make a name read differently from what it is.
-  if (/[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/u.test(name)) throw badRequest(words.badName);
+  if (/[\p{Cc}\p{Zl}\p{Zp}\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(name))
+    throw badRequest(words.badName);
   if (Buffer.byteLength(name, "utf8") > NAME_MAX_BYTES) throw badRequest(words.longName);
   return { name, saved: name.replace(/[^\p{L}\p{N}\p{M}._-]/gu, "_") };
 }
