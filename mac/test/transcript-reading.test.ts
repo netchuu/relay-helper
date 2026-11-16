@@ -385,6 +385,11 @@ describe("sanitizing a new recording: inputs", () => {
     expect(o.message.content).toBe("cat /Users/me/notes.txt");
   });
 
+  test("the home folder goes only as a whole folder, never as the start of another one", () => {
+    expect(out(entry("/Users/janet/y")).message.content).toBe("/Users/janet/y");
+    expect(out(entry("/Users/jane/y and /Users/jane")).message.content).toBe("/Users/me/y and /Users/me");
+  });
+
   test("the user name goes only when it is a whole word, and a one or two letter name is left alone", () => {
     expect(out(entry("jane janet ajane /Users/jane/x")).message.content).toBe("me janet ajane /Users/me/x");
     const short = { ...ctx, user: "jo", home: "" };

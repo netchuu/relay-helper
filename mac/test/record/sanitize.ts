@@ -46,7 +46,12 @@ function scrubString(s: string, c: Context): string {
     out = out.split(cwd).join(FIXTURE_CWD);
     out = out.split(cwd.replace(/[/.]/g, "-")).join(FIXTURE_CWD.replace(/[/.]/g, "-"));
   }
-  if (c.home) out = out.split(c.home).join(FIXTURE_HOME);
+  // Only the exact folder: "/Users/jane" must not cut "/Users/janet" in the middle.
+  if (c.home)
+    out = out.replace(
+      new RegExp(`${c.home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.-])`, "g"),
+      FIXTURE_HOME,
+    );
   if (c.user.length > 2) out = out.replace(new RegExp(`\\b${c.user}\\b`, "g"), "me");
   out = out.split(c.sessionId).join(c.fixedSessionId);
   // An email address, whatever it is.
