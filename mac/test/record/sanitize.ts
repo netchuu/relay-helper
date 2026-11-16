@@ -75,6 +75,7 @@ export function sanitizeEntry(line: string, c: Context): string | null {
   } catch {
     return null;
   }
+  if (raw === null) return null;
   const type = raw.type;
   if (typeof type !== "string" || !TYPES.has(type)) return null;
   // System entries: only the turn bookkeeping the helper looks at.

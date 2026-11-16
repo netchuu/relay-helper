@@ -288,6 +288,7 @@ describe("redaction of a new recording", () => {
     expect(sanitizeEntry(JSON.stringify({ type: "api-request", params: {} }), ctx)).toBeNull();
     expect(sanitizeEntry(JSON.stringify({ type: "system", subtype: "informational" }), ctx)).toBeNull();
     expect(sanitizeEntry("not json", ctx)).toBeNull();
+    for (const line of ["null", "42", "[]", '"str"', "true"]) expect(sanitizeEntry(line, ctx)).toBeNull();
     const kept = JSON.parse(
       sanitizeEntry(
         entry("hi", { userType: "external", entrypoint: "cli", requestId: "req_1" }),
