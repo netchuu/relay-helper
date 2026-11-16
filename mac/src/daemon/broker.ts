@@ -187,6 +187,7 @@ export class Broker {
 
     // What the hook gets: a picked option's index (`choices`) stands for its full label.
     let forHook: Answer = answer;
+    let hookChoices: Record<string, number> | undefined;
     if (answer.kind === "question") {
       const payload = JSON.parse(row.payload_json) as PromptPayload;
       // A long question's notification answers under the cut text the push carried.
@@ -197,6 +198,7 @@ export class Broker {
           ? resolveChoices(payload.questions, given, restoreCutChoices(payload.questions, answer.choices))
           : given;
       forHook = { kind: "question", answers };
+      if (payload.kind === "question") hookChoices = restoreCutChoices(payload.questions, answer.choices);
       const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };
     }
@@ -207,6 +209,7 @@ export class Broker {
         JSON.parse(row.tool_input) as Record<string, unknown>,
         row.suggestions ? (JSON.parse(row.suggestions) as unknown[]) : null,
         forHook,
+        hookChoices,
       );
     } catch (err) {
       if (err instanceof AnswerMismatchError) return { ok: false, code: "bad_request", message: err.message };

@@ -102,6 +102,7 @@ export function hookOutputFor(
   toolInput: Record<string, unknown>,
   suggestions: unknown[] | null,
   answer: Answer,
+  choices?: Record<string, number>,
 ): string {
   if (answer.kind !== kind) throw new AnswerMismatchError(`expected a ${kind} answer, got ${answer.kind}`);
   let decision: Record<string, unknown>;
@@ -109,7 +110,10 @@ export function hookOutputFor(
     case "question":
       decision = {
         behavior: "allow",
-        updatedInput: { ...toolInput, answers: originalAnswers(toolInput.questions, answer.answers) },
+        updatedInput: {
+          ...toolInput,
+          answers: originalAnswers(toolInput.questions, answer.answers, choices),
+        },
       };
       break;
     case "plan":
@@ -161,6 +165,7 @@ export function stopHookOutput(): string {
 export function originalAnswers(
   rawQuestions: unknown,
   answers: Record<string, string>,
+  choices?: Record<string, number>,
 ): Record<string, string> {
   if (!Array.isArray(rawQuestions)) return answers;
   const out: Record<string, string> = { ...answers };
@@ -174,7 +179,10 @@ export function originalAnswers(
       .filter((l): l is string => typeof l === "string");
     const byShown = new Map<string, string>();
     for (const l of labels) if (!byShown.has(redact(l))) byShown.set(redact(l), l);
-    let restored = byShown.get(value);
+    // Options equal after redaction share one text; a notification's index still names its own option.
+    const index = choices?.[shown] ?? choices?.[q.question];
+    const byIndex = index === undefined ? undefined : labels[index];
+    let restored = byIndex !== undefined && redact(byIndex) === value ? byIndex : byShown.get(value);
     if (restored === undefined && q.multiSelect !== false && value.includes(", "))
       restored = value
         .split(", ")
