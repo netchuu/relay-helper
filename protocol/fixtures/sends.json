@@ -83,6 +83,16 @@
       "stop": true
     }
   ],
+  "startedEvent": {
+    "seq": 55,
+    "ts": 1793620000000,
+    "type": "turn.started",
+    "turnId": "t_sent",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "Ship it",
+    "startedAt": 1793620000000,
+    "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
+  },
   "sessionHeld": {
     "id": "4375b77a-1111-2222-3333-444455556666",
     "name": "web-shop",

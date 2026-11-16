@@ -658,7 +658,7 @@ export function createRpc(
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
     if (d.headless?.has(sessionId)) {
-      notePhoneTyped(sessionId, text);
+      notePhoneTyped(sessionId, text, false, sendId);
       return await deliver(
         session,
         text,
@@ -680,7 +680,7 @@ export function createRpc(
       });
       const waited = Date.now() - arrived;
       // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
-      notePhoneTyped(sessionId, text, true);
+      notePhoneTyped(sessionId, text, true, sendId);
       // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
       const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`, { sendId });
       try {

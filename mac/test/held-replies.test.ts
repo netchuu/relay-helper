@@ -35,7 +35,7 @@ const EXPIRE = 400;
 // One session id per test: the held and mode state is kept per id, and a timer left over from an earlier test must not touch this one.
 let counter = 0;
 
-async function setup() {
+async function setup(headless?: { has: () => boolean; send: () => Promise<void> }) {
   const sid = `s${++counter}`;
   platform.presence.read = async () => ({ idleSeconds: 60, locked: false, source: "test" });
   const dir = mkdtempSync(join(tmpdir(), "relay-held-"));
@@ -91,6 +91,7 @@ async function setup() {
     config,
     stopper,
     held,
+    headless,
   } as unknown as RpcDeps);
   const env: HookEnv = { socket: path, token: "tok", claudePid: 4242, termProgram: "vscode" };
   const hook = (event: string, fields: Record<string, unknown> = {}) =>
@@ -277,6 +278,35 @@ describe("a reply through the inbox", () => {
       ["waiting", "id-q"],
       ["delivered", "id-q"],
     ]);
+  });
+
+  test("the turn a sent message starts names the send, however it got there", async () => {
+    const t = await setup();
+    const started = () =>
+      t.seen.filter((e) => e.type === "turn.started").map((e) => (e as { sendId?: string }).sendId);
+    await t.hook("Stop");
+    await t.rpc("session.send", { sessionId: t.sid, text: "First", sendId: "id-1" }, "phone");
+    await t.arrives("First");
+    expect(started()).toEqual(["id-1"]);
+    await t.hook("Stop");
+    t.queue.add(t.sid, "Later", Date.now(), "unlock", "id-q");
+    await t.queue.drain(
+      false,
+      deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }),
+    );
+    await t.arrives("Later");
+    expect(started()).toEqual(["id-1", "id-q"]);
+  });
+
+  test("a session the helper runs names the send on its turn too", async () => {
+    const t = await setup({ has: () => true, send: async () => {} });
+    await t.hook("Stop");
+    const res = await t.rpc("session.send", { sessionId: t.sid, text: "Go", sendId: "id-h" }, "phone");
+    expect(SendResult.parse((res as { result: unknown }).result)).toEqual({ via: "headless" });
+    await t.hook("UserPromptSubmit", { prompt: "Go" });
+    expect(
+      t.seen.filter((e) => e.type === "turn.started").map((e) => (e as { sendId?: string }).sendId),
+    ).toEqual(["id-h"]);
   });
 
   test("the permission mode stays on the session", async () => {

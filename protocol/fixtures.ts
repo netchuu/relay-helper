@@ -615,6 +615,17 @@ const sends = {
     { seq: 62, ts: now, type: "reply.held", sessionId: session.id, state: "waiting", stop: true },
     { seq: 63, ts: now, type: "reply.held", sessionId: session.id, state: "expired", stop: true },
   ]),
+  // The turn that message started names it, so the phone settles the right bubble however the two clocks differ.
+  startedEvent: RelayEvent.parse({
+    seq: 55,
+    ts: now,
+    type: "turn.started",
+    turnId: "t_sent",
+    sessionId: session.id,
+    prompt: "Ship it",
+    startedAt: now,
+    sendId,
+  }),
   // A session whose replies wait at the Mac now, and one that reports its permission mode beforehand.
   sessionHeld: Session.parse({ ...session, heldAtMac: true, permissionMode: "bypassPermissions" }),
   // The phone's Stop held at the Mac: nothing stopped.

@@ -363,6 +363,19 @@ describe("a message Claude Code adds itself: state around it", () => {
     expect(s.startedPrompts(id)).toEqual(["Rewrite the checkout", "and add tests for the cart"]);
   });
 
+  test("turn.started names the phone message that started it, and only that", async () => {
+    const s = setup();
+    const id = sid();
+    const sendIds = () =>
+      s.seen
+        .filter((e) => e.type === "turn.started" && e.sessionId === id)
+        .map((e) => (e as { sendId?: string }).sendId);
+    notePhoneTyped(id, "run the tests", true, "send-1");
+    await s.hook("UserPromptSubmit", id, { prompt: "run the tests" });
+    await s.hook("UserPromptSubmit", id, { prompt: "typed at the Mac" });
+    expect(sendIds()).toEqual(["send-1", undefined]);
+  });
+
   describe("text the phone sent that differs from what is typed", () => {
     const cases: [string, string, string][] = [
       ["CRLF", "first line\r\nsecond line", "first line\nsecond line"],

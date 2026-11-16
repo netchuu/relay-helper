@@ -514,6 +514,8 @@ export const EventBody = z.discriminatedUnion("type", [
     startedAt: z.number(),
     /** Attachments whose paths are in `prompt`, as in `Turn.attachments`; absent when none. */
     attachments: z.array(AttachmentRef).optional(),
+    /** The `sendId` of the phone message that started it, when it came from the phone and the helper knows; absent otherwise. */
+    sendId: z.string().optional(),
   }),
   /** What Claude is doing now in a running turn (live form). At most one a second per session; never pushed. */
   z.object({ type: z.literal("turn.step"), sessionId: z.string(), turnId: z.string(), step: TurnStep }),

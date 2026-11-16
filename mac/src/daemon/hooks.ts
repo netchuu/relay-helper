@@ -57,7 +57,15 @@ const NO_OUTPUT: HookReply = { stdout: "" };
 /** Text recently typed into a tmux pane on the phone's behalf, so it isn't mistaken for local presence. */
 const phoneTyped = new Map<
   string,
-  { text: string; head: string; paths: string[]; at: number; notedAt: number; delivering: boolean }
+  {
+    text: string;
+    head: string;
+    paths: string[];
+    at: number;
+    notedAt: number;
+    delivering: boolean;
+    sendId?: string;
+  }
 >();
 
 /** Whitespace squashed and zero-width characters dropped, so two renderings of one message compare equal. */
@@ -83,7 +91,7 @@ const PHONE_TYPED_KEEP_MS = 30 * 60_000;
  * `delivering`: the message is still waiting to be typed (the caller calls `phoneTypeDelivered` when `deliver`
  * returns), so another prompt must not discard it and its age counts from when it was typed.
  */
-export function notePhoneTyped(sessionId: string, text: string, delivering = false): void {
+export function notePhoneTyped(sessionId: string, text: string, delivering = false, sendId?: string): void {
   const clean = cleanTypedText(text);
   const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
   phoneTyped.set(sessionId, {
@@ -93,6 +101,7 @@ export function notePhoneTyped(sessionId: string, text: string, delivering = fal
     at: Date.now(),
     notedAt: Date.now(),
     delivering,
+    ...(sendId ? { sendId } : {}),
   });
 }
 
@@ -298,12 +307,14 @@ export class HookHandler {
         let fromPhone = matched && typed !== undefined && !late;
         // The files the phone typed with this message: the prompt only says "[Image #N]" for them.
         let typedPaths: string[] = [];
+        let typedSendId: string | undefined;
         // Another prompt after the presence window: the typed message was dropped or replaced, so its photo is not
         // waiting for a later prompt.
         if (!system && typed && !matched && late) phoneTyped.delete(sessionId);
         if (matched && typed) {
           phoneTyped.delete(sessionId);
           typedPaths = typed.paths;
+          typedSendId = typed.sendId;
         } else if (!system) {
           const launched = takePhoneLaunch(str("cwd") ?? session.cwd, prompt);
           if (launched) {
@@ -320,6 +331,7 @@ export class HookHandler {
           session.transcript ?? str("transcript_path") ?? null,
           session.cwd,
           attachmentIdsAtPaths(this.d.db, sessionId, typedPaths),
+          typedSendId,
         );
         inboxStop?.finish();
         this.d.registry.setStatus(
@@ -533,8 +545,9 @@ export class HookHandler {
     transcript: string | null,
     cwd: string | null,
     attachmentIds: string[] = [],
+    sendId?: string,
   ): string {
-    const { turnId, startedAt } = this.startTurn(sessionId, prompt, attachmentIds);
+    const { turnId, startedAt } = this.startTurn(sessionId, prompt, attachmentIds, sendId);
     this.steps.turnStarted(sessionId, turnId);
     // The turn's own start time, so live and finished thinking lines are timed from the same moment.
     this.messages.turnStarted(sessionId, turnId, transcript, startedAt, cwd);
@@ -545,6 +558,7 @@ export class HookHandler {
     sessionId: string,
     prompt: string,
     attachmentIds: string[],
+    sendId?: string,
   ): { turnId: string; startedAt: number } {
     const now = Date.now();
     this.d.db
@@ -564,6 +578,7 @@ export class HookHandler {
       prompt: shown,
       startedAt: now,
       ...attachmentFields(this.d.db, sessionId, shown, turnId),
+      ...(sendId ? { sendId } : {}),
     });
     return { turnId, startedAt: now };
   }

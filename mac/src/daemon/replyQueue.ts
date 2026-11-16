@@ -233,7 +233,7 @@ export function deliverQueued(opts: {
     const { idleSeconds, locked } = pause
       ? await platform.presence.read({ tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [] })
       : { idleSeconds: null, locked: false };
-    notePhoneTyped(session.id, text, true);
+    notePhoneTyped(session.id, text, true, reply.sendId);
     const watch = opts.held?.expect(session.id, `${PHONE_PREFIX}\n${text}`, { sendId: reply.sendId });
     let res: Awaited<ReturnType<typeof deliver>>;
     try {
