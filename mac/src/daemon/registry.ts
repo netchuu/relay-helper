@@ -542,6 +542,10 @@ export class Registry {
     }
     const liveIds = new Set(live.map((s) => s.sessionId));
     for (const s of live) {
+      // Ended while the check ran: the list is older than the end, and applying it would revive the session.
+      // (A hook that really resumed it has already moved it out of "ended".)
+      if (this.get(s.sessionId)?.status === "ended" && (this.touchedAt.get(s.sessionId) ?? 0) > askedAt)
+        continue;
       const kind: SessionKind = s.kind === "background" ? "background" : "interactive";
       const { session, created } = this.touch(
         s.sessionId,
