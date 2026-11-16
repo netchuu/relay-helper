@@ -22,7 +22,7 @@ import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps
 import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
 import { head } from "./text.ts";
-import { answerOwner, interruptedTurn, isSystemMessage } from "./transcript.ts";
+import { answerOwner, interruptedTurn, isSystemMessage, transcriptPathFor } from "./transcript.ts";
 import { forgetUsage, noteUsageAll, parseUsage } from "./usage.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
@@ -454,6 +454,37 @@ export class HookHandler {
       default:
         return NO_OUTPUT;
     }
+  }
+
+  /** After a restart: follows the turns the database still has open, so a running turn keeps its steps and messages. */
+  resumeOpenTurns(): number {
+    const rows = this.d.db
+      .query<{ id: string; turn_id: string }, []>(
+        `SELECT t.session_id AS id, t.id AS turn_id FROM turns t
+         WHERE t.ended_at IS NULL
+           AND t.started_at = (SELECT MAX(started_at) FROM turns WHERE session_id = t.session_id)`,
+      )
+      .all();
+    let armed = 0;
+    for (const row of rows) {
+      const session = this.d.registry.get(row.id);
+      if (!session || (session.status !== "working" && session.status !== "waiting")) continue;
+      const startedAt =
+        this.d.db
+          .query<{ started_at: number | null }, [string]>("SELECT started_at FROM turns WHERE id = ?")
+          .get(row.turn_id)?.started_at ?? Date.now();
+      this.steps.turnStarted(row.id, row.turn_id);
+      this.messages.turnStarted(
+        row.id,
+        row.turn_id,
+        transcriptPathFor(session),
+        startedAt,
+        session.cwd,
+        true,
+      );
+      armed++;
+    }
+    return armed;
   }
 
   /** A permission request that doesn't come from a hook (a process the helper owns): the same prompt and status. */

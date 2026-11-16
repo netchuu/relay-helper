@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  anySessionWorking,
   brewCandidates,
   compareVersions,
   parseVersion,
@@ -154,5 +155,55 @@ describe("self-update from Homebrew", () => {
       "/home/linuxbrew/.linuxbrew/bin/relay",
       "/home/a/.linuxbrew/bin/relay",
     ]);
+  });
+});
+
+describe("a working session holds the update back", () => {
+  const bin = () => fakeRelay("work", "0.6.0");
+
+  test("which sessions count as working", () => {
+    const status = (s: string) => [{ status: s }];
+    expect(anySessionWorking([])).toBe(false);
+    expect(anySessionWorking(status("idle"))).toBe(false);
+    expect(anySessionWorking(status("ended"))).toBe(false);
+    expect(anySessionWorking(status("working"))).toBe(true);
+    expect(anySessionWorking(status("waiting"))).toBe(true);
+    expect(anySessionWorking([{ status: "idle" }, { status: "working" }])).toBe(true);
+  });
+
+  test("it waits while a session works and goes ahead after the deadline", async () => {
+    let now = 1_000;
+    const { u, exited } = updater([bin()], { working: () => true, workWaitMs: 60_000, now: () => now });
+    expect(await u.check()).toBe("busy");
+    now += 59_000;
+    expect(await u.check()).toBe("busy");
+    expect(exited()).toBe(0);
+    now += 2_000;
+    expect(await u.check()).toBe("updated");
+    expect(exited()).toBe(1);
+  });
+
+  test("it goes ahead as soon as the session is idle, and the wait starts over next time", async () => {
+    let now = 1_000;
+    let working = true;
+    const { u, exited } = updater([bin()], { working: () => working, workWaitMs: 60_000, now: () => now });
+    expect(await u.check()).toBe("busy");
+    working = false;
+    expect(await u.check()).toBe("updated");
+    expect(exited()).toBe(1);
+  });
+
+  test("an open prompt holds the update past the deadline", async () => {
+    let now = 1_000;
+    const { u, exited } = updater([bin()], {
+      busy: () => true,
+      working: () => true,
+      workWaitMs: 60_000,
+      now: () => now,
+    });
+    expect(await u.check()).toBe("busy");
+    now += 120_000;
+    expect(await u.check()).toBe("busy");
+    expect(exited()).toBe(0);
   });
 });

@@ -26,11 +26,24 @@ export interface SelfUpdateDeps {
   restartsOnExit: boolean;
   /** True while a prompt waits for an answer: a restart would drop it. */
   busy(): boolean;
+  /** True while a session is working: a restart would cut its turn short. Only waited for up to `workWaitMs`. */
+  working?(): boolean;
+  /** How long a working session holds the update back (WORK_WAIT_MS). */
+  workWaitMs?: number;
+  /** The time now, for tests. */
+  now?(): number;
   /** Ends the daemon so the service manager starts the new version. */
   exit(): void;
 }
 
 export const CHECK_EVERY_MS = 5 * 60_000;
+/** After this long with a session still working, the update goes ahead anyway. */
+export const WORK_WAIT_MS = 30 * 60_000;
+
+/** Whether any session is mid-turn (one the helper runs, or any other), from the registry's statuses. */
+export function anySessionWorking(sessions: { status: string }[]): boolean {
+  return sessions.some((s) => s.status === "working" || s.status === "waiting");
+}
 
 /** Homebrew's bin directories on macOS (Apple silicon, Intel) and Linux. */
 export function brewCandidates(env: NodeJS.ProcessEnv = process.env, home = homedir()): string[] {
@@ -75,6 +88,8 @@ export class SelfUpdater {
   /** Set once the new version is installed but the restart is still waiting for a prompt to be answered. */
   private installed: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** When the update first had to wait for working sessions. */
+  private waitingSince: number | null = null;
 
   constructor(private readonly deps: SelfUpdateDeps) {}
 
@@ -118,7 +133,7 @@ export class SelfUpdater {
     if (this.installed) return this.restartWhenIdle(this.installed);
     const newer = await this.findNewer();
     if (!newer) return "none";
-    if (this.deps.busy()) return "busy"; // try again on the next tick
+    if (this.blocked()) return "busy"; // try again on the next tick
     this.updating = true;
     log.info("updating the helper from Homebrew", { from: this.deps.current, to: newer.version });
     const res = await this.deps.run([newer.bin, "install", "--no-service", "--from-update"]);
@@ -137,9 +152,22 @@ export class SelfUpdater {
     return this.restartWhenIdle(newer.version);
   }
 
+  private blocked(): boolean {
+    if (this.deps.busy()) return true;
+    if (!this.deps.working?.()) {
+      this.waitingSince = null;
+      return false;
+    }
+    const now = (this.deps.now ?? Date.now)();
+    this.waitingSince ??= now;
+    if (now - this.waitingSince < (this.deps.workWaitMs ?? WORK_WAIT_MS)) return true;
+    log.info("updating while sessions are still working: waited long enough");
+    return false;
+  }
+
   /** The new version is installed; restart only when no prompt waits (one may have opened during the install). */
   private restartWhenIdle(version: string): "busy" | "updated" {
-    if (this.deps.busy()) return "busy"; // the next tick tries again
+    if (this.blocked()) return "busy"; // the next tick tries again
     log.info("helper updated; restarting on the new version", { to: version });
     this.deps.exit();
     return "updated";

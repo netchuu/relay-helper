@@ -28,7 +28,7 @@ import { RelayLink } from "./relayLink.ts";
 import { RelayApns, RelayFcm } from "./relayPush.ts";
 import { deliverQueued, ReplyQueue } from "./replyQueue.ts";
 import { createRpc } from "./rpc.ts";
-import { brewCandidates, SelfUpdater, underServiceManager } from "./selfUpdate.ts";
+import { anySessionWorking, brewCandidates, SelfUpdater, underServiceManager } from "./selfUpdate.ts";
 import { StepTracker } from "./steps.ts";
 import { TurnStopper } from "./stop.ts";
 import { SuggestionWatcher } from "./suggestion.ts";
@@ -151,6 +151,7 @@ export async function runDaemon(): Promise<void> {
     suggestions,
   };
   const hooks = new HookHandler(deps);
+  hooks.resumeOpenTurns();
   const rpc = createRpc(deps);
 
   // Prompts from before a restart have no waiting hook any more; their terminals still show the dialog.
@@ -231,6 +232,7 @@ export async function runDaemon(): Promise<void> {
     },
     restartsOnExit: underServiceManager(),
     busy: () => broker.listOpen().length > 0,
+    working: () => anySessionWorking(registry.list()),
     exit: () => shutdown("self-update", 75),
   });
   // A release build only: from source, `relay install` builds the checkout instead.

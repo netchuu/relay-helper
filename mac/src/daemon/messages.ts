@@ -196,13 +196,15 @@ export class MessageTracker {
     path: string | null,
     startedAt = Date.now(),
     cwd: string | null = null,
+    resumed = false,
   ): void {
     this.clear(sessionId);
     const state: Following = {
       turnId,
       path,
       startedAt,
-      offset: path ? sizeOf(path) : 0,
+      // A turn found open after a restart already has lines in the transcript; read() skips those before startedAt.
+      offset: path && !resumed ? sizeOf(path) : 0,
       partial: Buffer.alloc(0),
       ids: new Set(),
       sent: [],

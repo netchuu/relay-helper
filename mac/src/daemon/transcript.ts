@@ -10,7 +10,8 @@ import { TranscriptSteps, timelineFields } from "./steps.ts";
 
 /** Past turns read (redacted, read-only) from Claude Code's transcript, for sessions Relay didn't record. */
 
-const PROJECTS = join(homedir(), ".claude", "projects");
+// Read per call: Bun's homedir() ignores a HOME set after start, which tests rely on.
+const projectsDir = () => join(process.env.HOME || homedir(), ".claude", "projects");
 /** Large transcripts are read from the end: the recent turns are what the phone shows. */
 const TAIL_BYTES = 6 * 1024 * 1024;
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -26,13 +27,17 @@ export function transcriptPathFor(session: {
 }): string | null {
   const candidates = [session.transcript];
   if (SESSION_ID.test(session.id)) {
-    candidates.push(join(PROJECTS, session.cwd.replace(/[^A-Za-z0-9-]/g, "-"), `${session.id}.jsonl`));
+    candidates.push(join(projectsDir(), session.cwd.replace(/[^A-Za-z0-9-]/g, "-"), `${session.id}.jsonl`));
   }
   for (const candidate of candidates) {
     if (!candidate) continue;
     try {
       const real = realpathSync(candidate);
-      if (real.startsWith(`${realpathSync(PROJECTS)}/`) && real.endsWith(".jsonl") && statSync(real).isFile())
+      if (
+        real.startsWith(`${realpathSync(projectsDir())}/`) &&
+        real.endsWith(".jsonl") &&
+        statSync(real).isFile()
+      )
         return real;
     } catch {
       // Missing: try the next one.
