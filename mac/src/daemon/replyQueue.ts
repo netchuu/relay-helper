@@ -46,6 +46,8 @@ export interface QueuedReply {
   text: string;
   createdAt: number;
   waitsFor: WaitsFor;
+  /** The phone's id for the message, when it sent one; held-reply events carry it. */
+  sendId?: string;
 }
 
 /** The reply was typed into the prompt but never submitted, even after Enter again. */
@@ -65,10 +67,18 @@ export class ReplyQueue {
     private readonly registry: Registry,
   ) {}
 
-  add(sessionId: string, text: string, now = Date.now(), waitsFor: WaitsFor = "unlock"): void {
+  add(
+    sessionId: string,
+    text: string,
+    now = Date.now(),
+    waitsFor: WaitsFor = "unlock",
+    sendId?: string,
+  ): void {
     this.db
-      .query("INSERT INTO queued_replies (session_id, text, created_at, waits_for) VALUES (?, ?, ?, ?)")
-      .run(sessionId, text, now, waitsFor);
+      .query(
+        "INSERT INTO queued_replies (session_id, text, created_at, waits_for, send_id) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(sessionId, text, now, waitsFor, sendId ?? null);
   }
 
   reasonOf(sessionId: string): WaitReason | undefined {
@@ -89,13 +99,21 @@ export class ReplyQueue {
       sessionId
         ? this.db.query("SELECT * FROM queued_replies WHERE session_id = ? ORDER BY id").all(sessionId)
         : this.db.query("SELECT * FROM queued_replies ORDER BY id").all()
-    ) as { id: number; session_id: string; text: string; created_at: number; waits_for: string | null }[];
+    ) as {
+      id: number;
+      session_id: string;
+      text: string;
+      created_at: number;
+      waits_for: string | null;
+      send_id: string | null;
+    }[];
     return rows.map((r) => ({
       id: r.id,
       sessionId: r.session_id,
       text: r.text,
       createdAt: r.created_at,
       waitsFor: r.waits_for === "pause" ? "pause" : "unlock",
+      ...(r.send_id ? { sendId: r.send_id } : {}),
     }));
   }
 
@@ -216,7 +234,7 @@ export function deliverQueued(opts: {
       ? await platform.presence.read({ tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [] })
       : { idleSeconds: null, locked: false };
     notePhoneTyped(session.id, text);
-    const watch = opts.held?.expect(session.id, `${PHONE_PREFIX}\n${text}`);
+    const watch = opts.held?.expect(session.id, `${PHONE_PREFIX}\n${text}`, { sendId: reply.sendId });
     let res: Awaited<ReturnType<typeof deliver>>;
     try {
       res = await deliver(

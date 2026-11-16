@@ -55,14 +55,16 @@
       "ts": 1793620000000,
       "type": "reply.held",
       "sessionId": "4375b77a-1111-2222-3333-444455556666",
-      "state": "waiting"
+      "state": "waiting",
+      "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
     },
     {
       "seq": 61,
       "ts": 1793620000000,
       "type": "reply.held",
       "sessionId": "4375b77a-1111-2222-3333-444455556666",
-      "state": "delivered"
+      "state": "delivered",
+      "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
     },
     {
       "seq": 62,

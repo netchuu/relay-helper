@@ -173,6 +173,20 @@ const MIGRATIONS: string[] = [
      position      INTEGER NOT NULL,
      PRIMARY KEY (turn_id, position)
    );`,
+  // 18: the phone's id of a queued reply, so a held one is reported under it when it is typed in later.
+  // Rebuilt, so it also runs on a database that already has the column.
+  `CREATE TABLE queued_replies_18 (
+     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+     session_id TEXT NOT NULL,
+     text       TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     waits_for  TEXT,
+     send_id    TEXT
+   );
+   INSERT INTO queued_replies_18 (id, session_id, text, created_at, waits_for)
+     SELECT id, session_id, text, created_at, waits_for FROM queued_replies;
+   DROP TABLE queued_replies;
+   ALTER TABLE queued_replies_18 RENAME TO queued_replies;`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

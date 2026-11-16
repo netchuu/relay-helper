@@ -321,7 +321,7 @@ export function createRpc(
           } satisfies SendResult;
         }
       }
-      const sending = send(sessionId, message, ids, actor);
+      const sending = send(sessionId, message, ids, actor, sendId);
       return await (sendId ? sent.track(sessionId, sendId, sending) : sending);
     },
 
@@ -552,6 +552,7 @@ export function createRpc(
     message: string,
     ids: string[] | undefined,
     actor: string,
+    sendId?: string,
   ): Promise<SendResult> {
     const arrived = Date.now();
     const withFiles = (ids?.length ?? 0) > 0;
@@ -593,7 +594,7 @@ export function createRpc(
         for (const id of ids ?? []) held.set(id, done);
       }
       try {
-        const res = await sendNow(session, text, arrived);
+        const res = await sendNow(session, text, arrived, sendId);
         if (files > 0 && res.via === "socket")
           d.events.emit({
             type: "session.notice",
@@ -648,6 +649,7 @@ export function createRpc(
     session: SessionRecord,
     text: string,
     arrived: number,
+    sendId?: string,
   ): Promise<{ via: string; reason?: WaitReason; heldAtMac?: true }> {
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
@@ -663,7 +665,7 @@ export function createRpc(
     const waiting = d.replies?.list(sessionId) ?? [];
     // Replies already waiting go first: keep the order the person sent them in.
     if (d.replies && waiting.length > 0) {
-      d.replies.add(sessionId, text, arrived, waiting[waiting.length - 1]?.waitsFor);
+      d.replies.add(sessionId, text, arrived, waiting[waiting.length - 1]?.waitsFor, sendId);
       return queued(d.replies.reasonOf(sessionId));
     }
     const timing = d.pauseWait ?? INLINE_PAUSE_WAIT;
@@ -676,7 +678,7 @@ export function createRpc(
       // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
       notePhoneTyped(sessionId, text);
       // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
-      const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`);
+      const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`, { sendId });
       try {
         const res = await deliver(
           session,
@@ -710,7 +712,7 @@ export function createRpc(
         // Nothing was typed: a prompt the person types at the Mac next must not match this message.
         dropPhoneTyped(sessionId, text);
         if (err instanceof WaitForUnlock && d.replies) {
-          d.replies.add(sessionId, text, arrived, "unlock");
+          d.replies.add(sessionId, text, arrived, "unlock", sendId);
           d.replies.setReason(sessionId, "locked");
           return queued("locked");
         }
@@ -725,7 +727,7 @@ export function createRpc(
           continue;
         }
         log.info("waiting to type", { sessionId, route: err.route, reason: err.reason });
-        d.replies.add(sessionId, text, arrived, "pause");
+        d.replies.add(sessionId, text, arrived, "pause", sendId);
         const why = reasonOfPause(err);
         if (why) d.replies.setReason(sessionId, why);
         return queued(why ?? undefined);

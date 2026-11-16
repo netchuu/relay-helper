@@ -62,6 +62,8 @@ function containsWhole(prompt: string, text: string): boolean {
 interface Watched {
   text: string;
   stop: boolean;
+  /** The phone's `sendId` for the message, named in its `reply.held` events. */
+  sendId?: string;
   state: "pending" | "held";
   /** Set while the session works: the message is judged when its turn ends. */
   afterTurn: boolean;
@@ -108,10 +110,11 @@ export class HeldReplies {
   }
 
   /** Call before posting `text` to the session's inbox, so a hook that races the post is still seen. */
-  expect(sessionId: string, text: string, opts: { stop?: boolean } = {}): Expectation {
+  expect(sessionId: string, text: string, opts: { stop?: boolean; sendId?: string } = {}): Expectation {
     const entry: Watched = {
       text: squash(text),
       stop: opts.stop === true,
+      ...(opts.sendId ? { sendId: opts.sendId } : {}),
       state: "pending",
       afterTurn: isBusy(this.d.registry.get(sessionId)?.status) && !opts.stop,
     };
@@ -189,6 +192,7 @@ export class HeldReplies {
       sessionId,
       state: "waiting",
       ...(entry.stop ? { stop: true } : {}),
+      ...(entry.sendId ? { sendId: entry.sendId } : {}),
     });
   }
 
@@ -223,6 +227,12 @@ export class HeldReplies {
   }
 
   private report(sessionId: string, entry: Watched, state: "delivered" | "expired"): void {
-    this.d.events.emit({ type: "reply.held", sessionId, state, ...(entry.stop ? { stop: true } : {}) });
+    this.d.events.emit({
+      type: "reply.held",
+      sessionId,
+      state,
+      ...(entry.stop ? { stop: true } : {}),
+      ...(entry.sendId ? { sendId: entry.sendId } : {}),
+    });
   }
 }

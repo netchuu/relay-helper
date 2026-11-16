@@ -610,8 +610,8 @@ const sends = {
   resultHeld: SendResult.parse({ via: "socket", heldAtMac: true }),
   // Then it is delivered (the Mac approved it) or expired (nobody did): `reply.held` events; `stop` marks the phone's Stop.
   heldEvents: z.array(RelayEvent).parse([
-    { seq: 60, ts: now, type: "reply.held", sessionId: session.id, state: "waiting" },
-    { seq: 61, ts: now, type: "reply.held", sessionId: session.id, state: "delivered" },
+    { seq: 60, ts: now, type: "reply.held", sessionId: session.id, state: "waiting", sendId },
+    { seq: 61, ts: now, type: "reply.held", sessionId: session.id, state: "delivered", sendId },
     { seq: 62, ts: now, type: "reply.held", sessionId: session.id, state: "waiting", stop: true },
     { seq: 63, ts: now, type: "reply.held", sessionId: session.id, state: "expired", stop: true },
   ]),

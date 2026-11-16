@@ -546,6 +546,8 @@ export const EventBody = z.discriminatedUnion("type", [
     sessionId: z.string(),
     state: z.enum(["waiting", "delivered", "expired"]),
     stop: z.literal(true).optional(),
+    /** The `sendId` of the message it is about, when the phone gave one; older helpers leave it out. */
+    sendId: z.string().optional(),
   }),
   z.object({
     type: z.literal("session.notice"),

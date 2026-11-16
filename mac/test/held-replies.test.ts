@@ -226,6 +226,26 @@ describe("a reply through the inbox", () => {
     expect(t.pub()?.heldAtMac).not.toBe(true);
   });
 
+  test("the events name the send they are about", async () => {
+    const t = await setup();
+    await t.hook("Stop");
+    const send = async (text: string, sendId: string) =>
+      SendResult.parse(
+        ((await t.rpc("session.send", { sessionId: t.sid, text, sendId }, "phone")) as { result: unknown })
+          .result,
+      );
+    expect(await send("First", "id-1")).toEqual({ via: "socket", heldAtMac: true });
+    expect(await send("Second", "id-2")).toEqual({ via: "socket", heldAtMac: true });
+    await t.arrives("Second");
+    await t.arrives("First");
+    expect(t.held_().map((e) => [e.state, e.sendId])).toEqual([
+      ["waiting", "id-1"],
+      ["waiting", "id-2"],
+      ["delivered", "id-2"],
+      ["delivered", "id-1"],
+    ]);
+  });
+
   test("a queued reply that goes through the inbox is watched too", async () => {
     const t = await setup();
     await t.hook("Stop");
@@ -240,6 +260,23 @@ describe("a reply through the inbox", () => {
     expect(t.pub()?.heldAtMac).toBe(true);
     await t.arrives("Later");
     expect(t.states()).toEqual(["waiting", "delivered"]);
+  });
+
+  test("a drained held reply's events carry the phone's id", async () => {
+    const t = await setup();
+    await t.hook("Stop");
+    t.queue.add(t.sid, "Later", Date.now(), "unlock", "id-q");
+    expect(t.queue.list(t.sid)[0]?.sendId).toBe("id-q");
+    await t.queue.drain(
+      false,
+      deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }),
+    );
+    await Bun.sleep(WAIT * 3);
+    await t.arrives("Later");
+    expect(t.held_().map((e) => [e.state, e.sendId])).toEqual([
+      ["waiting", "id-q"],
+      ["delivered", "id-q"],
+    ]);
   });
 
   test("the permission mode stays on the session", async () => {
