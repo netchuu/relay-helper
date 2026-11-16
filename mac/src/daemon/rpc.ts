@@ -347,7 +347,9 @@ export function createRpc(
 
     "attachment.end": (params) => attempt(() => attachmentsOrFail().end(params)),
 
-    "attachment.discard": (params, actor) => {
+    "attachment.discard": async (params, actor) => {
+      // A send that has taken its turn holds this file until it has delivered (or failed): wait, then delete.
+      while (held.has(params.id)) await held.get(params.id);
       const result = attempt(() => attachmentsOrFail().discard(params));
       if (result.discarded) audit(d.db, actor, "attachment.discard", { id: params.id });
       return result;
@@ -580,6 +582,16 @@ export function createRpc(
       // Waited behind a resume that failed: the session is still ended.
       const now = d.registry.get(sessionId);
       if (!now || gone(now)) throw goneError(now);
+      // A file discarded while this message waited its turn: refuse whole rather than hand over a path that is gone.
+      if (withFiles) attempt(() => attachmentsOrFail().forSend(sessionId, ids ?? []));
+      // From here to the end of the delivery a discard of these files waits (no await between the check and the hold).
+      let release = (): void => {};
+      if (withFiles) {
+        const done = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        for (const id of ids ?? []) held.set(id, done);
+      }
       try {
         const res = await sendNow(session, text, arrived);
         if (files > 0 && res.via === "socket")
@@ -595,6 +607,9 @@ export function createRpc(
         if (err instanceof DeliveryError)
           throw new RpcFailure("unavailable", err.message, canResume(session) ? true : undefined);
         throw err;
+      } finally {
+        if (withFiles) for (const id of ids ?? []) held.delete(id);
+        release();
       }
     });
   }
@@ -610,6 +625,8 @@ export function createRpc(
   }
 
   const sending = new Map<string, Promise<unknown>>();
+  /** Attachment ids a send is delivering right now, each with a promise that settles when that send is over. */
+  const held = new Map<string, Promise<void>>();
 
   /** Runs `fn` after the session's earlier sends have finished. */
   function inOrder<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {

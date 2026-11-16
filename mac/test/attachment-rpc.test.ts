@@ -43,6 +43,11 @@ const SID = "edge-session-1";
 
 type Outcome<T> = { result?: T; error?: { code: string; message: string } };
 
+function listFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return [...new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true, absolute: true })];
+}
+
 function setup(
   opts: { attachments?: boolean; thumbnailer?: (src: string, out: string) => Promise<boolean> } = {},
 ) {
@@ -55,7 +60,10 @@ function setup(
   // The session's inbox: what a message sent to it is delivered to.
   const inbox = join(dir, "inbox.sock");
   const delivered: string[] = [];
+  const onConnect: string[][] = [];
   const server = createServer((c) => {
+    // The files that were still on disk when a message came in.
+    onConnect.push(listFiles(attDir));
     let data = "";
     c.on("data", (d) => {
       data += d.toString();
@@ -126,7 +134,21 @@ function setup(
     (db.query("SELECT actor, action, detail FROM audit").all() as object[])
       .map((r) => JSON.stringify(r))
       .join("\n");
-  return { dir, attDir, db: () => db, delivered, call, hook, begin, chunk, slice, put, restart, audit };
+  return {
+    dir,
+    attDir,
+    db: () => db,
+    delivered,
+    onConnect,
+    call,
+    hook,
+    begin,
+    chunk,
+    slice,
+    put,
+    restart,
+    audit,
+  };
 }
 
 async function started(opts: Parameters<typeof setup>[0] = {}) {
@@ -731,7 +753,46 @@ describe("two phones at once", () => {
       s.call("attachment.discard", { id: a.id }),
     ]);
     expect(discard.error).toBeUndefined();
-    if (send.error) expect(send.error.message).toBe(words.unknown);
+    await new Promise((r) => setTimeout(r, 100));
+    if (send.error) {
+      expect(send.error.message).toBe(words.unknown);
+      expect(s.delivered).toEqual([]);
+    } else {
+      expect(s.delivered).toHaveLength(1);
+      expect(s.delivered[0]).toContain(a.path);
+      expect(existsSync(a.path)).toBe(true);
+    }
+  });
+
+  test("a discard that lands after the send took its turn waits: the message goes with a file that still exists, then the file is deleted", async () => {
+    for (const delay of [0, 1, 5, 20]) {
+      const s = await started();
+      const a = (await s.put(randomBytes(8), { name: "a.png" })).end.result as AttachmentRef;
+      const send = s.call("session.send", { sessionId: SID, text: "look", attachments: [a.id] });
+      await new Promise((r) => setTimeout(r, delay));
+      const discard = await s.call<{ discarded: boolean }>("attachment.discard", { id: a.id });
+      const res = await send;
+      await new Promise((r) => setTimeout(r, 100));
+      expect(discard.error).toBeUndefined();
+      if (res.error) {
+        expect(res.error.message).toBe(words.unknown);
+        expect(s.delivered).toEqual([]);
+      } else {
+        expect(s.delivered).toHaveLength(1);
+        expect(s.delivered[0]).toContain(a.path);
+        // The discard waited: the file was still there when the message arrived.
+        expect(s.onConnect.flat()).toContain(a.path);
+      }
+      expect(existsSync(a.path)).toBe(false);
+    }
+  });
+
+  test("a discard with no send in flight still deletes the file", async () => {
+    const s = await started();
+    const a = (await s.put(randomBytes(8), { name: "a.png" })).end.result as AttachmentRef;
+    const discard = await s.call<{ discarded: boolean }>("attachment.discard", { id: a.id });
+    expect(discard.result?.discarded).toBe(true);
+    expect(existsSync(a.path)).toBe(false);
   });
 });
 
