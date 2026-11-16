@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { Answer, Prompt, PromptKind, PromptPayload, ResolvedBy } from "../../../protocol/index.ts";
+import type {
+  Answer,
+  Prompt,
+  PromptKind,
+  PromptPayload,
+  Question,
+  ResolvedBy,
+} from "../../../protocol/index.ts";
 import type { DB } from "./db.ts";
 import { audit } from "./db.ts";
 import {
@@ -175,9 +182,7 @@ export class Broker {
         // A notification answer comes under the cut question; compare both sides under the full one.
         const payload = JSON.parse(row.payload_json) as PromptPayload;
         const whole = (a: Answer): Answer =>
-          a.kind === "question" && payload.kind === "question"
-            ? { ...a, answers: restoreCutQuestion(payload.questions, a.answers) }
-            : a;
+          a.kind === "question" && payload.kind === "question" ? wholeAnswer(payload.questions, a) : a;
         const stored = JSON.parse(row.answer_json) as Answer;
         if (sameAnswer(row.answer_json, answer) || sameAnswer(JSON.stringify(whole(stored)), whole(answer)))
           return { ok: true };
@@ -187,6 +192,8 @@ export class Broker {
 
     // What the hook gets: a picked option's index (`choices`) stands for its full label.
     let forHook: Answer = answer;
+    // What is kept and shown in the history: the same, but with the choices kept so a repeat still matches.
+    let stored: Answer = answer;
     let hookChoices: Record<string, number> | undefined;
     if (answer.kind === "question") {
       const payload = JSON.parse(row.payload_json) as PromptPayload;
@@ -198,6 +205,7 @@ export class Broker {
           ? resolveChoices(payload.questions, given, restoreCutChoices(payload.questions, answer.choices))
           : given;
       forHook = { kind: "question", answers };
+      if (payload.kind === "question") stored = wholeAnswer(payload.questions, answer);
       if (payload.kind === "question") hookChoices = restoreCutChoices(payload.questions, answer.choices);
       const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };
@@ -221,7 +229,7 @@ export class Broker {
       this.close(promptId, "superseded");
       return { ok: false, code: "conflict", message: "the session is no longer waiting for this answer" };
     }
-    this.close(promptId, "phone", answer);
+    this.close(promptId, "phone", stored);
     waiter.resolve({ stdout });
     audit(this.db, actor, "prompt.answer", { promptId, kind: row.kind, action: describe(answer) });
     return { ok: true };
@@ -352,6 +360,13 @@ export function stableJson(value: unknown): string {
 }
 
 /** The stored answer and a new one say the same, whatever the order of their keys. */
+/** A notification answer under the full question, its button index standing for the option's full label. */
+function wholeAnswer(questions: Question[], a: Extract<Answer, { kind: "question" }>): Answer {
+  const choices = restoreCutChoices(questions, a.choices);
+  const answers = resolveChoices(questions, restoreCutQuestion(questions, a.answers), choices);
+  return choices ? { kind: "question", answers, choices } : { kind: "question", answers };
+}
+
 function sameAnswer(storedJson: string, answer: Answer): boolean {
   try {
     return stableJson(JSON.parse(storedJson)) === stableJson(answer);
