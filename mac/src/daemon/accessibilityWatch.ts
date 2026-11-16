@@ -1,9 +1,4 @@
-/**
- * Re-announces sessions when macOS Accessibility is allowed or taken away for the helper. The phone's hint "Replies
- * here arrive marked as from another session. To send them as you, allow Relay in Accessibility on your Mac." comes
- * from each session's `replyFix`, worked out when a session update goes out; nothing sent one when only the
- * permission changed, so the hint would stay after it was allowed.
- */
+/** Re-announces sessions when Accessibility is granted or revoked, so the phone's `replyFix` hint updates. */
 export function watchAccessibility(opts: {
   /** Whether the helper may use Accessibility now (axAllowed). */
   check: () => boolean;

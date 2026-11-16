@@ -2,16 +2,7 @@ import type { Answer, PromptKind, PromptPayload, Question } from "../../../proto
 import { redact, redactDeep } from "./redact.ts";
 import { head } from "./text.ts";
 
-/**
- * Pure translation between Claude Code's PermissionRequest hook contract and Relay prompts.
- *
- * Verified against Claude Code 2.1.316 (Phase 0 spikes):
- *  - AskUserQuestion and ExitPlanMode both reach PermissionRequest; the terminal dialog stays visible
- *    while the hook waits, so the Mac and the phone race and the first answer wins.
- *  - AskUserQuestion: allow + updatedInput {questions, answers}. Free text and "A, B" multi-select work.
- *  - ExitPlanMode: allow is ignored unless updatedInput echoes the tool input (plan, planFilePath).
- *    deny + message makes Claude revise the plan.
- */
+/** Translates between Claude Code's PermissionRequest hook contract and Relay prompts (pure). */
 
 export interface PermissionRequestInput {
   session_id: string;
@@ -40,9 +31,8 @@ export function payloadFor(input: PermissionRequestInput): PromptPayload {
       planFilePath: typeof ti.planFilePath === "string" ? ti.planFilePath : null,
     };
   }
-  // What you approve is shown exactly, never redacted: a redaction can hide the dangerous part of a
-  // command (e.g. `TOKEN=$(curl …|sh) npm test`). It travels end-to-end encrypted to your own phone;
-  // push notifications redact it separately (notifier.ts).
+  // Shown unredacted: redaction could hide the dangerous part (`TOKEN=$(curl …|sh) npm test`). It goes
+  // end-to-end encrypted; push notifications redact separately.
   const full = JSON.stringify(ti, null, 2);
   const rules =
     Array.isArray(input.permission_suggestions) && input.permission_suggestions.length
@@ -87,11 +77,8 @@ function permissionSummary(tool: string, ti: Record<string, unknown>): string {
 const CD_SHORTEN_FROM = 40;
 
 /**
- * Shortens a long `cd /plain/path` at the start of a command to its last folder ("cd …/scratchpad; …"), so
- * commands that differ only after it don't look the same at the top of the card (the desktop
- * app's scratch folders run to 230 characters). Only a plain path is shortened: one with `$`, backticks, quotes,
- * spaces or anything else that could run or hide something is left whole. The details keep the exact command, and a
- * shortened summary is never allowed from the lock screen (`needsReview`).
+ * Shortens a leading `cd /plain/path` to its last folder ("cd …/scratchpad; ..."); anything with `$`, quotes
+ * or spaces stays whole. The details keep the exact command; `needsReview` bars it from the lock screen.
  */
 export function shortenLeadingCd(command: string): string {
   const m = /^(\s*cd\s+)([A-Za-z0-9_./~+@%:-]+)(\s*(?:&&|;|\n))/.exec(command);
@@ -126,6 +113,7 @@ export function hookOutputFor(
       };
       break;
     case "plan":
+      // allow is ignored unless updatedInput echoes the tool input.
       if (answer.action === "approve") decision = { behavior: "allow", updatedInput: toolInput };
       else if (answer.action === "approve_accept_edits")
         decision = {
@@ -159,11 +147,7 @@ export function hookOutputFor(
   return JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } });
 }
 
-/**
- * The waiting PermissionRequest hook's output for the phone's Stop (session.interrupt): deny and interrupt,
- * Claude Code's own "stop here". Verified with 2.1.318 on Bash and AskUserQuestion: the dialog closes, the tool
- * doesn't run, the turn ends without a Stop hook and the transcript gets "[Request interrupted by user for tool use]".
- */
+/** Hook output for the phone's Stop (session.interrupt): deny and interrupt; the turn ends without a Stop hook. */
 export function stopHookOutput(): string {
   return JSON.stringify({
     hookSpecificOutput: {
@@ -173,11 +157,7 @@ export function stopHookOutput(): string {
   });
 }
 
-/**
- * The phone shows the questions redacted and answers under the shown text. Claude Code matches answers to the
- * original questions, so the keys go back to the original question text and a chosen option's label (alone or in a
- * "A, B" multi-select list) back to its original label. Anything else (free text) passes through unchanged.
- */
+/** Maps answers keyed by the redacted text back to the original question and option labels (free text unchanged). */
 export function originalAnswers(
   rawQuestions: unknown,
   answers: Record<string, string>,
@@ -206,10 +186,7 @@ export function originalAnswers(
   return out;
 }
 
-/**
- * The answers with every question that came with a `choices` index answered by that option's full label.
- * An index that names no option leaves the text in `answers`.
- */
+/** Answers each question that has a `choices` index with that option's full label (a bad index keeps the text). */
 export function resolveChoices(
   questions: Question[],
   answers: Record<string, string>,
@@ -237,12 +214,7 @@ export function validateQuestionAnswer(
   return null;
 }
 
-/**
- * A question too long for one push goes out cut (fitAlert) and the notification's buttons answer under the cut
- * text, ending in "…". For a single question whose answer is keyed by such a cut (a prefix of the question, or
- * of its redacted form), the key goes back to the whole question so the answer is accepted and reaches Claude.
- * Anything else comes back unchanged.
- */
+/** A push cuts a long question (fitAlert) and its buttons answer under the cut: re-key it to the full question. */
 export function restoreCutQuestion(
   questions: Question[],
   answers: Record<string, string>,

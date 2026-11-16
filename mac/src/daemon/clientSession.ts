@@ -17,19 +17,12 @@ import type { RpcOpts, RpcOutcome } from "./rpc.ts";
 
 type Rpc = (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome>;
 
-/**
- * The relay's frame limit (cloud/src/index.ts MAX_FRAME): an attachment chunk is about 175 KB of JSON
- * (ATTACHMENT_CHUNK_BYTES in base64), so the old 64 KiB limit would close the stream on the first one.
- */
+/** The relay's frame limit (MAX_FRAME in cloud/src/index.ts); an attachment chunk is about 175 KB of JSON. */
 const MAX_MESSAGE = RELAY_FRAME_BYTES;
 /** What a reply may take: the frame limit less the stream id and encryption the link adds. */
 const MAX_REPLY_BYTES = RELAY_FRAME_BYTES - 1024;
 
-/**
- * One phone connection over the relay's encrypted stream. Same JSON protocol as the direct WebSocket,
- * plus `pair` and `hello` (which replace the HTTP pairing endpoint and the Bearer header). Nothing but
- * `pair`/`hello` is served until the phone has authenticated on this stream.
- */
+/** One phone connection over the relay's stream; only `pair`/`hello` are served until it authenticates. */
 export class ClientSession {
   private device: Device | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -119,10 +112,7 @@ export class ClientSession {
     if (this.failedAuth >= 3) this.fatal("too many failed attempts");
   }
 
-  /**
-   * A result over the relay's frame limit would make the relay close the Mac's whole link, for every phone: it's
-   * answered with an error instead, and the method is logged.
-   */
+  /** A result over the frame limit would make the relay close the whole link, so answer with an error. */
   private reply(id: string | number | null, outcome: RpcOutcome, method?: string): void {
     let text = JSON.stringify({ type: "rpc", id, ...outcome });
     const bytes = Buffer.byteLength(text);

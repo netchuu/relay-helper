@@ -24,10 +24,7 @@ type Rpc = (method: string, params: unknown, actor: string) => Promise<RpcOutcom
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/**
- * Local-only server on a Unix socket inside ~/.relay (mode 0700): hook traffic and admin commands from
- * the `relay` CLI. Filesystem permissions are the authentication.
- */
+/** Unix-socket server (mode 0700 dir) for hooks and the CLI; file permissions are the authentication. */
 export function startLocalServer(opts: {
   socketPath: string;
   hooks: HookHandler;
@@ -38,9 +35,8 @@ export function startLocalServer(opts: {
 }): Server<undefined> {
   const options = {
     unix: opts.socketPath,
-    // PermissionRequest hooks wait for an answer for as long as the prompt is open. Bun's default 10 s
-    // idle timeout also applies to Unix sockets (verified on 1.3.10) even though its types omit the
-    // option there, hence the cast below.
+    // PermissionRequest hooks wait as long as the prompt is open; Bun's 10 s idle timeout also hits Unix
+    // sockets though its types omit the option there (hence the cast below).
     idleTimeout: 0,
     async fetch(req: Request) {
       const url = new URL(req.url);
@@ -123,10 +119,7 @@ function closeRevoked(ws: ServerWebSocket<WsData>): void {
   ws.close(4401, "device revoked");
 }
 
-/**
- * App API on 127.0.0.1 only. The phone reaches it through `tailscale serve` (HTTPS inside your
- * tailnet); nothing listens on a public interface.
- */
+/** App API on 127.0.0.1 only; the phone reaches it through `tailscale serve`. */
 export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog; db: DB }): Server<WsData> {
   return Bun.serve<WsData>({
     hostname: "127.0.0.1",

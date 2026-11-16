@@ -119,10 +119,7 @@ export function onDeviceRevoked(listener: RevokedListener): () => void {
   return () => revokedListeners.delete(listener);
 }
 
-/**
- * Revokes a device and clears its push token. The CLI may name a device; the phone's own Unpair
- * (actor `device:<id>`) matches its id only.
- */
+/** Revokes a device and clears its push token; the phone's own Unpair (actor `device:<id>`) matches its id only. */
 export function revokeDevice(db: DB, idOrName: string, actor = "cli"): boolean {
   const byName = actor === "cli";
   const ids = (

@@ -1,12 +1,4 @@
-/**
- * Replies Claude Code holds. A session that skips permission prompts shows a message from its inbox to the person at
- * the Mac ("Held peer message ... not delivered to Claude") and waits for approval there, by default for five minutes.
- * The inbox accepts the message either way, so the helper watches for the `UserPromptSubmit` hook that follows a real
- * delivery: with the same text, within a short time, the message arrived. Without it, while the session is idle, the
- * message waits at the Mac (`heldAtMac`); the hook arriving later makes it delivered, the hold's time running out
- * makes it expired. A session that is working may take the message only at its next step, so it is judged once the
- * turn has ended.
- */
+/** Detects replies Claude Code holds for approval at the Mac: no matching `UserPromptSubmit` hook means held. */
 import type { EventBody } from "../../../protocol/index.ts";
 
 /** How long a message posted to an idle session waits for its hook before it counts as held. */
@@ -81,10 +73,7 @@ interface Watched {
 
 /** What `expect` hands back for one posted message. */
 export interface Expectation {
-  /**
-   * Waits for the hook: true when the message is held (no hook within the time, and the session idle). A working
-   * session answers false at once; its message is judged when the turn ends.
-   */
+  /** True when held (no hook in time, session idle); a working session answers false and is judged at turn end. */
   wait(ms?: number): Promise<boolean>;
   /** Judges it now: true when the hook hasn't come (the caller already waited), false when it has. */
   holdNow(): boolean;

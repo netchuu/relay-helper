@@ -3,11 +3,7 @@ import type { DB } from "./db.ts";
 
 type Listener = (event: RelayEvent) => void;
 
-/**
- * Durable, ordered event log. Clients that reconnect call `since(seq)` to receive exactly what they
- * missed; live clients subscribe. Old events are pruned, so clients that fall too far behind get a
- * fresh snapshot instead (see the `sync` RPC).
- */
+/** Durable, ordered event log; old events are pruned, so clients too far behind get a snapshot (`sync` RPC). */
 export class EventLog {
   private readonly listeners = new Set<Listener>();
 
@@ -38,11 +34,7 @@ export class EventLog {
     );
   }
 
-  /**
-   * What a reconnecting phone missed, for `sync`: like `since`, but of `session.background` only the newest one of
-   * each session (background-work), and of `turn.step` only the newest one of each
-   * turn (a finished turn's steps are deleted when it ends), so steps never push real events out of a replay.
-   */
+  /** Like `since`, but keeps only the newest `session.background` per session and `turn.step` per turn. */
   sinceForSync(seq: number, limit = 1000): RelayEvent[] {
     const rows = this.db
       .query(
@@ -59,11 +51,7 @@ export class EventLog {
     );
   }
 
-  /**
-   * `sinceForSync` cut to what fits one reply: at most `limit` events and `maxBytes` of JSON. When it cuts, `more` is
-   * true and `latestSeq` is the last seq the page covers, so the phone asks again from there and skips nothing. An
-   * event too big to ever fit is left out (and logged by the caller through `dropped`), never allowed to block the rest.
-   */
+  /** `sinceForSync` cut to `limit` events and `maxBytes` (`more`/`latestSeq` continue it); oversized ones go to `dropped`. */
   syncPage(
     seq: number,
     opts: {

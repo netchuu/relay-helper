@@ -1,9 +1,4 @@
-/**
- * End-to-end encryption between the phone and this Mac over the Cloudflare relay (docs/RELAY.md).
- * X25519 key agreement anchored in the Mac's static key from the pairing QR, HKDF-SHA256, and
- * AES-256-GCM frames with per-direction counters (a counter nonce is never reused: each
- * direction has its own key, fresh per connection). The relay only ever sees ciphertext.
- */
+/** End-to-end encryption phone to Mac over the relay: X25519 + HKDF-SHA256, AES-256-GCM frames. */
 import {
   createCipheriv,
   createDecipheriv,
@@ -26,9 +21,6 @@ const TAG = 16;
 
 export const b64url = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 export const fromB64url = (s: string) => new Uint8Array(Buffer.from(s, "base64url"));
-
-// ---------------------------------------------------------------------------------------------------
-// Keys
 
 export function rawPublic(key: KeyObject): Uint8Array {
   const jwk = key.export({ format: "jwk" }) as { x: string };
@@ -103,9 +95,6 @@ export function connectProof(id: Identity, now = Date.now()): { pub: string; ts:
   return { pub: b64url(id.authPublic), ts: String(now), sig: b64url(sig) };
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Channel
-
 export class E2EError extends Error {}
 
 export interface SessionKeys {
@@ -149,10 +138,7 @@ export function open(key: Uint8Array, counter: bigint, frame: Uint8Array): Uint8
   }
 }
 
-/**
- * The Mac's end of one phone connection. Feed it every payload from the relay; it answers the
- * handshake and decrypts data frames in order. Any error means the stream must be closed.
- */
+/** The Mac's end of one phone connection; any error means the stream must be closed. */
 export class MacChannel {
   private keys: SessionKeys | null = null;
   private recvCounter = 0n;

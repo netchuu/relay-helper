@@ -4,12 +4,7 @@ import { redact } from "./redact.ts";
 import { fitLabel, oneLine, shortCommand, stepFor } from "./steps.ts";
 import { cutDetail } from "./timeline.ts";
 
-/**
- * Background work: the shells and agents Claude left running, per session, from
- * Claude Code's own list in each Stop hook (`background_tasks`). A task leaves the list when its
- * `<task-notification>` arrives, when a later Stop no longer lists it, or when the session ends. An agent's tool
- * calls (hooks with its `agent_id`) give its current activity. In memory: after a restart it comes back at the next Stop.
- */
+/** Shells and agents Claude left running, per session, from each Stop hook's `background_tasks` (in memory). */
 
 const lists = new Map<string, BackgroundTask[]>();
 
@@ -18,11 +13,7 @@ export function backgroundOf(sessionId: string): BackgroundTask[] {
   return lists.get(sessionId) ?? [];
 }
 
-/**
- * Whether the session still has background shells or agents running: the phones then show it as working and
- * the "finished" push waits until the last one ends. The session's own status stays idle (older phones show the
- * strip only), so this is the one place that says it.
- */
+/** Whether background shells or agents still run: phones show it as working and the "finished" push waits. */
 export function runsInBackground(sessionId: string): boolean {
   return (lists.get(sessionId)?.length ?? 0) > 0;
 }
@@ -54,10 +45,7 @@ const EARLY_KEPT = 16;
 
 export class BackgroundTracker {
   private readonly throttleMs: number;
-  /**
-   * Activity of agents not listed yet: Claude starts a background agent, and its first tool calls can reach the
-   * helper before the Stop that first lists it. Kept per session, by agent id, for that Stop.
-   */
+  /** Activity of agents no Stop has listed yet: their first tool calls can arrive before that Stop. */
   private readonly early = new Map<string, Map<string, BackgroundTask["activity"]>>();
   private readonly lastSent = new Map<string, number>();
   private readonly trailing = new Map<string, ReturnType<typeof setTimeout>>();
@@ -72,11 +60,7 @@ export class BackgroundTracker {
     });
   }
 
-  /**
-   * After a restart: each session's last list as the phones last saw it, so the helper and the phones agree (a dev
-   * server usually keeps running while the helper restarts). The session's next Stop corrects it. Ended sessions and
-   * entries that don't fit the protocol are left out; nothing is sent (the phones have it already).
-   */
+  /** After a restart: reload each live session's last list (phones already have it, so nothing is sent). */
   restore(isLive: (sessionId: string) => boolean): void {
     for (const { sessionId, tasks } of this.events.latestBackground()) {
       if (!Array.isArray(tasks) || !isLive(sessionId)) continue;

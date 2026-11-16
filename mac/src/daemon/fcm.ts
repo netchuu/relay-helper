@@ -30,10 +30,7 @@ export function fcmConfigPath(home = RELAY_HOME): string {
   return join(home, "fcm", "service-account.json");
 }
 
-/**
- * Inspects ~/.relay/fcm/service-account.json without ever returning key material in an error. The key
- * can send pushes to every install of the app, so a file other local users can read is refused.
- */
+/** Checks the service-account file without leaking key material in errors; one other users can read is refused. */
 export function checkFcmConfig(home = RELAY_HOME): FcmConfigCheck {
   const path = fcmConfigPath(home);
   if (!existsSync(path)) return { state: "missing", path };

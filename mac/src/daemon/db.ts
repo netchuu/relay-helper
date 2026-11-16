@@ -1,9 +1,6 @@
 import { Database } from "bun:sqlite";
 
-/**
- * Ordered migrations. Never edit a shipped entry; append a new one. `PRAGMA user_version` records how
- * many have been applied.
- */
+/** Ordered migrations: never edit a shipped one, append (`PRAGMA user_version` counts those applied). */
 const MIGRATIONS: string[] = [
   `
   CREATE TABLE sessions (
@@ -135,9 +132,8 @@ const MIGRATIONS: string[] = [
      removed_at  INTEGER
    );
    CREATE INDEX IF NOT EXISTS attachments_session ON attachments(session_id);`,
-  // 13: what a queued reply waits for (replyQueue.ts): NULL for the unlock (every row from before), "pause" for a
-  // pause in the person's typing at the Mac. Rebuilt rather than altered, so it also runs on a database that has the
-  // column already (one moved back to an older version).
+  // 13: what a queued reply waits for: NULL = unlock, "pause" = a pause in typing at the Mac. Rebuilt, so it
+  // also runs on a database that already has the column.
   `CREATE TABLE queued_replies_13 (
      id         INTEGER PRIMARY KEY AUTOINCREMENT,
      session_id TEXT NOT NULL,
@@ -169,9 +165,8 @@ const MIGRATIONS: string[] = [
      kitty_listen_on TEXT,
      kitty_window_id TEXT
    );`,
-  // 17: the attachments the phone typed with a turn's prompt, in order. Claude Code reports a pasted photo as
-  // "[Image #N]", so the prompt alone doesn't say which files belong to the turn. A table of its own, so it also
-  // runs on a database that was moved back to an older version.
+  // 17: attachments typed with a turn's prompt, in order ("[Image #N]" alone doesn't say which files).
+  // Its own table, so it also runs on a database moved back to an older version.
   `CREATE TABLE IF NOT EXISTS turn_attachments (
      turn_id       TEXT NOT NULL,
      attachment_id TEXT NOT NULL,
