@@ -41,7 +41,8 @@ ACTUAL="$(sha256 "$TMP/$NAME.tar.gz")"
 
 tar -xzf "$TMP/$NAME.tar.gz" -C "$TMP"
 # `relay install` exits non-zero when the helper doesn't answer in time. Keep going: link the command and
-# pair (which sets up again and waits for the helper), then report the failure through the exit status.
+# pair (which sets up again and waits for the helper). Pair's status is the final answer: it exits 0 when the
+# helper answered late, and non-zero only when the helper never started.
 INSTALL_STATUS=0
 "$TMP/$NAME/relay" install || INSTALL_STATUS=$?
 
@@ -54,5 +55,4 @@ if [ "$INSTALL_STATUS" -ne 0 ]; then
 fi
 PAIR_STATUS=0
 "${RELAY_HOME:-$HOME/.relay}/bin/relay" pair || PAIR_STATUS=$?
-[ "$INSTALL_STATUS" -eq 0 ] || exit "$INSTALL_STATUS"
 exit "$PAIR_STATUS"

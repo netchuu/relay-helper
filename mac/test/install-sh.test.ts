@@ -15,7 +15,9 @@ case "$1" in
     echo hooks > "$HOME/hooks-written"
     if [ "$STUB_INSTALL_EXIT" != 0 ]; then echo "• daemon did not start; see $RELAY_HOME/daemon.log"; fi
     exit "$STUB_INSTALL_EXIT" ;;
-  pair) echo paired > "$HOME/pair-ran" ;;
+  pair)
+    echo paired > "$HOME/pair-ran"
+    exit "\${STUB_PAIR_EXIT:-0}" ;;
 esac
 `;
 
@@ -23,7 +25,7 @@ async function text(cmd: string[]) {
   return (await new Response(Bun.spawn(cmd).stdout).text()).trim();
 }
 
-async function runInstaller(installExit: number) {
+async function runInstaller(installExit: number, pairExit = 0) {
   const root = mkdtempSync(join(tmpdir(), "install-sh-"));
   try {
     const home = join(root, "home");
@@ -51,6 +53,7 @@ async function runInstaller(installExit: number) {
         RELAY_VERSION: "0.0.0",
         RELAY_BASE_URL: `file://${release}`,
         STUB_INSTALL_EXIT: String(installExit),
+        STUB_PAIR_EXIT: String(pairExit),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -78,8 +81,16 @@ test("daemon started: installer links relay, pairs and exits 0", async () => {
   expect(r).toMatchObject({ code: 0, hooksWritten: true, linked: true, pairRan: true });
 });
 
-test("daemon slow to start: installer still links relay, tries pair and exits non-zero", async () => {
-  const r = await runInstaller(1);
+test("daemon slow to start but pair succeeds: installer links relay and exits 0", async () => {
+  const r = await runInstaller(1, 0);
+  expect(r.hooksWritten).toBe(true);
+  expect(r.linked).toBe(true);
+  expect(r.pairRan).toBe(true);
+  expect(r.code).toBe(0);
+});
+
+test("daemon never started: install and pair fail, installer exits non-zero", async () => {
+  const r = await runInstaller(1, 1);
   expect(r.hooksWritten).toBe(true);
   expect(r.linked).toBe(true);
   expect(r.pairRan).toBe(true);
