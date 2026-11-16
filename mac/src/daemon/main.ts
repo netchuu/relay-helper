@@ -131,6 +131,7 @@ export async function runDaemon(): Promise<void> {
     openPrompt: (input, signal) => hooks.openPrompt(input, signal),
   });
   registry.ownedByHelper = (id) => headless.has(id);
+  stopper.headless = headless;
   const suggestions = new SuggestionWatcher({ registry });
   const deps = {
     ...baseDeps,

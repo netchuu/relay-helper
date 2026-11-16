@@ -12,6 +12,7 @@ import { attachmentFields } from "./attachments.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import type { HeldReplies } from "./held.ts";
 import {
   DeliveryError,
@@ -61,6 +62,8 @@ export interface StopDeps {
   messages?: MessageTracker;
   /** Replies Claude Code holds at the Mac (held-replies): a stop message held there has stopped nothing. */
   held?: HeldReplies;
+  /** The Claude Code processes the helper runs itself (a continued session): Stop goes through their pipes. */
+  headless?: Pick<HeadlessSessions, "has" | "interrupt">;
 }
 
 interface Timing {
@@ -110,7 +113,11 @@ export class TurnStopper {
   private readonly keys: KeyOps;
   private readonly inbox: (socketPath: string, token: string | null, text: string) => Promise<void>;
 
+  /** Set after construction when the headless sessions are built later (main.ts). */
+  headless: StopDeps["headless"];
+
   constructor(private readonly d: StopDeps) {
+    this.headless = d.headless;
     this.t = { ...TIMING, ...d.timing };
     this.keys = d.keys ?? defaultKeyOps;
     this.inbox = d.inbox ?? ((path, token, text) => postToInbox(path, token, text, 5000, "now"));
@@ -162,6 +169,22 @@ export class TurnStopper {
     if (!fresh || fresh.status === "ended") throw new StopError("not_found", "session not found or ended");
     if (fresh.status !== "working" && fresh.status !== "waiting")
       throw new StopError("conflict", "nothing to stop: the session isn't working");
+
+    // A session the helper runs itself has no terminal and no inbox of its own (a socket path on its row is the
+    // closed terminal's): tell its process to stop the turn through the pipes the helper owns.
+    if (this.headless?.has(sessionId)) {
+      try {
+        await this.headless.interrupt(sessionId);
+      } catch (err) {
+        if (err instanceof ResumeError) throw new StopError("unavailable", err.message);
+        throw err;
+      }
+      await Bun.sleep(this.t.graceMs);
+      const turnId = open ? this.endStopped(open.id) : null;
+      // No hook follows an interrupt; a process that had to be ended already made the session ended.
+      if (this.d.registry.get(sessionId)?.status !== "ended") this.d.registry.setStatus(sessionId, "idle");
+      return done("headless", turnId);
+    }
 
     // 2. Esc in the session's terminal.
     const route = await pressEscape(fresh, this.keys);

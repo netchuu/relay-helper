@@ -450,9 +450,9 @@ export type Turn = z.infer<typeof Turn>;
  * How session.interrupt reached Claude: "prompt" answered an open prompt with deny-and-interrupt; "pty",
  * "tmux", "iterm" pressed Esc in the terminal; "inbox" stopped it through Claude Code's inbox. "message": the
  * stop went through the inbox but didn't stop the turn (yet), so the phone says it asked Claude to stop.
- * Apps treat any other value as a stop, so later routes don't break them.
+ * "headless": the helper told the Claude Code process it runs itself (a continued session) to stop its turn. Apps treat any other value as a stop, so later routes don't break them.
  */
-export const InterruptVia = z.enum(["prompt", "pty", "tmux", "iterm", "inbox", "message"]);
+export const InterruptVia = z.enum(["prompt", "pty", "tmux", "iterm", "inbox", "message", "headless"]);
 export type InterruptVia = z.infer<typeof InterruptVia>;
 
 export const InterruptResult = z.object({

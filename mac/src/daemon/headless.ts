@@ -95,7 +95,13 @@ interface Owned {
   abort: AbortController;
   /** One per permission request still open, by request_id. */
   requests: Map<string, AbortController>;
+  /** A Stop waiting for the process to end the turn, by the request_id of its interrupt. Settled by the matching
+   * `control_response` (what Claude Code sends for an interrupt) or by a `result` line. */
+  turnEnded: Map<string, () => void>;
 }
+
+/** How long a Stop waits for the process to end its turn before the process itself is ended. */
+export const INTERRUPT_TIMEOUT_MS = 5_000;
 
 export class HeadlessSessions {
   private readonly owned = new Map<string, Owned>();
@@ -129,7 +135,7 @@ export class HeadlessSessions {
       log.warn("session.resume: launch failed", { err: errMessage(err) });
       throw new ResumeError("unavailable", "Claude Code couldn't be started.");
     }
-    const entry: Owned = { child, abort: new AbortController(), requests: new Map() };
+    const entry: Owned = { child, abort: new AbortController(), requests: new Map(), turnEnded: new Map() };
     this.owned.set(id, entry);
     const init = this.watch(id, entry);
     try {
@@ -156,6 +162,45 @@ export class HeadlessSessions {
       throw new ResumeError("unavailable", "Claude Code stopped before it got the message.");
     }
     this.d.registry.setStatus(sessionId, "working");
+  }
+
+  /**
+   * Stop: asks the owned process to end its current turn (stream-json `interrupt` control request) and waits for
+   * it to report the turn over. A process that doesn't within the timeout is ended instead, so a Stop never
+   * leaves the session working. Resolves "interrupted", or "ended" when the process had to go.
+   */
+  async interrupt(sessionId: string, timeoutMs = INTERRUPT_TIMEOUT_MS): Promise<"interrupted" | "ended"> {
+    const entry = this.owned.get(sessionId);
+    if (!entry) throw new ResumeError("unavailable", "This session doesn't run in Relay.");
+    const requestId = `relay-stop-${crypto.randomUUID()}`;
+    let finish = () => {};
+    const over = new Promise<"interrupted">((resolve) => {
+      finish = () => resolve("interrupted");
+      entry.turnEnded.set(requestId, finish);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      entry.child.stdin.write(
+        `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`,
+      );
+      entry.child.stdin.flush();
+    } catch (err) {
+      entry.turnEnded.delete(requestId);
+      log.warn("headless interrupt failed", { err: errMessage(err) });
+      this.drop(sessionId, entry);
+      return "ended";
+    }
+    const late = new Promise<"ended">((resolve) => {
+      timer = setTimeout(() => resolve("ended"), timeoutMs);
+    });
+    const outcome = await Promise.race([over, late]);
+    clearTimeout(timer);
+    entry.turnEnded.delete(requestId);
+    if (outcome === "ended") {
+      log.warn("headless session ignored the interrupt; ending it", { sessionId });
+      this.drop(sessionId, entry);
+    }
+    return outcome;
   }
 
   /** Stops every process the helper owns (the daemon is exiting). */
@@ -198,6 +243,11 @@ export class HeadlessSessions {
             ready = true;
             clearTimeout(timer);
             resolve();
+          } else if (msg.type === "result") {
+            for (const done of [...entry.turnEnded.values()]) done();
+          } else if (msg.type === "control_response") {
+            const rid = msg.response?.request_id;
+            if (rid) entry.turnEnded.get(rid)?.();
           } else if (msg.type === "control_request") {
             void this.controlRequest(id, entry, msg);
           } else if (msg.type === "control_cancel_request" && msg.request_id) {
@@ -295,6 +345,7 @@ interface StreamMessage {
   type?: string;
   subtype?: string;
   request_id?: string;
+  response?: { subtype?: string; request_id?: string };
   request?: {
     subtype?: string;
     tool_name?: unknown;
