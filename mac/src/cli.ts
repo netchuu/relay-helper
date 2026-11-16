@@ -22,7 +22,7 @@ import { typingRouteFor } from "./daemon/inject.ts";
 import { runDaemon } from "./daemon/main.ts";
 import { kittyDoctorNote } from "./daemon/paneTerminals.ts";
 import { liveTmuxSockets } from "./daemon/presence.ts";
-import { loadApnsConfig } from "./daemon/push.ts";
+import { iosPushStatus, loadApnsConfig } from "./daemon/push.ts";
 import { pinnedFirst, Registry } from "./daemon/registry.ts";
 import {
   BIN_DIR,
@@ -469,13 +469,13 @@ async function doctor(): Promise<void> {
       "tmux: not installed. On Linux, replies from the phone are typed only into tmux; elsewhere they arrive as a message from another session",
     );
 
-  // iOS push needs an APNs key on this computer until pushes go through the relay server.
-  const apns = loadApnsConfig();
-  apns
-    ? ok(`iOS push: on (${apns.bundleId})`)
-    : warn(
-        `iOS push: off — there's no APNs key in ${join(paths.home, "apns")}. Prompts still reach the app while it's open, but the phone won't get notifications from this computer yet`,
-      );
+  const push = iosPushStatus(config.relayUrl, loadApnsConfig());
+  if (push.state === "relay") ok("iOS push: through the relay (no APNs key needed on this computer)");
+  else if (push.state === "local") ok(`iOS push: on (${push.bundleId})`);
+  else
+    warn(
+      `iOS push: off — there's no APNs key in ${join(paths.home, "apns")}. Prompts still reach the app while it's open, but the phone won't get notifications from this computer yet`,
+    );
 
   // Never print key material: only the project and the service account's address.
   const fcm = checkFcmConfig();

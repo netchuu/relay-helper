@@ -148,3 +148,11 @@ export function isDeadToken(result: ApnsResult): boolean {
       (result.reason === "BadDeviceToken" || result.reason === "DeviceTokenNotForTopic"))
   );
 }
+
+export type IosPushStatus = { state: "relay" } | { state: "local"; bundleId: string } | { state: "off" };
+
+/** Same order the daemon uses: the relay when paired, else the local APNs key. */
+export function iosPushStatus(relayUrl: string | null | undefined, apns: ApnsConfig | null): IosPushStatus {
+  if (relayUrl) return { state: "relay" };
+  return apns ? { state: "local", bundleId: apns.bundleId } : { state: "off" };
+}
