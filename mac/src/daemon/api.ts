@@ -18,6 +18,7 @@ import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import type { HookEnvelope, HookHandler } from "./hooks.ts";
 import type { RpcOutcome } from "./rpc.ts";
+import { wellFormedJSON } from "./text.ts";
 
 type Rpc = (method: string, params: unknown, actor: string) => Promise<RpcOutcome>;
 
@@ -166,7 +167,7 @@ export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog;
           // Revoked while connected: stop at once; the reconnect gets a 401 and the phone asks to re-pair.
           if (!isDeviceActive(opts.db, ws.data.device.id)) return closeRevoked(ws);
           // 0 = dropped: close so the client reconnects and resyncs from its last seq.
-          if (ws.send(JSON.stringify({ type: "event", event })) === 0) ws.close(1013, "backpressure");
+          if (ws.send(wellFormedJSON({ type: "event", event })) === 0) ws.close(1013, "backpressure");
         });
         // Revoked (relay devices revoke / Unpair) while connected and idle: drop the socket right away.
         ws.data.stopRevokeWatch = onDeviceRevoked((id) => {
@@ -196,7 +197,7 @@ export function startAppServer(opts: { port: number; rpc: Rpc; events: EventLog;
           log.error("rpc failed", { method: req.method, err: errMessage(err) });
           outcome = { error: { code: "internal", message: "internal error" } };
         }
-        ws.send(JSON.stringify({ type: "rpc", id: req.id ?? null, ...outcome }));
+        ws.send(wellFormedJSON({ type: "rpc", id: req.id ?? null, ...outcome }));
       },
       close(ws) {
         ws.data.unsubscribe();

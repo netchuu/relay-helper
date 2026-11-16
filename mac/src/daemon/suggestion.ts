@@ -8,6 +8,7 @@ import { errMessage, log } from "../log.ts";
 import { readSuggestion } from "./inject.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
+import { head } from "./text.ts";
 
 /** Longest suggestion kept, in characters. */
 const MAX_LENGTH = 300;
@@ -32,7 +33,7 @@ export function suggestionOf(sessionId: string): string | undefined {
 export function cleanSuggestion(text: string): string | null {
   const line = redact(text).replace(/\s+/g, " ").trim();
   if (!line) return null;
-  return line.length > MAX_LENGTH ? `${line.slice(0, MAX_LENGTH - 1)}…` : line;
+  return line.length > MAX_LENGTH ? `${head(line, MAX_LENGTH - 1)}…` : line;
 }
 
 export interface SuggestionDeps {
