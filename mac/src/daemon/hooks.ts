@@ -85,16 +85,26 @@ export function dropPhoneTyped(sessionId: string, text: string): void {
 }
 
 /** First messages of sessions the phone is starting: their id isn't known until the launch returns. */
-const phoneLaunches = new Set<{ cwd: string; head: string; paths: string[]; text: string; taken: boolean }>();
+const phoneLaunches = new Set<{
+  cwd: string;
+  head: string;
+  paths: string[];
+  text: string;
+  taken: boolean;
+  expiresAt: number;
+}>();
+
+/** How long a launch whose session wasn't found keeps waiting for that session's first hook. */
+export const UNFOUND_LAUNCH_MS = 30_000;
 
 /** The phone starts a session in `cwd`: its first hook can beat the session id, so it is matched by folder and text. */
 export function notePhoneLaunch(
   cwd: string,
   text: string,
-): { done: (sessionId: string) => void; abort: () => void } {
+): { done: (sessionId: string) => void; abort: () => void; keep: (ms?: number) => void } {
   const clean = cleanTypedText(text);
   const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
-  const launch = { cwd, head: typedHead(clean), paths, text: clean, taken: false };
+  const launch = { cwd, head: typedHead(clean), paths, text: clean, taken: false, expiresAt: Infinity };
   phoneLaunches.add(launch);
   return {
     done: (sessionId) => {
@@ -102,6 +112,11 @@ export function notePhoneLaunch(
       if (!launch.taken) notePhoneTyped(sessionId, text);
     },
     abort: () => void phoneLaunches.delete(launch),
+    // The session started but couldn't be looked up: its first hook is still the phone's text, for a while.
+    keep: (ms = UNFOUND_LAUNCH_MS) => {
+      launch.expiresAt = Date.now() + ms;
+      setTimeout(() => phoneLaunches.delete(launch), ms).unref();
+    },
   };
 }
 
@@ -109,7 +124,8 @@ export function notePhoneLaunch(
 function takePhoneLaunch(cwd: string | undefined, prompt: string): string[] | null {
   if (!cwd) return null;
   for (const l of phoneLaunches) {
-    if (!l.taken && l.cwd === cwd && matchesPhoneTyped(l, prompt)) {
+    if (l.expiresAt <= Date.now()) phoneLaunches.delete(l);
+    else if (!l.taken && l.cwd === cwd && matchesPhoneTyped(l, prompt)) {
       l.taken = true;
       return l.paths;
     }

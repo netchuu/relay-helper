@@ -163,7 +163,8 @@ export async function startSession(opts: {
   const printed = /\b([0-9a-f]{8})\b/.exec(`${res.out}\n${res.err}`)?.[1];
   const found = printed ? await findSession(opts.claudeBin, known.path, printed) : null;
   if (!found) {
-    launch.abort();
+    // Claude Code did start it: the session's first message is still the phone's, not typing at the Mac.
+    launch.keep();
     throw new StartError("unavailable", "Claude Code started, but the new session wasn't found.", {
       ...(printed ? { shortId: printed } : {}),
     });
