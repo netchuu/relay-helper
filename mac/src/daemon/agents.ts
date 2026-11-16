@@ -318,7 +318,9 @@ export class AgentRuns {
       if (this.settled.has(id)) continue;
       let meta: Meta;
       try {
-        meta = JSON.parse(readFileSync(join(this.dir, name), "utf8")) as Meta;
+        const parsed: unknown = JSON.parse(readFileSync(join(this.dir, name), "utf8"));
+        if (parsed === null || typeof parsed !== "object") continue;
+        meta = parsed as Meta;
       } catch {
         continue;
       }

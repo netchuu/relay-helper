@@ -258,6 +258,16 @@ describe("a subagent's files that are broken", () => {
     return reader;
   };
 
+  test("a meta file holding null is skipped", () => {
+    const s = session();
+    s.main(call("u1", 0, "t1", "Agent", { description: "Meta" }));
+    s.meta("a1", "null");
+    s.raw("a1", `${JSON.stringify(readOf(1, "a.ts"))}\n`);
+    const reader = readerOf(s.path);
+    reader.refreshAgents();
+    expect(stepOf(reader)).toMatchObject({ running: true });
+  });
+
   test("garbage lines between good ones are skipped", () => {
     const s = session();
     s.main(call("u1", 0, "t1", "Agent", { description: "Messy" }));
