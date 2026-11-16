@@ -11,6 +11,8 @@ const perSession = new Map<string, Usage>();
 const lastLimits = new Map<string, Pick<Usage, "fiveHour" | "sevenDay">>();
 /** The plan's limits belong to the account, not a session: the newest ones seen, for a session that has none yet. */
 let accountLimits: Pick<Usage, "fiveHour" | "sevenDay"> = {};
+/** The session whose reading is kept for each window: a reading without a reset time is only as good as it is. */
+const keptFrom: { fiveHour?: string; sevenDay?: string } = {};
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const percent = (v: unknown): number | null => {
@@ -63,7 +65,8 @@ function newer(
     // No reset time: arrival order says nothing about age. A session that sends the same reading again is idle;
     // one whose reading changed is current, so it may go down. A kept reading whose reset has passed is stale.
     if (kept.resetsAt !== undefined) return kept.resetsAt <= now ? seen : kept;
-    if (previous === undefined) return seen.usedPercent > kept.usedPercent ? seen : kept;
+    // A session's first reading is current, higher or lower: the kept one is older, or from a session that ended.
+    if (previous === undefined) return seen;
     return previous.resetsAt === undefined && previous.usedPercent === seen.usedPercent ? kept : seen;
   }
   const a = kept.resetsAt ?? 0;
@@ -90,6 +93,8 @@ export function noteUsageAll(sessionId: string, usage: Usage | null): string[] {
   const now = Date.now();
   const fiveHour = newer(accountLimits.fiveHour, usage.fiveHour, prev.fiveHour, now);
   const sevenDay = newer(accountLimits.sevenDay, usage.sevenDay, prev.sevenDay, now);
+  if (fiveHour !== accountLimits.fiveHour) keptFrom.fiveHour = sessionId;
+  if (sevenDay !== accountLimits.sevenDay) keptFrom.sevenDay = sessionId;
   accountLimits = { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}) };
   return [...ids].filter((id) => JSON.stringify(usageOf(id) ?? null) !== before.get(id));
 }
@@ -119,6 +124,13 @@ export function usageOf(sessionId: string, now = Date.now()): Usage | undefined 
 export function forgetUsage(sessionId: string): void {
   perSession.delete(sessionId);
   lastLimits.delete(sessionId);
+  // A kept reading without a reset time has no live session behind it any more: a new session's reading replaces it.
+  for (const w of ["fiveHour", "sevenDay"] as const) {
+    if (keptFrom[w] === sessionId && accountLimits[w]?.resetsAt === undefined) {
+      delete accountLimits[w];
+      delete keptFrom[w];
+    }
+  }
 }
 
 /** Tests only. */
@@ -126,4 +138,6 @@ export function resetUsage(): void {
   perSession.clear();
   lastLimits.clear();
   accountLimits = {};
+  delete keptFrom.fiveHour;
+  delete keptFrom.sevenDay;
 }

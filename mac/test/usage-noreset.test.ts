@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { noteUsage, parseUsage, resetUsage, usageOf } from "../src/daemon/usage.ts";
+import { forgetUsage, noteUsage, parseUsage, resetUsage, usageOf } from "../src/daemon/usage.ts";
 
 beforeEach(() => resetUsage());
 
@@ -48,4 +48,32 @@ test("a context-only payload does not make an idle session forget its limit", ()
   noteUsage("b", five(95));
   expect(usageOf("b")?.fiveHour?.usedPercent).toBe(2);
   expect(usageOf("a")?.fiveHour?.usedPercent).toBe(2);
+});
+
+const week = (usedPercent: number) => ({ contextLeftPercent: 80, sevenDay: { usedPercent } });
+
+test("a new session's reading replaces the one left by a session that ended", () => {
+  noteUsage("a", week(90));
+  noteUsage("a", week(95));
+  forgetUsage("a");
+  noteUsage("b", week(2));
+  expect(usageOf("b")?.sevenDay?.usedPercent).toBe(2);
+});
+
+test("a new session's reading stays at every refresh until its percentage changes", () => {
+  noteUsage("a", week(95));
+  forgetUsage("a");
+  for (let i = 0; i < 6; i++) noteUsage("b", week(2));
+  const stuck = usageOf("b")?.sevenDay?.usedPercent;
+  noteUsage("b", week(3));
+  expect([stuck, usageOf("b")?.sevenDay?.usedPercent]).toEqual([2, 3]);
+});
+
+test("a new session's reading replaces the one of an idle session that is still open", () => {
+  noteUsage("a", week(95));
+  for (let i = 0; i < 6; i++) {
+    noteUsage("b", week(2));
+    noteUsage("a", week(95));
+  }
+  expect(usageOf("b")?.sevenDay?.usedPercent).toBe(2);
 });
