@@ -350,6 +350,10 @@ export function createRpc(
     "attachment.discard": async (params, actor) => {
       // A send that has taken its turn holds this file until it has delivered (or failed): wait, then delete.
       while (held.has(params.id)) await held.get(params.id);
+      // A message that waits in the reply queue is typed later with this file's path: keep the file until then.
+      const saved = d.attachments?.savedFile(params.id);
+      if (saved && d.replies?.list(saved.sessionId).some((r) => r.text.includes(saved.path)))
+        throw new RpcFailure("conflict", "A message that includes this file is waiting to be sent.");
       const result = attempt(() => attachmentsOrFail().discard(params));
       if (result.discarded) audit(d.db, actor, "attachment.discard", { id: params.id });
       return result;

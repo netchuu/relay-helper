@@ -352,6 +352,13 @@ export class AttachmentStore {
     return { id: r.id, discarded: true };
   }
 
+  /** Where a finished, not removed attachment is saved and which session owns it; null otherwise. */
+  savedFile(id: string): { sessionId: string; path: string } | null {
+    const r = this.row(id);
+    if (!r || r.finished_at === null || r.removed_at !== null || !r.path) return null;
+    return { sessionId: r.session_id, path: r.path };
+  }
+
   /** The saved attachments for `session.send`, in order, each once; refuses too many, foreign, unfinished or removed ones. */
   forSend(sessionId: string, ids: string[]): AttachmentRef[] {
     const unique = [...new Set(ids)];
