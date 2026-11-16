@@ -415,12 +415,17 @@ export class HookHandler {
     log.info("prompt opened", { promptId: prompt.id, kind: prompt.kind, tool: input.tool_name });
     // The hook ends when the dialog is answered in the terminal; nothing else follows a No or Esc, so close it here.
     // PreToolUse(dN) comes right before PermissionRequest(dN): tie the prompt to its tool.
-    const toolId = this.steps.promptOpened(
-      input.session_id,
-      input.tool_name,
-      input.tool_input as Record<string, unknown> | undefined,
-      this.d.registry.get(input.session_id)?.cwd ?? null,
-    );
+    // A subagent's tools never reach the step tracker, so its prompt isn't tracked either.
+    const agentId = (input as unknown as Record<string, unknown>).agent_id;
+    const toolId =
+      typeof agentId === "string" && agentId
+        ? null
+        : this.steps.promptOpened(
+            input.session_id,
+            input.tool_name,
+            input.tool_input as Record<string, unknown> | undefined,
+            this.d.registry.get(input.session_id)?.cwd ?? null,
+          );
     // A phone Allow marks nothing: the tool runs and its end hook follows. A phone Deny (or plan changes)
     // is the same as a terminal No: the tool never runs, so mark it and let the next tool replace it.
     let answered = false;

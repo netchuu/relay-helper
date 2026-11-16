@@ -300,6 +300,15 @@ export interface ToolCall {
   agentId: string | null;
 }
 
+interface PendingPrompt {
+  label: string;
+  outcome: "open" | "denied" | "closed";
+  /** The tool this prompt got tied to once its PreToolUse came. */
+  toolId: string | null;
+}
+
+let pendingSeq = 0;
+
 interface TurnState {
   turnId: string;
   running: Map<string, TurnStep>;
@@ -309,6 +318,8 @@ interface TurnState {
   dropped: Set<string>;
   /** Running tools a permission prompt is tied to. */
   prompted: Set<string>;
+  /** Prompts that opened before their tool's PreToolUse arrived: the first matching PreToolUse takes them over. */
+  pendingPrompts: Map<string, PendingPrompt>;
   ended: Set<string>;
   sawPre: boolean;
   current: TurnStep;
@@ -363,6 +374,7 @@ export class StepTracker {
       unresolved: new Set(),
       dropped: new Set(),
       prompted: new Set(),
+      pendingPrompts: new Map(),
       ended: new Set(),
       sawPre: false,
       current: { kind: "thinking", label: THINKING_LABEL, at: Date.now() },
@@ -388,7 +400,21 @@ export class StepTracker {
     }
     state.unresolved.clear();
     const step = { ...stepFor(call.toolName, call.input, call.cwd, "live"), at: Date.now() };
+    // A prompt opened before this PreToolUse arrived: tie it to this tool now.
+    const pending = [...state.pendingPrompts.values()].find((p) => !p.toolId && p.label === step.label);
+    if (pending) {
+      pending.toolId = id;
+      if (pending.outcome === "denied") {
+        // Denied already: the tool never runs, a late end hook is only recorded.
+        state.dropped.add(id);
+        return;
+      }
+    }
     state.running.set(id, step);
+    if (pending) {
+      if (pending.outcome === "closed") state.unresolved.add(id);
+      else state.prompted.add(id);
+    }
     this.cancelThinking(state);
     this.show(sessionId, state, step);
   }
@@ -406,7 +432,12 @@ export class StepTracker {
     const match = [...state.running]
       .reverse()
       .find(([id, step]) => step.label === label && !state.prompted.has(id));
-    if (!match) return null;
+    if (!match) {
+      // Its PreToolUse hasn't arrived (async hooks are late and unordered): wait for it.
+      const handle = `pending-${++pendingSeq}`;
+      state.pendingPrompts.set(handle, { label, outcome: "open", toolId: null });
+      return handle;
+    }
     state.prompted.add(match[0]);
     return match[0];
   }
@@ -414,14 +445,28 @@ export class StepTracker {
   /** A permission prompt closed at the terminal: marks its tool, if still running. */
   promptClosed(sessionId: string, toolId: string | null): void {
     const state = this.turns.get(sessionId);
-    if (!state || !toolId || !state.running.has(toolId)) return;
+    if (!state || !toolId) return;
+    const pending = state.pendingPrompts.get(toolId);
+    if (pending) {
+      pending.outcome = "closed";
+      if (!pending.toolId) return;
+      toolId = pending.toolId;
+    }
+    if (!state.running.has(toolId)) return;
     state.unresolved.add(toolId);
   }
 
   /** The phone denied a tool: it never runs, so stop showing it; a late end hook is recorded without becoming live. */
   toolDenied(sessionId: string, toolId: string | null): void {
     const state = this.turns.get(sessionId);
-    if (!state || !toolId || !state.running.delete(toolId)) return;
+    if (!state || !toolId) return;
+    const pending = state.pendingPrompts.get(toolId);
+    if (pending) {
+      pending.outcome = "denied";
+      if (!pending.toolId) return;
+      toolId = pending.toolId;
+    }
+    if (!state.running.delete(toolId)) return;
     state.dropped.add(toolId);
     state.unresolved.delete(toolId);
     state.prompted.delete(toolId);
@@ -452,6 +497,14 @@ export class StepTracker {
     }
     if (late) return;
     if (!started) {
+      // A prompt waiting for a PreToolUse that never came for this tool: this end hook is that tool, so the wait is over.
+      const label = stepFor(call.toolName, call.input, call.cwd, "live").label;
+      for (const [handle, p] of state.pendingPrompts) {
+        if (!p.toolId && p.label === label) {
+          state.pendingPrompts.delete(handle);
+          break;
+        }
+      }
       // No PreToolUse seen (yet, or ever: a session from before the hook): show this tool for now.
       this.show(sessionId, state, {
         ...stepFor(call.toolName, call.input, call.cwd, "live"),
