@@ -27,7 +27,20 @@ const secretFlag = (flag: string) => {
 };
 
 /** A word that may stand after a secret-looking name in code: `req.body.password`, `process.env.GITHUB_TOKEN`. */
-const codeReference = (v: string) => /^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(v);
+const CODE_ROOTS =
+  /^(?:this|self|req|request|res|response|process|env|config|conf|cfg|settings|options|opts|args|argv|params|props|state|ctx|context|data|body|headers|session|secrets|creds|credentials|vault|os|window|global|globalThis|user|input|form|db|cli|flags|vars)$/;
+const codeReference = (v: string) => {
+  if (!/^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)+$/.test(v)) return false;
+  const parts = v.split(/\??\./);
+  // A random token or a dotted password has the same shape. Only a well-known root (`req.`, `process.env.`),
+  // or a lowercase chain that ends in a secret word (`form.data.password`), reads as code.
+  if (CODE_ROOTS.test(parts[0]!)) return parts.every((p) => p.length <= 40);
+  return (
+    /^[a-z_$]/.test(parts[0]!) &&
+    /(?:token|password|passwd|secret|key)$/i.test(parts[parts.length - 1]!) &&
+    parts.every((p) => p.length <= 24)
+  );
+};
 
 /**
  * The name before `:` or `=` has to end with the secret word (`MY_API_KEY`, `clientSecret`, `db.password_hash`),
