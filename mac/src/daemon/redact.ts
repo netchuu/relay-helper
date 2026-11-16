@@ -100,7 +100,8 @@ const RULES: Rule[] = [
     // `--token X`, `--password=X`, `--api-key X`. After a space the value has to look like a value, not a word:
     // "the --token flag" is prose.
     kind: "cli-secret",
-    re: /(--[a-z0-9-]*(?:token|password|passwd|passphrase|secret|api-?key|access-?key|auth)[a-z0-9-]*)(=|\s+)('[^']*'|"[^"]*"|[^\s'"-][^\s]*)/gi,
+    // The runs around the keyword are capped: an unbounded `[a-z0-9-]*` made a long unbroken run of dashes quadratic.
+    re: /(--[a-z0-9-]{0,40}(?:token|password|passwd|passphrase|secret|api-?key|access-?key|auth)[a-z0-9-]{0,40})(=|\s+)('[^']*'|"[^"]*"|[^\s'"-][^\s]*)/gi,
     replace: (m, flag = "", sep = "", v = "") => {
       const bare = v.replace(/^['"]|['"]$/g, "");
       if (!secretFlag(flag)) return m;
