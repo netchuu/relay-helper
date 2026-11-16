@@ -1,8 +1,4 @@
-/**
- * Writes protocol/fixtures/e2e.json: a fixed end-to-end handshake and frames produced by the Mac's
- * implementation (mac/src/daemon/e2e.ts). The iOS tests (CryptoKit) must derive the same keys and
- * produce/accept the same bytes. Run: bun protocol/e2e-fixture.ts
- */
+/** Writes protocol/fixtures/e2e.json: a fixed handshake and frames the iOS tests (CryptoKit) must reproduce; `bun protocol/e2e-fixture.ts`. */
 import { createPublicKey, diffieHellman } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

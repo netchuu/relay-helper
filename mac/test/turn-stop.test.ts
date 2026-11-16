@@ -22,11 +22,7 @@ import { liveStep, resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
 import { transcriptTurns } from "../src/daemon/transcript.ts";
 
-/**
- * The phone's Stop, case by case: inputs, the order of routes, the session's state, transcript history,
- * concurrency, push and audit, compatibility, and turns that start right after a stop. Fakes stand in for tmux,
- * relay shell, iTerm2 and the inbox; nothing reaches a real terminal.
- */
+/** The phone's Stop case by case, with fakes for tmux, relay shell, iTerm2 and the inbox; nothing reaches a real terminal. */
 
 const dirs: string[] = [];
 afterEach(() => {

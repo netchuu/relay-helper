@@ -1,5 +1,4 @@
-// Live messages: nested code fences at the paragraph cut, prompts queued during Stop's wait, and a Stop that arrives
-// after the next prompt's hook.
+// Live messages: nested fences at the paragraph cut, prompts queued during Stop's wait, a Stop after the next prompt's hook.
 import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

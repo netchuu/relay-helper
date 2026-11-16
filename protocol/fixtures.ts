@@ -1,8 +1,4 @@
-/**
- * Writes protocol/fixtures/*.json: one validated example of every message the daemon sends.
- * The Swift package decodes the same files in its tests, so a change on either side that breaks the
- * wire format fails a test instead of failing on your phone. Run: bun protocol/fixtures.ts
- */
+/** Writes protocol/fixtures/*.json, one validated example of every daemon message, which the Swift tests decode; `bun protocol/fixtures.ts`. */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -728,9 +724,7 @@ const resume = {
   },
 };
 
-// recorded-transcripts: the turns the helper makes from real Claude Code transcripts (mac/test/fixtures/transcripts/,
-// recorded by `bun run record:transcripts`), so the apps decode what a real session produces: an [Image #N] prompt, a
-// stopped turn, an agent, a background shell, a failed tool. Oldest turn first, as the phone lists them.
+// recorded-transcripts: turns made from real Claude Code transcripts, oldest first, as the phone lists them.
 const transcriptsDir = join(import.meta.dir, "..", "mac", "test", "fixtures", "transcripts");
 const recordedIndex = JSON.parse(readFileSync(join(transcriptsDir, "index.json"), "utf8")) as Record<
   string,

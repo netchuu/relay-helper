@@ -1,5 +1,4 @@
-// Turn timeline: rows after a helper restart, odd tool names and ids, the same tool call or hook twice, entries
-// without a timestamp, and thinking blocks that share an entry or a time.
+// Turn timeline: restarts, odd tool names and ids, repeated calls or hooks, missing timestamps, shared thinking blocks.
 import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

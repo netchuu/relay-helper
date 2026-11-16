@@ -1,17 +1,9 @@
-/**
- * Relay wire protocol, shared by the Mac daemon and the iOS app.
- *
- * This file is the single source of truth: Swift `Codable` types are generated from the JSON Schema
- * produced from these zod schemas (see `bun run gen:protocol`, Phase 2). Bump PROTOCOL_VERSION on any
- * breaking change.
- */
+/** Relay wire protocol shared by the Mac daemon and the iOS app (zod schemas); bump PROTOCOL_VERSION on any breaking change. */
 import { z } from "zod";
 
 export const PROTOCOL_VERSION = 1;
 
-// ---------------------------------------------------------------------------------------------------
 // Domain objects
-// ---------------------------------------------------------------------------------------------------
 
 export const SessionStatus = z.enum(["working", "idle", "waiting", "ended"]);
 export type SessionStatus = z.infer<typeof SessionStatus>;
@@ -19,12 +11,7 @@ export type SessionStatus = z.infer<typeof SessionStatus>;
 export const SessionKind = z.enum(["interactive", "background", "unknown"]);
 export type SessionKind = z.infer<typeof SessionKind>;
 
-/**
- * One thing Claude did in a turn. The helper writes `label` in the words the
- * phones show: the live form in `turn.step` and `Session.step` ("Reading protocol/index.ts"), the finished form
- * in `Turn.steps` ("Read protocol/index.ts"). Apps read `kind` as a plain string and treat one they don't know
- * as "other".
- */
+/** One thing Claude did in a turn: `label` is live in `turn.step`, finished in `Turn.steps`; apps treat an unknown `kind` as "other". */
 export const TurnStepKind = z.enum([
   "thinking",
   "read",
@@ -42,11 +29,7 @@ export type TurnStepKind = z.infer<typeof TurnStepKind>;
 
 /** At most this many characters in a step's label (one line, redacted). */
 export const TURN_STEP_LABEL_MAX = 80;
-/**
- * Storage guard in UTF-16 units (what zod's max counts). 80 of the longest emoji people use (a family with skin
- * tones is 19 units, a tag-sequence flag 14) stay well under it; the helper also cuts a label to it, between
- * characters, so one made of many combining marks per character still fits.
- */
+/** Storage guard in UTF-16 units (what zod's max counts); the helper also cuts a label to it between characters. */
 export const TURN_STEP_LABEL_UNITS = 4000;
 /** A finished turn keeps at most this many steps; `Turn.stepsMore` counts the rest. */
 export const TURN_STEPS_MAX = 100;
@@ -100,12 +83,7 @@ const TurnStepBase = z.object({
   state: z.string().max(40).optional(),
 });
 
-/**
- * One step. An agent's (Agent/Task tool) or workflow's step also carries its progress: how many steps the agent
- * has taken, its current one (live), and its own steps (`children`, at most TURN_STEP_CHILDREN_MAX, without
- * details; for a workflow, one line per agent with its label and `state`). Sent live in `turn.action` by the same
- * `id` and kept in the finished turn.
- */
+/** One step; an agent's or workflow's also carries progress (`children`, at most TURN_STEP_CHILDREN_MAX, without details). */
 export const TurnStep = TurnStepBase.extend({
   /** How many steps the agent has taken so far (all of them, also those beyond `children`). */
   stepCount: z.number().int().nonnegative().optional(),
@@ -121,11 +99,7 @@ export const TurnStep = TurnStepBase.extend({
 });
 export type TurnStep = z.infer<typeof TurnStep>;
 
-/**
- * Something Claude wrote between its tool calls in a turn: Markdown, redacted,
- * cut at TURN_MESSAGE_MAX characters. Sent live in `turn.message`; a finished turn keeps them in `Turn.messages`,
- * without its final answer (that stays `Turn.summary`).
- */
+/** Something Claude wrote between tool calls: Markdown, redacted, cut at TURN_MESSAGE_MAX; sent in `turn.message`. */
 export const TURN_MESSAGE_MAX = 2000;
 /** Storage guard in UTF-16 units; the helper also cuts a message to it, between characters. */
 export const TURN_MESSAGE_UNITS = 40_000;
@@ -147,10 +121,7 @@ export const TurnMessage = z.object({
 });
 export type TurnMessage = z.infer<typeof TurnMessage>;
 
-/**
- * Something Claude left running after a turn: a shell or an agent, from Claude
- * Code's own list at the end of each turn. Apps treat a `kind` they don't know as "agent".
- */
+/** Something Claude left running after a turn (a shell or an agent); apps treat an unknown `kind` as "agent". */
 export const BackgroundTask = z.object({
   id: z.string(),
   kind: z.string(),
@@ -174,28 +145,20 @@ export const BackgroundTask = z.object({
 });
 export type BackgroundTask = z.infer<typeof BackgroundTask>;
 
-// ---------------------------------------------------------------------------------------------------
 // Attachments: photos and files sent from a phone reach Claude as file paths.
-// ---------------------------------------------------------------------------------------------------
 
 /** At most this many attachments in one message (`session.send`). */
 export const ATTACHMENTS_MAX = 10;
 /** At most this many bytes in one attachment: 50 MB. */
 export const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
-/**
- * Bytes in one `attachment.chunk` and one `attachment.get` reply (the last chunk may be shorter). Base64 makes
- * it about 175 KB of JSON, which with the encryption fits in one relay frame (256 KiB, `cloud/src/index.ts`).
- */
+/** Bytes in one chunk or `attachment.get` reply; as base64 JSON it fits one relay frame (256 KiB, cloud/src/index.ts). */
 export const ATTACHMENT_CHUNK_BYTES = 128 * 1024;
 /** How long an unfinished upload is kept (ms). */
 export const ATTACHMENT_UPLOAD_TTL_MS = 60 * 60_000;
 /** How long a saved attachment is kept on the computer (ms). */
 export const ATTACHMENT_KEEP_MS = 7 * 86_400_000;
 
-/**
- * An attachment saved on the computer. `path` is the absolute path as it was typed into the session (without the
- * quotes added around a path with spaces), so an app can find it in a prompt and show a chip instead.
- */
+/** An attachment saved on the computer; `path` is as typed into the session (unquoted), so an app can show a chip. */
 export const AttachmentRef = z.object({
   id: z.string(),
   /** The file name the phone sent ("IMG_1234.HEIC"), without the helper's id prefix. */
@@ -226,10 +189,7 @@ export const AttachmentChunkAck = z.object({
 });
 export type AttachmentChunkAck = z.infer<typeof AttachmentChunkAck>;
 
-/**
- * `attachment.get`'s result: chunk `index` of the file (base64), or with `thumbnail` a small JPEG of an image in
- * one chunk. `size` and `sha256` describe what is fetched (the file, or the thumbnail).
- */
+/** `attachment.get`'s result: chunk `index` (base64), or with `thumbnail` a small JPEG; `size` and `sha256` describe what is fetched. */
 export const AttachmentData = z.object({
   id: z.string(),
   name: z.string(),
@@ -244,42 +204,25 @@ export const AttachmentData = z.object({
 });
 export type AttachmentData = z.infer<typeof AttachmentData>;
 
-/**
- * `attachment.discard`'s result. `discarded` is false when there was nothing to discard (an unknown id, or one
- * already removed), which is not an error: a phone may discard the same attachment twice.
- */
+/** `attachment.discard`'s result; `discarded` is false for an unknown or already removed id, which is not an error. */
 export const AttachmentDiscarded = z.object({
   id: z.string(),
   discarded: z.boolean(),
 });
 export type AttachmentDiscarded = z.infer<typeof AttachmentDiscarded>;
 
-/**
- * `session.send`'s result: how the message went in (`tmux`, `iterm`, `pty`, `socket`, ...), or `queued` when it waits
- * for the Mac to be unlocked or for a pause in your typing and is typed then. `repeat`: this `sendId` was
- * delivered already, so nothing was typed again; `via` is what the first send answered. Sent only as true.
- * `reason` (optional, only with `queued`): `locked` (the Mac is locked), `typing` (someone is typing in that
- * terminal right now) or `draft` (unsent text in its prompt). Changes arrive as `reply.waiting` events.
- */
+/** `session.send`'s result: how it went in (`tmux`, `iterm`, `pty`, `socket`, ...) or `queued`; `repeat` (only true): this `sendId` was delivered already. */
 export const SendResult = z.object({
   via: z.string(),
   repeat: z.literal(true).optional(),
   /** With `via: "queued"`: why it waits. Older helpers leave it out, and the phone then says the Mac is locked. */
   reason: z.enum(["locked", "typing", "draft"]).optional(),
-  /**
-   * With `via: "socket"`: Claude Code didn't take the message, it waits for approval at the Mac (a session that
-   * skips permission prompts holds inbox messages). Sent only as true; `reply.held` events say when it was delivered
-   * or expired. Older helpers leave it out, and the phone then shows the message as sent.
-   */
+  /** With `via: "socket"`: Claude Code holds the message for approval at the Mac (only true); `reply.held` events follow. */
   heldAtMac: z.literal(true).optional(),
 });
 export type SendResult = z.infer<typeof SendResult>;
 
-/**
- * `session.delivered`'s result: whether the helper has the message sent with this `sendId` (typed in, or
- * queued to be), and then how, as `session.send` answered. False: it never arrived, or its send failed, so Try Again
- * should send it.
- */
+/** `session.delivered`'s result: whether the helper has the message with this `sendId`, and how it went in. */
 export const DeliveryCheck = z.object({
   delivered: z.boolean(),
   via: z.string().optional(),
@@ -298,10 +241,7 @@ export const UsageLimit = z.object({
 });
 export type UsageLimit = z.infer<typeof UsageLimit>;
 
-/**
- * What is left of the limits, from Claude Code's status line (usage-left). Every part is optional: the plan limits
- * exist only for subscribers and only after the first response, and a window can be missing.
- */
+/** What is left of the limits, from Claude Code's status line; every part is optional. */
 export const Usage = z.object({
   /** Share of this session's context window still free, 0 to 100. */
   contextLeftPercent: z.number().optional(),
@@ -325,35 +265,18 @@ export const Session = z.object({
   terminal: z.string().nullable(),
   /** True when Relay can deliver free text into this session. */
   canReceive: z.boolean(),
-  /**
-   * How a reply sent now would arrive: "typed" as the person's own input, or "labelled" (through Claude Code's
-   * inbox, marked as from another session). Absent on older helpers, and when the session
-   * can't take replies. Apps show a hint for "labelled".
-   */
+  /** How a reply would arrive: "typed" as the person's own input or "labelled" (through the inbox); absent on older helpers. */
   replyRoute: z.enum(["typed", "labelled"]).optional(),
-  /**
-   * With replyRoute "labelled": what would make replies arrive typed. "accessibility" means the session is in the
-   * Claude desktop app or an editor on a Mac where relay hasn't been allowed in Accessibility. Absent when nothing
-   * the person can switch on helps (Terminal.app, Linux outside tmux…).
-   */
+  /** With "labelled": what would make replies arrive typed ("accessibility"); absent when nothing the person can switch on helps. */
   replyFix: z.enum(["accessibility"]).optional(),
-  /**
-   * Present (true) only while the session runs in a Claude Code process the helper started for it
-   * (`session.resume`), with no terminal. Replies go to that process. Older apps ignore it.
-   */
+  /** True only while the session runs in a Claude Code process the helper started (`session.resume`); replies go to it. */
   runsInHelper: z.literal(true).optional(),
   startedAt: z.number(),
   updatedAt: z.number(),
   lastSummary: z.string().nullable(),
-  /**
-   * Present only when the session was renamed from a phone (`session.rename`): what `name` would be without the
-   * rename (Claude Code's name, or null). `name` then holds the phone's name, so older apps show it too.
-   */
+  /** Only when renamed from a phone (`session.rename`): what `name` would be without it; `name` then holds the phone's name. */
   originalName: z.string().nullable().optional(),
-  /**
-   * When the session was pinned to the top of the Sessions list (`session.pin`), in ms since epoch. Present only
-   * when pinned; the apps list pinned sessions newest pin first. Older apps ignore it.
-   */
+  /** When the session was pinned (`session.pin`), in ms since epoch; present only when pinned, newest pin first. */
   pinnedAt: z.number().nullable().optional(),
   /** What Claude is doing right now (live form), while the session works; absent otherwise. */
   step: TurnStep.nullable().optional(),
@@ -365,28 +288,16 @@ export const Session = z.object({
   effort: z.string().optional(),
   /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
   usage: Usage.optional(),
-  /**
-   * The next message Claude Code suggests in its prompt (one line, redacted), present only while the session is idle
-   * and the helper can read the suggestion off the terminal screen. Absent when there is none. Older apps ignore it.
-   */
+  /** The next message Claude Code suggests (one line, redacted), present only while idle and readable off the screen. */
   suggestion: z.string().optional(),
   /** Present (true) while a reply to this session waits for approval at the Mac (`reply.held`); absent otherwise. */
   heldAtMac: z.literal(true).optional(),
-  /**
-   * Claude Code's permission mode as the session's last hook reported it ("default", "acceptEdits", "plan",
-   * "bypassPermissions"...); absent when none has. In a session that skips permission prompts, replies sent through
-   * the inbox may need approval at the Mac, so a phone can say so beforehand.
-   */
+  /** Claude Code's permission mode from the last hook; a session that skips prompts may need approval at the Mac for inbox replies. */
   permissionMode: z.string().optional(),
 });
 export type Session = z.infer<typeof Session>;
 
-/**
- * A name given to a session from a phone: one line, at most 60 characters as people see them (grapheme
- * clusters: an emoji with a skin tone or an accented letter counts once, as Swift's String.count does; Android
- * counts with BreakIterator.getCharacterInstance). Line breaks of any kind are refused, and a name with nothing
- * visible in it clears the name.
- */
+/** A name given from a phone: one line, at most 60 characters as people see them (grapheme clusters, as Swift's String.count). */
 export const SESSION_NAME_MAX = 60;
 /** Storage guard for long emoji sequences; far above any 60-character name people type. */
 const SESSION_NAME_MAX_UNITS = 1000;
@@ -423,10 +334,7 @@ export const Turn = z.object({
   failed: z.boolean(),
   startedAt: z.number().nullable(),
   endedAt: z.number(),
-  /**
-   * True on a turn the user stopped (the phone's Stop, session.interrupt, or Esc at the computer); sent only
-   * when true. `failed` stays false on it.
-   */
+  /** True on a turn the user stopped (the phone's Stop, session.interrupt, or Esc); sent only when true; `failed` stays false. */
   stopped: z.boolean().optional(),
   /** The turn's tool calls, oldest first, in the finished form ("Read …"); at most TURN_STEPS_MAX. */
   steps: z.array(TurnStep).max(TURN_STEPS_MAX).optional(),
@@ -438,20 +346,12 @@ export const Turn = z.object({
   messages: z.array(TurnMessage).max(TURN_MESSAGES_MAX).optional(),
   /** How many messages were left out over TURN_MESSAGES_MAX. */
   messagesMore: z.number().int().positive().optional(),
-  /**
-   * Attachments whose paths are in `prompt` (attachments), in the order they appear; absent when none. `prompt`
-   * still has the paths, so older apps show them as text.
-   */
+  /** Attachments whose paths are in `prompt`, in order; absent when none (`prompt` keeps the paths for older apps). */
   attachments: z.array(AttachmentRef).optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
-/**
- * How session.interrupt reached Claude: "prompt" answered an open prompt with deny-and-interrupt; "pty",
- * "tmux", "iterm" pressed Esc in the terminal; "inbox" stopped it through Claude Code's inbox. "message": the
- * stop went through the inbox but didn't stop the turn (yet), so the phone says it asked Claude to stop.
- * "headless": the helper told the Claude Code process it runs itself (a continued session) to stop its turn. Apps treat any other value as a stop, so later routes don't break them.
- */
+/** How session.interrupt reached Claude ("message": asked, not stopped yet); apps treat any other value as a stop. */
 export const InterruptVia = z.enum(["prompt", "pty", "tmux", "iterm", "inbox", "message", "headless"]);
 export type InterruptVia = z.infer<typeof InterruptVia>;
 
@@ -531,10 +431,7 @@ export const Prompt = z.object({
   resolvedAt: z.number().nullable(),
   /** What was decided, in a few words ("SwiftData", "Allowed", "Revised: add tests"); null while open or unknown. */
   outcome: z.string().nullable().optional(),
-  /**
-   * Optional: true when a long text in `payload` was cut so a snapshot or a list fits the relay's limit; each cut
-   * ends with "… (N more characters)". Absent when nothing was cut.
-   */
+  /** True when a long text in `payload` was cut to fit the relay's limit (each cut ends "… (N more characters)"). */
   truncated: z.boolean().optional(),
 });
 export type Prompt = z.infer<typeof Prompt>;
@@ -544,11 +441,7 @@ export const Answer = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("question"),
     answers: z.record(z.string(), z.string()),
-    /**
-     * Optional: question text to the index of the option picked (a button on a notification shows a short title,
-     * so the label in `answers` may be cut). When it names an option of that question, that option's full label is
-     * the answer. Older phones leave it out and `answers` counts alone.
-     */
+    /** Question text to the index of the option picked, since a notification button shows a cut title; older phones leave it out. */
     choices: z.record(z.string(), z.number().int().min(0)).optional(),
   }),
   z.object({
@@ -564,18 +457,12 @@ export const Answer = z.discriminatedUnion("kind", [
 ]);
 export type Answer = z.infer<typeof Answer>;
 
-/**
- * The computer the phone is paired with, sent in the `pair` and `hello` replies (and the direct `/pair`
- * response). Optional: apps treat a missing `host` as a Mac.
- */
+/** The computer the phone is paired with, in the `pair` and `hello` replies; a missing `host` means a Mac. */
 export const HostInfo = z.object({
   os: z.enum(["macos", "linux"]),
   /** "Ana's MacBook Pro", or the short hostname on Linux. May be empty. */
   name: z.string(),
-  /**
-   * Optional: the helper can start a Claude Code session from the phone (`sessions.directories`, `session.start`).
-   * Sent as true only when it can find `claude`; an app that doesn't see it hides the entry point.
-   */
+  /** True only when the helper can find `claude` and so start a session from the phone (`session.start`). */
   canStartSessions: z.boolean().optional(),
 });
 export type HostInfo = z.infer<typeof HostInfo>;
@@ -595,10 +482,7 @@ export type SessionDirectory = z.infer<typeof SessionDirectory>;
 export const SessionStarted = z.object({ sessionId: z.string() });
 export type SessionStarted = z.infer<typeof SessionStarted>;
 
-/**
- * `session.resume`'s result: the message went to a Claude Code process the helper started for this session
- * (`via: "headless"`). The session's turns appear like any other's, and its `Session` carries `runsInHelper`.
- */
+/** `session.resume`'s result: the message went to a Claude Code process the helper started (`via: "headless"`). */
 export const SessionResumed = z.object({ via: z.literal("headless") });
 export type SessionResumed = z.infer<typeof SessionResumed>;
 
@@ -613,9 +497,7 @@ export const Presence = z.object({
 });
 export type Presence = z.infer<typeof Presence>;
 
-// ---------------------------------------------------------------------------------------------------
 // Events (server -> client). Every event carries a monotonic `seq` so clients can resume with `sync`.
-// ---------------------------------------------------------------------------------------------------
 
 export const EventBody = z.discriminatedUnion("type", [
   z.object({ type: z.literal("session.upsert"), session: Session }),
@@ -652,19 +534,13 @@ export const EventBody = z.discriminatedUnion("type", [
     outcome: z.string().nullable().optional(),
   }),
   z.object({ type: z.literal("presence.changed"), presence: Presence }),
-  /**
-   * Why the replies waiting in a session (queued) wait now, sent when it changes: `locked`, `typing` or
-   * `draft`; null once nothing waits there any more (they were typed in or dropped). Never pushed.
-   */
+  /** Why replies queued in a session wait (`locked`, `typing`, `draft`); null once nothing waits. Never pushed. */
   z.object({
     type: z.literal("reply.waiting"),
     sessionId: z.string(),
     reason: z.enum(["locked", "typing", "draft"]).nullable(),
   }),
-  /**
-   * A reply sent through the inbox is held at the Mac (`waiting`), then taken by Claude (`delivered`) or dropped
-   * when the hold's time ran out (`expired`). `stop`: it was the phone's Stop. Never pushed.
-   */
+  /** A reply held at the Mac is `waiting`, then `delivered` or `expired`; `stop` marks the phone's Stop. Never pushed. */
   z.object({
     type: z.literal("reply.held"),
     sessionId: z.string(),
@@ -683,85 +559,42 @@ export type EventBody = z.infer<typeof EventBody>;
 export const RelayEvent = z.object({ seq: z.number(), ts: z.number() }).and(EventBody);
 export type RelayEvent = { seq: number; ts: number } & EventBody;
 
-// ---------------------------------------------------------------------------------------------------
-// RPC (client -> server). Over WebSocket: {id, method, params} -> {id, result} | {id, error}.
-// Over HTTPS: POST /rpc {method, params} -> {result} | {error}.
-// ---------------------------------------------------------------------------------------------------
+// RPC (client -> server). WebSocket: {id, method, params} -> {id, result} | {id, error}; HTTPS: POST /rpc.
 
 export const RpcSchemas = {
   sync: z.object({ sinceSeq: z.number().int().nonnegative().default(0) }),
   "sessions.list": z.object({ includeEnded: z.boolean().default(false) }),
-  /**
-   * The folders past sessions (ended ones too) ran in, most recently used first, one entry per folder, without folders
-   * that no longer exist on the Mac. Result: SessionDirectory[]. Older helpers answer "unknown method".
-   */
+  /** The folders past sessions ran in, most recent first, without ones that no longer exist. Older helpers: "unknown method". */
   "sessions.directories": z.object({}),
-  /**
-   * Starts a Claude Code session in the background (no window) in `directory`, with `text` as its first message,
-   * and answers with its id. `directory` must be a path `sessions.directories` lists; any other, or one that has
-   * disappeared since, is refused and nothing starts. `text` must not be empty. The session uses the Mac's
-   * normal permission settings: the phone can't choose a permission mode. It then shows up like any other
-   * session (`session.upsert`, kind `background`, its turns). Result: SessionStarted. Older helpers answer
-   * "unknown method"; `HostInfo.canStartSessions` says whether the helper can.
-   */
+  /** Starts a background session in a `sessions.directories` folder with `text` as its first message. Result: SessionStarted. */
   "session.start": z.object({
     directory: z.string().min(1).max(4096),
     text: z.string().max(20_000),
   }),
-  /**
-   * Continues a session that has no live Claude Code process (its terminal was closed): the helper starts
-   * `claude --resume` for it without a terminal, sends `text` as the first message and keeps the process, so later
-   * `session.send` messages reach it and its permission prompts reach the phone like any other. Refused with
-   * `conflict` (and a reason) when the session still has a live process, or already runs in the helper, and with
-   * `not_found` for an unknown session. `text` must not be empty. Result: SessionResumed. Older helpers answer
-   * "unknown method". It is never done by `session.send` itself: a failed send says `canResume` in its error.
-   */
+  /** Continues a session with no live process (`claude --resume`); `conflict` if one runs. Result: SessionResumed. */
   "session.resume": z.object({
     sessionId: z.string(),
     text: z.string().min(1).max(20_000),
   }),
-  /**
-   * A session's finished turns, newest first. `before` (optional): only turns that ended before this time, to
-   * page back through a long history. The phone gives the time its oldest turn started (its end when the start
-   * isn't known), not when it ended: the same turn read from the transcript ends a moment earlier than in the
-   * helper's record and would come back again. Older helpers ignore the field.
-   */
+  /** A session's finished turns, newest first; `before` pages back by the time the phone's oldest turn started. */
   "session.turns": z.object({
     sessionId: z.string(),
     limit: z.number().int().min(1).max(100).default(20),
     before: z.number().nonnegative().optional(),
   }),
-  /**
-   * Types a message into the session. With `attachments` (ids from `attachment.end`, at most ATTACHMENTS_MAX), the
-   * text typed is the message (if any) followed by the files' paths, one per line, quoted when they have spaces;
-   * `text` may then be empty. Errors are plain sentences the phone can show. Never retried automatically.
-   * Result: SendResult.
-   *
-   * `sendId` (optional): the phone's own id for this message, the same on Try Again. The helper remembers the
-   * ids it delivered (for a day, while it runs): a send with one of them again is answered with the first send's
-   * result and `repeat: true`, and typed nothing; one still on its way waits for it. A send that failed is forgotten,
-   * so Try Again sends it. Older helpers ignore the field.
-   */
+  /** Types a message, then its `attachments` as paths; a repeated `sendId` returns the first result with `repeat: true`. Result: SendResult. */
   "session.send": z.object({
     sessionId: z.string(),
     text: z.string().max(20_000).default(""),
     attachments: z.array(z.string()).max(100).optional(),
     sendId: z.string().min(1).max(SEND_ID_MAX).optional(),
   }),
-  /**
-   * Whether the message sent with this `sendId` reached the helper: the phone asks once when the reply to its
-   * `session.send` didn't come, before it says "Couldn't send". One still on its way is waited for. Result:
-   * DeliveryCheck. Older helpers answer "unknown method"; the phone then says "Couldn't send" as before.
-   */
+  /** Whether the message with this `sendId` reached the helper, asked before the phone says "Couldn't send". Result: DeliveryCheck. */
   "session.delivered": z.object({
     sessionId: z.string(),
     sendId: z.string().min(1).max(SEND_ID_MAX),
   }),
-  /**
-   * Starts an upload to an open session. `sha256` is the file's hex digest. Result: AttachmentUpload. Refused with a
-   * plain sentence when the session is unknown or ended, the file is over ATTACHMENT_MAX_BYTES, or the name has a
-   * slash, "..", or control or bidi characters. An upload not ended within an hour is removed.
-   */
+  /** Starts an upload (`sha256` is the hex digest); refused for an unknown or ended session, a file over ATTACHMENT_MAX_BYTES, or an unsafe name. */
   "attachment.begin": z.object({
     sessionId: z.string(),
     name: z.string().max(1000),
@@ -769,25 +602,15 @@ export const RpcSchemas = {
     size: z.number().int().nonnegative(),
     sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
   }),
-  /**
-   * One chunk (standard base64) of ATTACHMENT_CHUNK_BYTES bytes, the last one shorter. Sending a chunk again is
-   * harmless, so a phone can retry any chunk. Result: AttachmentChunkAck.
-   */
+  /** One base64 chunk of ATTACHMENT_CHUNK_BYTES bytes; sending it again is harmless. Result: AttachmentChunkAck. */
   "attachment.chunk": z.object({
     id: z.string(),
     index: z.number().int().nonnegative(),
     data: z.string().max(Math.ceil(ATTACHMENT_CHUNK_BYTES / 3) * 4 + 4),
   }),
-  /**
-   * Finishes an upload: checks the size and the hash and saves the file (0600) under
-   * ~/.relay/attachments/<session>/. Result: AttachmentRef. Calling it again after it succeeded returns the same.
-   */
+  /** Finishes an upload: checks size and hash, saves the file (0600) under ~/.relay/attachments/<session>/. Result: AttachmentRef. */
   "attachment.end": z.object({ id: z.string() }),
-  /**
-   * An attachment removed from the message before it was sent: an unfinished upload is dropped, a saved file is
-   * deleted (its row stays, marked removed, like one cleaned up after 7 days). Result: AttachmentDiscarded. Older
-   * helpers answer "unknown method"; phones ignore that, and the usual cleanup removes the file later.
-   */
+  /** Removes an attachment before it is sent: an unfinished upload is dropped, a saved file deleted. Result: AttachmentDiscarded. */
   "attachment.discard": z.object({ id: z.string() }),
   /** Fetches a saved attachment: chunk `index` of it, or a small JPEG for an image with `thumbnail`. AttachmentData. */
   "attachment.get": z.object({
@@ -810,20 +633,9 @@ export const RpcSchemas = {
   }),
   /** Pin the session to the top of the Sessions list, or unpin it. Pinning a pinned session keeps its time. */
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),
-  /**
-   * Stops Claude's current turn, as Esc does in the terminal; the session stays open. Result: InterruptResult.
-   * Errors: not_found (unknown or ended), conflict (nothing running), unavailable (no way to reach it).
-   */
+  /** Stops Claude's current turn, as Esc does. Result: InterruptResult. Errors: not_found, conflict (nothing running), unavailable. */
   "session.interrupt": z.object({ sessionId: z.string() }),
-  /**
-   * Switches the running session's model or its effort (exactly one of `model`, `effort`) by typing `/model <alias>`
-   * or `/effort <level>` into its terminal, as the person would. Only when the session is typed into (not the desktop
-   * app, an editor or the inbox), Claude isn't working, no prompt is open and the prompt line is empty. Errors are plain
-   * sentences the phone shows: not_found (unknown or ended), conflict (working, a prompt open, a draft, you typing),
-   * unavailable (no terminal to type into). The session's `model` changes once Claude Code reports it
-   * (`session.upsert`); its `effort` once Claude Code's status line reports it. Result: ModelResult. Older helpers answer
-   * "unknown method".
-   */
+  /** Switches the model or effort (exactly one) by typing `/model` or `/effort`, only when idle with an empty prompt. Result: ModelResult. */
   "session.model": z
     .object({ sessionId: z.string(), model: ModelAlias.optional(), effort: EffortLevel.optional() })
     .refine(
@@ -834,26 +646,13 @@ export const RpcSchemas = {
   "prompts.open": z.object({}),
   /** Recently settled prompts, newest first: the Inbox history. */
   "prompts.recent": z.object({ limit: z.number().int().min(1).max(200).default(50) }),
-  /**
-   * A turn's full text. It comes in pieces so a reply never passes the relay's frame limit: `offset` (UTF-16 units,
-   * default 0) is where to start, and the result's `more` / `nextOffset` say whether and where to continue. A phone
-   * that never sends `offset` gets the first piece (everything, for all but a huge turn).
-   */
+  /** A turn's full text in pieces under the relay's frame limit: `offset` (UTF-16 units, default 0) and the result's `more` / `nextOffset`. */
   "turn.full": z.object({ turnId: z.string(), offset: z.number().int().nonnegative().default(0) }),
-  /**
-   * Liveness check: the apps call it while open to notice a computer that went silent (asleep, off
-   * Wi-Fi) without closing its connection. Any reply proves it's there, so an "unknown method" error
-   * from an older helper counts too.
-   */
+  /** Liveness check; any reply proves the computer is there, an "unknown method" error from an older helper too. */
   ping: z.object({}),
   "presence.get": z.object({}),
   "presence.set": z.object({ mode: PresenceMode }),
-  /**
-   * The calling device's push token. iOS sends an APNs token (platform defaults to "apns", so older iOS
-   * builds that send only token + environment keep working): environment is "sandbox" for Xcode/debug
-   * builds, "production" for TestFlight. Android sends `platform: "fcm"` with its FCM registration
-   * token; environment is ignored there.
-   */
+  /** The device's push token: iOS sends an APNs token (`environment` "sandbox" for debug builds), Android `platform: "fcm"`. */
   "device.registerPush": z.union([
     z.object({
       platform: z.literal("apns").default("apns"),
@@ -881,10 +680,7 @@ export const RELAY_FRAME_BYTES = 256 * 1024;
 /** What one RPC result's data may take, so the reply (envelope, encryption, stream id) stays under the frame limit. */
 export const REPLY_DATA_BYTES = 192 * 1024;
 
-/**
- * `turn.full`'s result. `more` is true when the text goes on at `nextOffset`; both are absent on the last piece, so
- * an older phone that doesn't know them still reads the text it got.
- */
+/** `turn.full`'s result; `more` and `nextOffset` are absent on the last piece. */
 export const TurnFullResult = z.object({
   text: z.string(),
   more: z.boolean().optional(),
@@ -892,10 +688,7 @@ export const TurnFullResult = z.object({
 });
 export type TurnFullResult = z.infer<typeof TurnFullResult>;
 
-/**
- * `sync`'s result. `latestSeq` is the last seq the reply covers: when `more` is true (the replay was cut by count or
- * size) it's the last event actually sent, and the phone calls `sync` again from there for the rest.
- */
+/** `sync`'s result; with `more` true, `latestSeq` is the last event sent and the phone syncs again from there. */
 export const SyncResult = z.object({
   snapshot: z.object({ sessions: z.array(Session), prompts: z.array(Prompt), presence: Presence }).optional(),
   events: z.array(RelayEvent),
@@ -914,10 +707,7 @@ export type RpcRequest = z.infer<typeof RpcRequest>;
 export interface RpcError {
   code: "bad_request" | "not_found" | "conflict" | "unauthorized" | "internal" | "unavailable";
   message: string;
-  /**
-   * Optional, only true: on a failed `session.send`, the session has no live Claude Code process but its
-   * conversation is on disk, so `session.resume` can continue it. Older helpers leave it out.
-   */
+  /** Only true: on a failed `session.send`, no live process exists but the conversation is on disk, so `session.resume` can continue it. */
   canResume?: true;
 }
 

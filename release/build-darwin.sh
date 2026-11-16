@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Builds, signs and notarizes the macOS helper for both architectures into release tarballs.
-# Called by release/release.sh; run on a Mac with your Developer ID certificate in the keychain.
-#
-#   release/build-darwin.sh <version> <dist dir>
-#
-# One-time setup (see release/README.md):
-#   - "Developer ID Application" certificate (Xcode → Settings → Accounts → Manage Certificates)
-#   - xcrun notarytool store-credentials relay-notary   (Apple ID + app-specific password)
+# Builds, signs and notarizes the macOS helper (setup: release/README.md): release/build-darwin.sh <version> <dist dir>
 set -euo pipefail
 
 VERSION="${1:?usage: build-darwin.sh <version> <dist dir>}"

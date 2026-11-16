@@ -1,5 +1,4 @@
-// Turn steps at their limits: characters counted as people see them, tokens cut by a limit, paths with .., live
-// steps of sessions that went idle or ended, and a subagent's entries in the step count.
+// Turn steps at their limits: characters as people see them, cut tokens, paths with .., idle or ended sessions, subagents.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

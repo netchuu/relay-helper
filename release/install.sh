@@ -1,9 +1,5 @@
 #!/bin/sh
-# Installs the Relay helper on macOS or Linux without Homebrew:
-#   curl -fsSL https://raw.githubusercontent.com/@TAP_REPO@/main/install.sh | sh
-# Downloads the release for this computer, checks it against SHA256SUMS, runs `relay install` (copies it to
-# ~/.relay/bin, adds the Claude Code hooks, starts it at login), then `relay pair`, which shows the QR code
-# to scan with the phone. One command from nothing to paired. No sudo needed.
+# Installs the Relay helper without Homebrew: downloads the release, checks SHA256SUMS, runs `relay install` and `relay pair`.
 set -eu
 
 REPO="@TAP_REPO@"

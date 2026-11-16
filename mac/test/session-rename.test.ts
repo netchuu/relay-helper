@@ -12,9 +12,7 @@ import { createRpc, type RpcDeps, type RpcOutcome } from "../src/daemon/rpc.ts";
 import { sealedTitle, TEST_PUSH_KEY } from "./support/sealed.ts";
 import { waitFor } from "./support/wait.ts";
 
-// Renaming a session from a phone, edge cases: the 60-character limit, blank names, params, state, what every reader
-// sees, privacy and the migration.
-// The basics (trim, 61 ASCII, "a\nb", null/""/spaces clear, audit by length) are in rename.test.ts.
+// Renaming from a phone, edge cases (the basics are in rename.test.ts).
 
 function setup(claudeName: string | null = "claude-name") {
   const db = openDb(":memory:");

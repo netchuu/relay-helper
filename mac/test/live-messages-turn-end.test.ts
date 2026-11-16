@@ -1,5 +1,4 @@
-// Live messages around a turn's end: a prompt queued during Stop, entries from before the turn, a helper restart
-// mid-turn, `relay tail` with emoji, and ~~~ fences left open at the cut.
+// Live messages at a turn's end: a prompt queued during Stop, a restart mid-turn, `relay tail` with emoji, open ~~~ fences.
 import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

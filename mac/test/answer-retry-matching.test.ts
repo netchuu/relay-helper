@@ -7,9 +7,7 @@ import { type DB, openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 
-// Re-sent answers in every shape the phone sends, after a restart and over RPC: a phone that never got the
-// reply to its answer sends the same answer again and gets ok; any other answer, or a prompt that the phone
-// didn't close with that answer, is still a conflict. The first answer is applied once, however often it's re-sent.
+// Re-sent answers in every shape, after a restart and over RPC: the same answer gets ok, any other is a conflict.
 
 const dirs: string[] = [];
 afterEach(() => {

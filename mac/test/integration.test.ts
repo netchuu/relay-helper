@@ -5,11 +5,7 @@ import { join, resolve } from "node:path";
 import type { Prompt, RelayEvent, Session } from "../../protocol/index.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * End-to-end: the real daemon process and the real hook client, talking over the real sockets.
- * Unix socket paths are limited to 104 bytes on macOS, so the test home lives under a short /tmp path
- * (override with RELAY_TEST_ROOT).
- */
+/** End-to-end: the real daemon and hook client over real sockets; the home is under a short /tmp path (104-byte socket limit). */
 const ROOT = process.env.RELAY_TEST_ROOT ?? "/tmp";
 const HOME = join(ROOT, `relay-it-${process.pid}`);
 const PORT = 20000 + (process.pid % 20000);

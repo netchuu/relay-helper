@@ -19,10 +19,7 @@ import {
 import { freePort, type LocalWorker, startLocalWorker } from "./support/local-worker.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * The whole relay path: the real Worker (wrangler dev, local), the real daemon, and a phone written
- * in TypeScript speaking the same encrypted protocol as the phone apps. Includes attack cases.
- */
+/** The whole relay path: the real Worker (wrangler dev), the real daemon and a TypeScript phone, with attack cases. */
 const REPO = resolve(import.meta.dir, "../..");
 const HOME = join(process.env.RELAY_TEST_ROOT ?? "/tmp", `relay-rl-${process.pid}`);
 // Ports from the OS, not from the pid: test runs in parallel must not share them.

@@ -16,13 +16,7 @@ import { resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * Questions answered at the Mac, and messages Claude Code adds itself:
- *  1. A message Claude Code adds itself (<task-notification>, <system-reminder>, <command-…>, <local-command…>)
- *     starts a turn with an empty prompt: no prompt text, no title, nothing of it in any event, not presence.
- *  2. An AskUserQuestion answered in the terminal closes as resolvedBy "mac" with what was picked as `outcome`,
- *     like a phone answer; anything else settled at the Mac still says "Answered on the Mac".
- */
+/** Questions answered at the Mac and messages Claude Code adds itself (a turn with an empty prompt; outcome "mac"). */
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -200,9 +194,7 @@ const answeredAtMac = (answers: unknown, extra: Record<string, unknown> = {}) =>
   ...extra,
 });
 
-// ---------------------------------------------------------------------------------------------------
-// 1. Messages Claude Code adds itself
-// ---------------------------------------------------------------------------------------------------
+// Messages Claude Code adds itself
 
 describe("a message Claude Code adds itself: every kind", () => {
   const SYSTEM = {
@@ -474,9 +466,7 @@ describe("a message Claude Code adds itself: state around it", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
-// 2. A question answered in the terminal
-// ---------------------------------------------------------------------------------------------------
+// A question answered in the terminal
 
 describe("a question answered at the Mac: what was picked", () => {
   const cases: [string, Record<string, unknown>, string][] = [

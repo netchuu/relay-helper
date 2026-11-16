@@ -13,11 +13,7 @@ import {
 import { freePort } from "./support/local-worker.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * Attachments sent from a phone, over the real daemon and hook client: files uploaded in chunks (through the admin
- * socket, as `relay send --attach` does, and over a phone's WebSocket), sent into a test session's inbox with and
- * without text, every refusal the phone shows, the turn that lists them, and `relay send --attach`.
- */
+/** Attachments from a phone over the real daemon and hook client: uploads, sends, refusals and `relay send --attach`. */
 const ROOT = process.env.RELAY_TEST_ROOT ?? "/tmp";
 const HOME = join(ROOT, `relay-at-${process.pid}`);
 const PORT = freePort();

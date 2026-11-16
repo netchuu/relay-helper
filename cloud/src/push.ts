@@ -1,14 +1,4 @@
-/**
- * Push notifications through the relay. Each Mac signs its request with the same Ed25519 identity it
- * uses to open its room; the Worker holds the one APNs key and the one Firebase (FCM) service-account
- * key, so no user's Mac needs either.
- *
- * Anyone can make a Mac identity, so the Worker doesn't pass a sender's notification through: it builds
- * the APNs payload itself from a few checked fields (the category, the thread id and the encrypted blob
- * the phone opens) under a fixed visible alert, GENERIC_ALERT. The phone's Notification Service Extension
- * replaces that alert with the decrypted text; a blob it can't open leaves the fixed alert showing.
- * FCM messages keep their data map, minus the keys a phone shows as text (FCM_TEXT_KEYS).
- */
+/** Push notifications through the relay: the Worker builds the APNs payload itself under a fixed alert, never a sender's text. */
 
 export interface PushEnv {
   /** The APNs auth key (.p8 contents, PEM). Wrangler secret. */
@@ -89,11 +79,7 @@ export function parsePushRequest(body: string): PushRequest | string {
   return { token: req.token, environment: req.environment, payload, ...(collapseId ? { collapseId } : {}) };
 }
 
-/**
- * The APNs payload the Worker sends, from the sender's: its category (one the app knows), its thread id and
- * its sealed blob (`relay.enc`), under GENERIC_ALERT. Everything else, the sender's alert text and any
- * plain `relay` data from an older helper included, is left out.
- */
+/** The APNs payload: the sender's category, thread id and sealed blob under GENERIC_ALERT; everything else is dropped. */
 export function apnsPayloadFrom(sent: Record<string, unknown>): Record<string, unknown> | string {
   const aps = isObject(sent.aps) ? sent.aps : {};
   const relay = isObject(sent.relay) ? sent.relay : {};
@@ -138,18 +124,11 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/**
- * Pushes one device token may get, from all Macs together. A Mac identity costs nothing to make, so the per-Mac
- * limit alone doesn't protect a phone whose token someone has. Real use (a few sessions, a phone paired to a
- * couple of Macs) stays far below both.
- */
+/** Pushes one device token may get from all Macs together; a Mac identity is free, so the per-Mac limit alone isn't enough. */
 export const TOKEN_PUSHES_PER_MINUTE = 30;
 export const TOKEN_PUSHES_PER_HOUR = 300;
 
-/**
- * The request body as text, or null when it is over `max` bytes. A declared length over the limit is refused
- * before anything is read; a body without one (chunked) is read only up to the limit.
- */
+/** The request body as text, or null over `max` bytes; a declared length over the limit is refused before reading. */
 export async function readBody(request: Request, max: number): Promise<string | null> {
   const declared = request.headers.get("content-length");
   if (declared !== null && !(Number(declared) <= max)) return null;

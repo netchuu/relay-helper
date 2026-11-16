@@ -5,11 +5,7 @@ import { join, resolve } from "node:path";
 import type { RelayEvent, Session } from "../../protocol/index.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * Renaming a session over the real daemon: two paired phones, a revoked one, a restart and a
- * `claude agents` reconcile. Like integration.test.ts, the home lives under a short /tmp path for the Unix
- * socket limit, and `claude` is a stub that prints a JSON file, so no real session is ever touched.
- */
+/** Renaming a session over the real daemon: paired and revoked phones, a restart, a reconcile; `claude` is a stub. */
 const ROOT = process.env.RELAY_TEST_ROOT ?? "/tmp";
 const HOME = join(ROOT, `relay-rn-${process.pid}`);
 const PORT = 20000 + ((process.pid + 7777) % 20000);

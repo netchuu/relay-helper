@@ -1,11 +1,7 @@
 /** How long a test waits for something to happen before it gives up. Generous: a busy machine is slow, not wrong. */
 export const WAIT_MS = 30_000;
 
-/**
- * Polls `fn` until it returns something truthy (or, with no value to return, `true`), up to `ms`. On a timeout it
- * throws with `what` and, when given, `detail()` (a pane's contents, the frames received so far) so the failure
- * says what the test was looking at. A throwing `fn` counts as "not yet".
- */
+/** Polls `fn` until truthy up to `ms`; on timeout throws with `what` and `detail()`. A throwing `fn` counts as "not yet". */
 export async function waitFor<T>(
   fn: () => T | Promise<T>,
   ms: number = WAIT_MS,

@@ -2,23 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { type Subprocess, spawnSync } from "bun";
 
-/**
- * Starts the relay Worker locally (`wrangler dev`) for the end-to-end tests, so that several test runs at once
- * (from different checkouts, or a release check next to `bun run test`) don't get in each other's way.
- *
- * Why the Worker could be slow or never come up under load:
- * - Two `wrangler dev` started at about the same time both pick the default devtools (inspector) port 9229, or
- *   the same "free" one, and all but one exit with "Address already in use (socket "direct:1:default")". The test
- *   didn't watch the process, so it waited out its 60 s for a `/health` that would never answer.
- * - `bunx wrangler` in a checkout without `cloud/node_modules` (a fresh one, before `cd cloud && bun install`) asked
- *   npm for the latest wrangler on every start and downloaded it, and its workerd, whenever a new one was out:
- *   seconds at best, minutes on a busy machine, and not the locked version.
- * - Every run in a checkout shared `cloud/.wrangler/state`, and the Worker and helper ports came from the pid,
- *   so two runs could land on the same ports.
- *
- * So: the locked wrangler from `cloud/node_modules` (installed once if missing), both ports from the OS, state
- * under the test's own directory, and a start that fails at once, with the Worker's output, when wrangler exits.
- */
+/** Starts the relay Worker locally (`wrangler dev`) with its own ports and state, and fails at once, with its output, if wrangler exits. */
 
 export interface LocalWorker {
   port: number;

@@ -1,7 +1,4 @@
-/**
- * Per-address request limits for the /v1/ routes, checked before any Durable Object is touched. The numbers and
- * the reasoning behind them are in wrangler.jsonc (`ratelimits`).
- */
+/** Per-address request limits for the /v1/ routes, checked before any Durable Object (numbers in wrangler.jsonc). */
 
 /** Cloudflare's rate limiting binding (RateLimit in the Workers types), spelled out so the tests can import this. */
 interface Limiter {
@@ -27,11 +24,7 @@ export function routeClass(url: URL): RouteClass | null {
 
 let limiterFailed = false;
 
-/**
- * Whether the request's address is still under its limit for this class. Lets the request through when the
- * limiter is missing (a plan or a local setup without it) or fails: an outage of the limiter must not take the
- * relay down with it. Logs a fixed line once, never the key or the error (the key holds an address).
- */
+/** Whether the address is under its limit; a missing or failing limiter lets the request through and logs a fixed line, never the key. */
 export async function withinLimit(env: LimitEnv, cls: RouteClass, request: Request): Promise<boolean> {
   const limiter = cls === "push" ? env.PUSH_LIMIT : env.CONNECT_LIMIT;
   if (!limiter) return true;
@@ -47,10 +40,7 @@ export async function withinLimit(env: LimitEnv, cls: RouteClass, request: Reque
   }
 }
 
-/**
- * The address a limit counts by: an IPv4 address as it is, an IPv6 address by its /64, the block one home or
- * phone usually gets (counting single IPv6 addresses would let one client take a new address for every request).
- */
+/** The address a limit counts by: IPv4 as is, IPv6 by its /64, so one client can't take a new address per request. */
 export function addressKey(ip: string): string {
   if (!ip.includes(":")) return ip;
   const [head = "", tail] = ip.toLowerCase().split("::", 2);

@@ -1,5 +1,4 @@
-// suggestion: Claude Code's suggested next message, read off the terminal screen after a turn and sent to the phones
-// as the session's optional `suggestion` (redacted, one line), until a turn starts or the suggestion goes away.
+// Claude Code's suggested next message, read off the terminal screen and sent to the phones as `suggestion` (redacted, one line).
 import { afterEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

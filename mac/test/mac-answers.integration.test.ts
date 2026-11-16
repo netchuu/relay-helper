@@ -4,12 +4,7 @@ import { join, resolve } from "node:path";
 import type { Prompt, RelayEvent, Session } from "../../protocol/index.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * Questions answered at the Mac and messages Claude Code adds itself, over the real daemon and the real hook client:
- * a question answered in the terminal keeps its picks, and a system reminder through UserPromptSubmit leaves nothing
- * behind. Like integration.test.ts, the home lives under a short /tmp path for the Unix socket limit, and `claude` is
- * /usr/bin/false.
- */
+/** Questions answered at the Mac and messages Claude Code adds itself, over the real daemon; `claude` is /usr/bin/false. */
 const ROOT = process.env.RELAY_TEST_ROOT ?? "/tmp";
 const HOME = join(ROOT, `relay-ma-${process.pid}`);
 const PORT = 20000 + ((process.pid + 4241) % 20000);

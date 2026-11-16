@@ -1,7 +1,4 @@
-// Replies typed into the Claude desktop app and IDE panels, edge cases: the unlock queue, session.send while locked,
-// confirming a send in the transcript, IDE context, and the reply route. Nothing here touches Accessibility, a real app, or ~/.relay: the queue and session.send run on
-// an in-memory database with a fake deliver or a temporary inbox socket; transcripts and session files live in
-// temporary folders. No session here has an IDE or desktop transcript, so `deliver` never reaches the AX routes.
+// Replies typed into the desktop app and IDE panels, edge cases: the unlock queue, send while locked, IDE context, the reply route.
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";

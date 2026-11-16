@@ -1,7 +1,4 @@
-/**
- * Relay's Cloudflare Worker: forwards end-to-end-encrypted bytes between an iPhone and its Mac.
- * It never sees plaintext. Protocol: docs/RELAY.md.
- */
+/** Relay's Cloudflare Worker: forwards end-to-end-encrypted bytes between an iPhone and its Mac, never plaintext. */
 import { DurableObject } from "cloudflare:workers";
 import { type LimitEnv, routeClass, withinLimit } from "./limit";
 import {
@@ -34,11 +31,7 @@ const MAC_ID = /^[A-Za-z0-9_-]{22}$/;
 const MAX_FRAME = 256 * 1024;
 /** Phone sockets a room holds in all: the ceiling against abuse. */
 const MAX_PHONES = 32;
-/**
- * Only for a phone that sends no `phone` id (an older app): at most this many per address. A phone with an id is
- * counted by its id (a reconnect replaces its earlier socket), not by address, because mobile carriers put many
- * users behind one address (CGNAT) and four per address locked real phones out.
- */
+/** Cap per address for phones that send no `phone` id; ones with an id are counted by id (CGNAT puts many users behind one address). */
 const MAX_PHONES_PER_IP = 8;
 /** A phone's own id, chosen by the app: random, the same for all its connections of one run. */
 const PHONE_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -120,11 +113,7 @@ async function verifySigned(
   }
 }
 
-/**
- * POST /v1/push. Headers x-relay-mac, x-relay-pub, x-relay-ts, x-relay-sig sign the body's SHA-256
- * (pushSigningInput). The Mac's room applies its rate limit and drops replays; the token's own room applies
- * the per-device limit.
- */
+/** POST /v1/push, signed over the body's SHA-256 (pushSigningInput); the Mac's room and the token's room each apply their limit. */
 async function handlePush(request: Request, env: Env): Promise<Response> {
   const macId = request.headers.get("x-relay-mac") ?? "";
   if (!MAC_ID.test(macId)) return Response.json({ reason: "bad request" }, { status: 400 });
@@ -153,10 +142,7 @@ async function handlePush(request: Request, env: Env): Promise<Response> {
   });
 }
 
-/**
- * A phone that arrived while the Mac was away waits (`wait`), holding its handshake frame (`hello`: 33 bytes, far
- * under the 2 KiB attachment limit), until the Mac connects and gets `open` plus the frame, or WAIT_MS pass.
- */
+/** A phone that arrives while the Mac is away waits, holding its 33-byte `hello`, until the Mac connects or WAIT_MS pass. */
 type Attachment =
   | { role: "mac"; ts: number }
   | { role: "phone"; stream: number; wait?: { since: number; hello?: Uint8Array }; quiet?: boolean };
@@ -168,26 +154,15 @@ const MAX_WAIT_FRAME = 1024;
 /** Storage key, set at the room's first Mac connect: only a room that has had its Mac makes a phone wait. */
 const MAC_SEEN = "macSeen";
 
-/**
- * One room per Mac. Uses the WebSocket Hibernation API, so an idle room costs nothing while sockets
- * stay open. Phones get a stream id; frames to/from the Mac are prefixed with it.
- *
- * Close codes the room sends: 4000 Mac replaced by a newer connection; 4001 phone replaced by its own newer one;
- * 4002 phone: the Mac reconnected, its keys for this stream are gone, connect again; 4404 phone: Mac offline
- * (after waiting WAIT_MS, or at once in a room its Mac never connected to); 4429 too many connections.
- * 1003/1009 phone: a text or oversize frame.
- */
+// One room per Mac (Hibernation API). Close codes: 4000/4001 replaced, 4002 Mac reconnected, 4404 Mac offline, 4429 too many,
+// 1003/1009 text or oversize frame.
 export class Room extends DurableObject<Env> {
   private pushTimes: number[] = [];
   private recentSigs = new Map<string, number>();
   /** Cache of the MAC_SEEN storage key; undefined until read. */
   private macSeen: boolean | undefined;
 
-  /**
-   * Replay check and rate limit for this Mac, then the device token's own limit, then APNs or FCM. `signed`
-   * names what the Mac signed (its ts and body hash). This Mac's counts are in memory: a restarted room starts
-   * fresh. Errors come back as a fixed reason, never the exception's text (it can quote a secret).
-   */
+  /** Replay check and rate limit, then the token's limit, then APNs or FCM. Errors return a fixed reason: an exception can quote a secret. */
   async push(signed: string, req: PushRequest): Promise<{ status: number; reason?: string }> {
     const now = Date.now();
     for (const [s, at] of this.recentSigs) if (now - at > CLOCK_SKEW_MS * 2) this.recentSigs.delete(s);
@@ -208,11 +183,7 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Only on a PUSH_TOKEN_ROOM instance: counts one push to its device token, or says no when the token had
-   * TOKEN_PUSHES_PER_MINUTE in the last minute or TOKEN_PUSHES_PER_HOUR in the last hour. Kept in storage, so
-   * the count survives the object being evicted between bursts.
-   */
+  /** Counts one push to this device token in storage (survives eviction); false over the per-minute or per-hour limit. */
   async allowTokenPush(): Promise<boolean> {
     const now = Date.now();
     const times = ((await this.ctx.storage.get<number[]>("pushTimes")) ?? []).filter(
@@ -312,9 +283,7 @@ export class Room extends DurableObject<Env> {
       server.close(4429, "too many connections");
       return new Response(null, { status: 101, webSocket: client });
     }
-    // Phones aren't authenticated here (the Mac does that inside the encrypted stream). A phone without an id is
-    // capped per address, so one client can't take every slot; the total cap above holds for all. The Mac also
-    // drops streams that don't authenticate within 30 s.
+    // Phones aren't authenticated here (the Mac does that in the stream): a phone without an id is capped per address.
     const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
     const ipTag = `ip:${ip}`.slice(0, 200);
     if (!phoneId && this.livePhones(ipTag).length >= MAX_PHONES_PER_IP) {
@@ -446,10 +415,7 @@ export class Room extends DurableObject<Env> {
     await this.webSocketClose(ws, 1011);
   }
 
-  /**
-   * The Mac's live connection. One the room replaced stays listed until its close completes, which never
-   * happens when that helper was killed or its network died, so skip anything that isn't open.
-   */
+  /** The Mac's live connection; a replaced one can stay listed after its helper died, so skip any that isn't open. */
   private mac(): WebSocket | undefined {
     return this.ctx.getWebSockets("mac").find((m) => m.readyState === WebSocket.OPEN);
   }

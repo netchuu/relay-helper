@@ -227,9 +227,8 @@ describe("live steps", () => {
     expect(t.session().step?.label).toBe("Reading a.ts");
   });
 
-  // Real Claude Code (2.1.325, claude --model haiku): after "No, and tell Claude what to do differently" the
-  // hooks were PreToolUse(Bash, id A), PermissionRequest (no tool_use_id), then the next tool's PreToolUse and
-  // PostToolUseFailure. No end hook ever carried id A.
+  // Real Claude Code 2.1.325: after "No, and tell Claude..." the hooks were PreToolUse(Bash, id A), PermissionRequest,
+  // then the next tool's hooks; no end hook ever carried id A.
   test("a tool denied at the terminal stops showing as running", async () => {
     const t = setup({ thinkingDelayMs: 20 });
     const bash = { command: "rm -rf build" };

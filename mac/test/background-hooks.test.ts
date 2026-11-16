@@ -1,5 +1,4 @@
-// Background work through the hooks: an agent's activity from PreToolUse and PostToolUse, a shell's title for any
-// command, and an ended session's upsert.
+// Background work through the hooks: agent activity, a shell's title, and an ended session's upsert.
 import { afterEach, expect, test } from "bun:test";
 import type { RelayEvent } from "../../protocol/index.ts";
 import type { RelayConfig } from "../src/config.ts";

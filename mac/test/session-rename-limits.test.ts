@@ -1,5 +1,4 @@
-// What a phone may name a session: 60 visible characters of any kind, no line breaks of any kind, and a name of
-// only invisible characters clears it.
+// What a phone may name a session: 60 visible characters, no line breaks, an invisible-only name clears it.
 import { describe, expect, test } from "bun:test";
 import type { Session } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";

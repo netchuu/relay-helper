@@ -10,9 +10,7 @@ import {
 import type { SessionRecord } from "../src/daemon/registry.ts";
 import type { TypingRoute } from "../src/platform/types.ts";
 
-// A message sent right after the phone's Stop: Claude Code may still be handling the Esc and lose the Enter that
-// follows the text, leaving it typed but not submitted. The helper lets Claude Code finish the Esc first, and presses
-// Enter once more when no prompt hook comes.
+// A message right after Stop: Claude Code may lose the Enter after the text, so the helper presses Enter again if no prompt hook comes.
 
 const RULE = "─".repeat(100);
 const screen = (...prompt: string[]) => ["⏺ …", RULE, ...prompt, RULE, "  ⏵⏵ bypass"].join("\n");
@@ -31,10 +29,7 @@ function sessionVia(where: Where, id: string): SessionRecord {
   return { ...base, ...extra } as unknown as SessionRecord;
 }
 
-/**
- * Fake terminals. `eatsEnter` is how many Enters after typing get lost; the prompt then still shows the
- * text. A prompt hook arrives (`hook()`) when an Enter gets through.
- */
+/** Fake terminals: `eatsEnter` Enters after typing get lost; a prompt hook arrives when one gets through. */
 function terminals(where: Where, opts: { eatsEnter: number }) {
   const log: string[] = [];
   const sleeps: number[] = [];

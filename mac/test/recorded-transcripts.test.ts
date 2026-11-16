@@ -10,9 +10,7 @@ import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
 import { interruptedTurn, isSystemMessage, transcriptTurns } from "../src/daemon/transcript.ts";
 import { FIXTURE_CWD, FIXTURE_START, sanitizeEntry } from "./record/sanitize.ts";
 
-// Real Claude Code transcripts (mac/test/fixtures/transcripts/, recorded by `bun run record:transcripts`), read the
-// way the helper reads them, checking what the phone gets. The hand-written transcripts in the other tests can only
-// hold what we thought of; these hold what Claude Code writes.
+// Real Claude Code transcripts (mac/test/fixtures/transcripts/), read as the helper reads them.
 
 const DIR = join(import.meta.dir, "fixtures", "transcripts");
 const path = (name: string) => join(DIR, `${name}.jsonl`);

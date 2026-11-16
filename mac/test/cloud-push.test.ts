@@ -14,9 +14,7 @@ import {
 import { type Identity, loadOrCreateIdentity } from "../src/daemon/e2e.ts";
 import { apnsPayload, Category, promptAlert, sealedApnsPayload } from "../src/daemon/notifier.ts";
 
-// The Worker's /v1/push with its rooms faked: what reaches Apple is built by the Worker, never the sender's text;
-// the per-device limit holds across Mac identities; errors don't quote secrets; replays and oversize bodies stop
-// before anything is sent. The same path against the real Worker (wrangler dev) is in relay.test.ts.
+// /v1/push with faked rooms: the Worker builds what reaches Apple, limits hold, errors hide secrets (real Worker: relay.test.ts).
 
 const HEX_TOKEN = "ab".repeat(32);
 const KEY = Buffer.alloc(32, 7).toString("base64");

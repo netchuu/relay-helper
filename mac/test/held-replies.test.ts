@@ -18,9 +18,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
 import { platform } from "../src/platform/index.ts";
 
-// Claude Code may hold a message from its inbox at the Mac (a session that skips permission prompts waits for
-// approval there). The inbox accepts it either way: the helper tells the phone by whether the UserPromptSubmit hook
-// with the message's text follows.
+// Claude Code may hold an inbox message at the Mac for approval; the helper tells the phone by whether the prompt hook follows.
 
 const dirs: string[] = [];
 const servers: Server[] = [];

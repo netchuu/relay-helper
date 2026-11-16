@@ -1,8 +1,4 @@
-/**
- * release/release.sh --publish and the gh account: gh's active account may not be the one with access to the tap, and
- * then the publish step answers 404 after the whole build. So the script takes the tap account's token before it
- * builds anything. Run against a fake gh and bun on PATH.
- */
+/** release/release.sh --publish takes the tap account's token before building, so a wrong active gh account fails early. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

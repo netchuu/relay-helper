@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { waitFor } from "./support/wait.ts";
 
-// `relay pair` and `relay restart` with --help or bad arguments, in a temp HOME and RELAY_HOME. A `bun`
-// stub on PATH fails and leaves a marker, so a command that went on to install would show it; the CLI
-// itself runs through the real bun by its full path. Never a real install, pair or restart.
+// `relay pair` and `relay restart` with --help or bad arguments: a failing `bun` stub proves nothing went on to install.
 async function relay(...args: string[]) {
   const home = mkdtempSync(join(tmpdir(), "rl-pair-args-"));
   const stubs = join(home, "stubs");

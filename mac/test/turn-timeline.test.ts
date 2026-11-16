@@ -1,5 +1,4 @@
-// Turn timeline, case by case: what an action shows (inputs, titles, privacy, paths, details), the reader's thinking
-// durations, ids and order, and live, finished and hook-only steps with the hook handler.
+// Turn timeline case by case: what an action shows, thinking durations, ids and order, live and finished steps.
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -38,9 +37,7 @@ const HOME = homedir().replace(/\/+$/, "");
 
 const validStep = (s: unknown) => TurnStep.safeParse(s).success;
 
-// ---------------------------------------------------------------------------------------------------
 // What an action shows
-// ---------------------------------------------------------------------------------------------------
 
 describe("inputs: missing, empty or wrong-typed tool input", () => {
   test("a Bash call with no command, a blank one, or a number shows no detail and the plain label", () => {
@@ -335,9 +332,7 @@ describe("MCP and odd tool names", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // The reader: thinking durations, ids, ordering
-// ---------------------------------------------------------------------------------------------------
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const userPrompt = (t: string, at: number) => ({
@@ -553,9 +548,7 @@ describe("ids and order", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // Live, finished, races (with the hook handler)
-// ---------------------------------------------------------------------------------------------------
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -1122,9 +1115,7 @@ describe("hook-only steps (no transcript)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // The tool-call count, repeated hooks, missing timestamps, and clean-up after a restart
-// ---------------------------------------------------------------------------------------------------
 
 describe("toolCalls follows the distinct actions on every path", () => {
   // One transcript: a duplicated tool_use, a subagent's call, a call without an id, a failed call.

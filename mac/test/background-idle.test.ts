@@ -10,9 +10,7 @@ import { HookHandler } from "../src/daemon/hooks.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 
-// A turn that ends with background shells still running (a dev server, a watcher) leaves Claude waiting for you.
-// The session is idle then, not "Working" with a Stop button for as long as the shells run, even though
-// `claude agents` reports it "busy" all that time.
+// A turn that ends with background shells running leaves Claude waiting for you: idle, not "Working" with a Stop button.
 
 const dirs: string[] = [];
 afterEach(() => {

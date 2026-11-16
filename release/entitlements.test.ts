@@ -1,9 +1,4 @@
-/**
- * release/entitlements.plist: the hardened-runtime exceptions the macOS binaries are signed with. relay holds the
- * Accessibility and Automation permissions, so an exception that lets other code into the process hands those
- * permissions to that code. allow-dyld-environment-variables with disable-library-validation did exactly that:
- * DYLD_INSERT_LIBRARIES loaded any dylib into the signed binary. Bun's docs still list them, so guard the file.
- */
+/** Guards release/entitlements.plist: no exception that lets other code into the signed process (DYLD_INSERT_LIBRARIES). */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

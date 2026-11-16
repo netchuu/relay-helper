@@ -1,5 +1,4 @@
-// Live messages when turns follow each other closely: a Stop whose turn is followed by a prompt queued at the
-// computer, a Stop arriving after the next prompt's hook, and closing fences (closeOpenFence) in the cut.
+// Live messages when turns follow each other closely: Stop vs a queued prompt, and closing fences in the cut.
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -248,9 +247,7 @@ describe("a prompt queued at the computer while Stop waits", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // Fences
-// ---------------------------------------------------------------------------------------------------
 
 /** The fence still open at the end (CommonMark: a closer uses the opener's character, at least as long, no info). */
 function openFenceAt(textIn: string): string | null {
@@ -297,9 +294,7 @@ describe("closing fences", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
-// CommonMark fences in the cut, and a Stop arriving after the next prompt's hook
-// ---------------------------------------------------------------------------------------------------
+// CommonMark fences in the cut, and a Stop after the next prompt's hook
 
 describe("CommonMark fences in the cut", () => {
   test("a closer longer than its opener, or with trailing spaces, closes it: nothing extra is added", () => {
@@ -371,9 +366,7 @@ describe("a Stop arriving just after the next prompt's hook", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // stopOwner moves a Stop to the earlier turn only on positive evidence
-// ---------------------------------------------------------------------------------------------------
 
 describe("which turn a Stop arriving after the next prompt's hook ends", () => {
   const note = "<task-notification> <task-id>b1</task-id> <status>completed</status> </task-notification>";

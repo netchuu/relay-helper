@@ -21,9 +21,7 @@ import { platform } from "../src/platform/index.ts";
 import type { TabView } from "../src/platform/types.ts";
 import { waitFor } from "./support/wait.ts";
 
-// A phone message is typed into the session's tab after the session was resumed under a new id, after
-// the helper restarted, and when the process's own tty is not a tab (a background host); it goes through the inbox only
-// when no lookup finds a tab, and then says so.
+// A message is typed into the session's tab after a resume under a new id, a restart, or a non-tab tty; else the inbox.
 
 const EMPTY: TabView = { front: false, screen: null };
 

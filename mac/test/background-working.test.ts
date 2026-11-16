@@ -10,9 +10,7 @@ import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { sealedTitle, TEST_PUSH_KEY } from "./support/sealed.ts";
 
-// A session with background shells or agents running shows as working on the phone, and its "is done" push
-// waits until the last one ends. The helper's state for it: runsInBackground(session) (the session's own status
-// stays idle, so older phones show the strip as before).
+// A session with background shells or agents shows as working and its "is done" push waits for the last one: runsInBackground(session).
 
 const SHELL = {
   id: "sh1",

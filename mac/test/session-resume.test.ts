@@ -25,11 +25,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 const ID = "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff";
 
-/**
- * A stand-in for `claude -p --resume … --input-format stream-json`: it records its arguments and folder, announces
- * itself like Claude Code does, logs each user line, and answers it with a result. A line that says "needs
- * permission" makes it ask `can_use_tool` and log the control response it gets back.
- */
+/** A stand-in for `claude -p --resume`: records its arguments, logs user lines, answers with a result, asks `can_use_tool` on request. */
 function fakeClaude(dir: string): string {
   const bin = join(dir, "claude");
   writeFileSync(

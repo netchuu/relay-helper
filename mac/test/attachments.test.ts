@@ -40,11 +40,7 @@ import {
 } from "../src/daemon/attachments.ts";
 import { type DB, openDb } from "../src/daemon/db.ts";
 
-/**
- * Attachments sent from a phone, in the helper's store, without a daemon. Uploads in chunks (repeated, out of order,
- * after a restart), the checks on size, hash and name, the text typed into the session, the cleanup on a fake
- * clock, and fetching a file and a thumbnail back.
- */
+/** Attachments in the helper's store, without a daemon: chunked uploads, checks, typed text, cleanup, fetch and thumbnail. */
 const ROOT = join(process.env.RELAY_TEST_ROOT ?? "/tmp", `relay-att-${process.pid}`);
 const SID = "4375b77a-1111-2222-3333-444455556666";
 let db: DB;

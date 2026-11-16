@@ -5,13 +5,7 @@ import { join, resolve } from "node:path";
 import type { InterruptResult, RelayEvent, Session, Turn } from "../../protocol/index.ts";
 import { waitFor } from "./support/wait.ts";
 
-/**
- * The phone's Stop over the real daemon and the real hook client, with a real tmux on a private server
- * (`tmux -S <its own socket>`, never yours) whose pane records the bytes it gets. No Claude Code runs: the test
- * plays its hooks and writes the transcript marker the way Claude Code 2.1.318 does after an Esc. The daemon gets
- * an isolated RELAY_HOME and HOME (so the transcript lives under a throwaway ~/.claude/projects), and
- * `claude` is /usr/bin/false so it never sees your sessions.
- */
+/** The phone's Stop over the real daemon and hook client, with a real tmux on a private socket; `claude` is /usr/bin/false. */
 const ROOT = process.env.RELAY_TEST_ROOT ?? "/tmp";
 const HOME = join(ROOT, `relay-ts-${process.pid}`);
 const FAKE_HOME = join(HOME, "h");
@@ -134,11 +128,7 @@ const status = async (token: string) => {
 /** What the pane shows right now, for a failure message. */
 const paneContents = async () =>
   `pane ${pane} contents:\n${await tmux("capture-pane", "-p", "-t", pane)}\nrecorded bytes: ${JSON.stringify(recorded())}`;
-/**
- * Waits until the pane has seen everything sent to it so far: tmux hands keys to the pane in order, so a probe
- * byte typed now shows up after any earlier byte. Returns the recorded bytes without the probes. This replaces a
- * fixed wait before asserting "nothing else arrived".
- */
+/** Waits until the pane has seen everything sent so far (a probe byte shows up after earlier ones), then returns the bytes without it. */
 async function flushed(): Promise<string> {
   const probe = "5a";
   const probes = () =>

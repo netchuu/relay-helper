@@ -6,10 +6,7 @@ import { join } from "node:path";
 import { addressKey } from "../../cloud/src/limit.ts";
 import { connectProof, type Identity, loadOrCreateIdentity } from "../src/daemon/e2e.ts";
 
-// The Worker's per-address request limit with its bindings faked: over the limit a /v1/ request gets 429 before
-// any Durable Object is touched or its body read; under it, it goes on; a missing or failing limiter lets
-// everything through; and each route class (Mac connect, phone connect, push) has its own count. The same
-// against the real Worker (wrangler dev, with its local limiter) is in relay.test.ts.
+// The per-address request limit with faked bindings: 429 before any Durable Object, a failing limiter lets through (real Worker: relay.test.ts).
 
 let worker: { fetch(r: Request, env: unknown): Promise<Response> };
 

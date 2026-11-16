@@ -1,15 +1,4 @@
-/**
- * Records short real Claude Code sessions (Haiku) and saves their transcripts, redacted, as the fixtures under
- * mac/test/fixtures/transcripts/. Run it when Claude Code changes its transcript format:
- *
- *   bun run record:transcripts [scenario ...]      (no names: all of them)
- *   bun protocol/fixtures.ts                       (then: the protocol fixtures the apps decode)
- *   bun test                                       (and read what the new shapes changed)
- *
- * Each scenario is a real interactive `claude --model haiku` driven through its own tmux server, in a scratch
- * folder under the temp folder, with only the project's settings (no hooks of yours reach the helper, no MCP
- * servers, no memory). Nothing touches your own sessions. Needs `claude` and `tmux` on the PATH and costs a few cents.
- */
+/** Records short real Claude Code sessions (Haiku) as redacted transcript fixtures; run `bun run record:transcripts [scenario ...]`. */
 import { spawnSync } from "node:child_process";
 import {
   existsSync,

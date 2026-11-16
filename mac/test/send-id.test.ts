@@ -12,9 +12,7 @@ import { SentMessages } from "../src/daemon/sentMessages.ts";
 import { platform } from "../src/platform/index.ts";
 import type { TabView } from "../src/platform/types.ts";
 
-// `session.send` carries the phone's id for the message. A send whose reply was lost is never typed twice: the
-// phone asks `session.delivered` before it says "Couldn't send", and Try Again with the same id is answered without
-// typing it again.
+// `session.send` carries the phone's id: a send whose reply was lost is never typed twice (`session.delivered`, Try Again).
 
 const EMPTY_PROMPT = ["─".repeat(80), "❯ ", "─".repeat(80)].join("\n");
 

@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Linux helper for x64 and arm64, for glibc (Debian, Ubuntu, Fedora…) and musl (Alpine), into
-# release tarballs. Bun cross-compiles, so this runs on the Mac too. Linux binaries aren't signed;
-# SHA256SUMS is the integrity check.
-#
-#   release/build-linux.sh <version> <dist dir>
-#
-# With Docker available, each glibc build is also started once in a container as a smoke test.
+# Builds the Linux helper (x64, arm64; glibc and musl) into tarballs: release/build-linux.sh <version> <dist dir>
 set -euo pipefail
 
 VERSION="${1:?usage: build-linux.sh <version> <dist dir>}"

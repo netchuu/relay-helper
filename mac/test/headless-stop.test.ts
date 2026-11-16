@@ -16,11 +16,7 @@ const root = mkdtempSync(join(tmpdir(), "relay-headless-stop-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 const ID = "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff";
 
-/**
- * Stands in for `claude -p --resume … --input-format stream-json`: logs every stdin line and never finishes a turn
- * by itself. An `interrupt` control request is answered like the real one (control_response, interrupted user line, no
- * result), unless a file named `deaf` exists.
- */
+/** Stands in for `claude -p --resume`: logs stdin, never finishes a turn, answers `interrupt` unless a file `deaf` exists. */
 function fakeClaude(dir: string): string {
   const bin = join(dir, "claude");
   writeFileSync(

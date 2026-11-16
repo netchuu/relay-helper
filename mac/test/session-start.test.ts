@@ -29,10 +29,7 @@ import { hostInfo, setCanStartSessions } from "../src/platform/index.ts";
 const root = mkdtempSync(join(tmpdir(), "relay-start-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-/**
- * A stand-in for `claude`: `--bg -- <prompt>` writes its arguments, folder and prompt where the test reads them and
- * prints the short id like Claude Code does; `agents --json --all` lists the session it "started".
- */
+/** A stand-in for `claude`: `--bg -- <prompt>` writes its arguments and prints a short id; `agents --json --all` lists the session. */
 function fakeClaude(dir: string): string {
   const bin = join(dir, "claude");
   writeFileSync(

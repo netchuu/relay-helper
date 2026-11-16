@@ -4,9 +4,7 @@ import { inFront, parseProcs } from "../src/platform/foreground.ts";
 import { fakeTerminals, ITERM, inbox, opts, PROMPT, RULE, sessionWith, TMUX } from "./support/terminals.ts";
 import { waitFor } from "./support/wait.ts";
 
-// A reply from the phone is typed into the session's terminal only while Claude Code is the program in front of
-// it. Otherwise (Claude suspended with Ctrl-Z, exited, another program in front) the keys would reach a shell or
-// that program, outside Claude's permission prompts: the reply goes to the session's inbox instead.
+// A reply is typed only while Claude Code is in front; otherwise the keys would reach a shell, so it goes to the inbox.
 
 /** `ps -A -o pid=,pgid=,tpgid=,tty=,command=` on a Mac with one Claude Code session in ttys004. */
 const ps = (fg: number, rows: string[] = []) =>

@@ -12,9 +12,7 @@ import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 
-// A background task that finishes while Claude is still answering a prompt: Claude Code's notice arrives as a
-// UserPromptSubmit mid-turn. Taken as a new turn, the prompt would show no answer and the answer would sit on a turn
-// without a prompt; it stays part of the running turn instead.
+// A background task's notice arrives as a mid-turn UserPromptSubmit and stays part of the running turn.
 
 const dirs: string[] = [];
 afterEach(() => {

@@ -12,9 +12,7 @@ import {
 } from "../src/integrations/claudeDesktop.ts";
 import type { AxElement } from "../src/platform/ax.ts";
 
-// Replies typed into the Claude desktop app and IDE panels: a send is confirmed however Claude Code records it, only
-// the IDE context in front of a prompt is left out, and the desktop app never gets a reply meant for another session.
-// Nothing here touches a real app: the desktop app is a fake passed in, transcripts are temporary files.
+// Replies typed into the desktop app and IDE panels: a send is confirmed however Claude Code records it; the desktop app is a fake.
 
 const tmp = () => mkdtempSync(join(tmpdir(), "relay-dide-reg-"));
 const line = (o: object) => `${JSON.stringify(o)}\n`;
@@ -133,9 +131,7 @@ describe("only the context blocks in front go", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------------------
 // A fake Claude desktop app, passed to sendToDesktop.
-// ---------------------------------------------------------------------------------------------------------------
 type Session = { title: string; composer: string };
 function fakeApp(sessions: Record<string, Session>, shown: string) {
   const state = { shown, sessions, sent: [] as { to: string; text: string }[] };

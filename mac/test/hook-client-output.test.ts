@@ -1,5 +1,4 @@
-// The hook client must deliver a large reply whole: exiting right after writing cuts it at the pipe buffer
-// (64 KiB) when the reader is a Node process or a shell.
+// The hook client must deliver a large reply whole: exiting right after writing cuts it at the pipe buffer.
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

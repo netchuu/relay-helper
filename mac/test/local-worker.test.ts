@@ -4,10 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { freePort, startLocalWorker } from "./support/local-worker.ts";
 
-/**
- * The local Worker start that relay.test.ts uses (support/local-worker.ts), with stand-ins for wrangler: when the
- * Worker doesn't come up, the test must say what it waited for and show the Worker's output, not a bare timeout.
- */
+/** The local Worker start (support/local-worker.ts) with stand-ins for wrangler: a failed start names what it waited for. */
 const dir = mkdtempSync(join(process.env.RELAY_TEST_ROOT ?? tmpdir(), "relay-lw-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 

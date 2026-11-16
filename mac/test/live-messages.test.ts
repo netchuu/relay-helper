@@ -1,5 +1,4 @@
-// Live messages, case by case: what counts as a message, redaction and the 2000-character cut, the live reader, the
-// end of the turn, session.live, history, and relay tail. The basic flow is in messages.test.ts.
+// Live messages case by case; the basic flow is in messages.test.ts.
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -142,9 +141,7 @@ function setup(opts: { pollMs?: number; dbPath?: string } = {}) {
   };
 }
 
-// ---------------------------------------------------------------------------------------------------
 // What counts as a message
-// ---------------------------------------------------------------------------------------------------
 
 describe("what counts as a message", () => {
   test("an entry without a model field is still Claude's message (only <synthetic> is left out)", () => {
@@ -248,9 +245,7 @@ describe("what counts as a message", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // The text: redaction and the 2000-character cut
-// ---------------------------------------------------------------------------------------------------
 
 const raw = (s: string) => ({ id: "m", raw: s, at: 1 });
 const g = (s: string) => graphemes(s).length;
@@ -357,9 +352,7 @@ describe("the text", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // The live reader
-// ---------------------------------------------------------------------------------------------------
 
 describe("the live reader", () => {
   test("a UTF-8 character split across two reads arrives whole", async () => {
@@ -561,9 +554,7 @@ describe("the live reader", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // The end of the turn
-// ---------------------------------------------------------------------------------------------------
 
 const many = (n: number, start = Date.now() + 5) =>
   Array.from({ length: n }, (_, i) => text(`m${i}`, `Message ${i}`, start + i));
@@ -756,9 +747,7 @@ describe("the end of the turn", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // session.live
-// ---------------------------------------------------------------------------------------------------
 
 describe("session.live", () => {
   test("after Stop there is no live turn, so no messages", async () => {
@@ -802,9 +791,7 @@ describe("session.live", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // History
-// ---------------------------------------------------------------------------------------------------
 
 describe("history", () => {
   const opts = { limit: 10, previewChars: 600, working: false };
@@ -867,9 +854,7 @@ describe("history", () => {
   });
 });
 
-// ---------------------------------------------------------------------------------------------------
 // Never pushed; relay tail
-// ---------------------------------------------------------------------------------------------------
 
 describe("never pushed, and relay tail", () => {
   const ev = (t: string): RelayEvent =>

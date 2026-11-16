@@ -1,7 +1,4 @@
-/**
- * The public pages the App Store requires (privacy policy, terms and support), served by the same Worker as
- * the relay so there is nothing else to host. Plain HTML, no scripts, no cookies, no analytics.
- */
+/** The public pages the App Store requires (privacy, terms, support): plain HTML, no scripts, cookies or analytics. */
 
 // Published on the support and privacy pages; the App Store needs a reachable contact.
 const SUPPORT_EMAIL = "medenov.azamat.t@gmail.com";

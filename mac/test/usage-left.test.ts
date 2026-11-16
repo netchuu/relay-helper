@@ -1,5 +1,4 @@
-// usage-left: what is left of the plan limits and the context, from Claude Code's status line. The helper keeps it per
-// session, sends it to the phones, and keeps the person's own status line running and restorable.
+// What is left of the plan limits and context, from Claude Code's status line, kept per session and sent to the phones.
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

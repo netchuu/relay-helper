@@ -3,11 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { waitFor } from "./support/wait.ts";
 
-// The helper pings its relay connection every keepalive interval and
-// drops a link whose pong hasn't come back by the next ping, so a dead link is noticed within two intervals. A slow
-// but alive relay (pong late, yet before the next ping) keeps the link. The interval is read once at start-up from
-// RELAY_KEEPALIVE_MS, so each case runs the real RelayLink in a child process with a short interval, against a
-// minimal WebSocket server here that answers pings when it's told to.
+// The helper pings its relay link and drops it when a pong misses the next ping; each case runs RelayLink in a child process.
 
 const INTERVAL = 300;
 

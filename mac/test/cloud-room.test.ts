@@ -1,8 +1,6 @@
 import { afterEach, beforeAll, expect, mock, spyOn, test } from "bun:test";
 
-// The relay room with fake sockets. A phone that reconnects (an LTE drop leaves its old socket half-open on the
-// room's side) must still get in: it replaces its own earlier socket by the id it sends, many phones behind one
-// carrier address are fine, the total stays capped, and the helper's ping is answered by the room itself.
+// The relay room with fake sockets: a reconnecting phone replaces its own socket, the total stays capped, the ping is answered.
 
 class FakeSocket {
   readyState = 1;

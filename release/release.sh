@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-# Builds a Relay helper release for macOS and Linux, then writes SHA256SUMS, the Homebrew formula and
-# install.sh. Run on a Mac (the macOS builds need signing and notarization there).
-#
-#   release/release.sh 0.2.0              # build into release/dist/0.2.0
-#   release/release.sh 0.2.0 --publish    # also create the GitHub release and update the tap
-#
-# RELAY_PLATFORMS="linux" builds only Linux (for trying it out; don't publish a release like that).
+# Builds a Relay helper release for macOS and Linux, then writes SHA256SUMS, the formula and install.sh: release/release.sh 0.2.0 [--publish]
 set -euo pipefail
 
 VERSION="${1:?usage: release.sh <version> [--publish]}"

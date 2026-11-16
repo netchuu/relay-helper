@@ -1,8 +1,4 @@
-/**
- * Writes protocol/fixtures/push.json: one encrypted notification (key, the sealed blob, and what it
- * decrypts to), so the iOS tests prove the Notification Service Extension reads the Mac's format.
- * Run: bun protocol/push-fixture.ts
- */
+/** Writes protocol/fixtures/push.json, one encrypted notification the iOS extension must decrypt; `bun protocol/push-fixture.ts`. */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sealForPhone } from "../mac/src/daemon/relayPush.ts";

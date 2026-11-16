@@ -1,5 +1,4 @@
-// What a question answered at the Mac keeps in the history: whole characters at the 80-character cut, and no secrets,
-// whether the answer came from the Mac or the phone.
+// What a question answered at the Mac keeps in the history: whole characters at the 80-character cut, no secrets.
 import { describe, expect, test } from "bun:test";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";

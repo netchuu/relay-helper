@@ -1,10 +1,6 @@
 import { redact } from "../../src/daemon/redact.ts";
 
-/**
- * Turns what Claude Code wrote while recording into something that can be committed: only the entry types the
- * helper reads, only the fields it reads, every string through the helper's own `redact`, the scratch folder, the home
- * folder and the user name replaced, and the clock moved to a fixed start (offsets stay).
- */
+/** Makes a recorded transcript committable: known entry types and fields only, strings redacted, paths and user name replaced. */
 
 export const FIXTURE_CWD = "/Users/me/Projects/scratch";
 export const FIXTURE_HOME = "/Users/me";

@@ -12,11 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-// `relay pair` on a machine that isn't set up runs install() itself, then waits 5 more seconds for the
-// helper. This runs the real cli.ts `pair` from a temp copy of the sources, where only platform/index.ts is
-// changed: the service is a fake, so nothing touches launchd, and hook/client.ts is left out, so install()
-// doesn't build. HOME and RELAY_HOME are temp dirs. A fake helper answers on the socket at once, only after
-// install() has given up ("daemon did not start"), or never.
+// `relay pair` on a machine that isn't set up runs install() and waits 5 s for the helper, against a fake service and daemon.
 
 const HELPER = resolve(import.meta.dir, "../..");
 const SENTINEL = "FAKE-SERVICE-INSTALL";
