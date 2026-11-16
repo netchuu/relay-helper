@@ -133,7 +133,7 @@ describe("only the context blocks in front go", () => {
 
 // A fake Claude desktop app, passed to sendToDesktop.
 type Session = { title: string; composer: string };
-function fakeApp(sessions: Record<string, Session>, shown: string) {
+function fakeApp(sessions: Record<string, Session>, shown: string, sendKeepsText = false) {
   const state = { shown, sessions, sent: [] as { to: string; text: string }[] };
   class El {
     constructor(
@@ -197,7 +197,7 @@ function fakeApp(sessions: Record<string, Session>, shown: string) {
                 label: "Send",
                 press: () => {
                   state.sent.push({ to: state.shown, text: cur.composer });
-                  cur.composer = "";
+                  if (!sendKeepsText) cur.composer = "";
                 },
               }),
             ]
@@ -255,3 +255,26 @@ describe.skipIf(process.platform !== "darwin")("the desktop app (fake)", () => {
     expect(state.shown).toBe("d");
   });
 });
+
+describe.skipIf(process.platform !== "darwin")(
+  "the desktop app (fake): a send the transcript never shows",
+  () => {
+    test("is unconfirmed", async () => {
+      const path = join(tmp(), "t.jsonl");
+      writeFileSync(path, "");
+      const { state, deps } = fakeApp({ c: { title: "Deploy", composer: "" } }, "c");
+      expect(await sendToDesktop("c", "hello", path, deps)).toBe("unconfirmed");
+      expect(state.sent).toEqual([{ to: "c", text: "hello" }]);
+    }, 15_000);
+
+    test("the text stays in the composer, and the next send replaces it instead of reading it as a draft", async () => {
+      const path = join(tmp(), "t.jsonl");
+      writeFileSync(path, "");
+      const { state, deps } = fakeApp({ c: { title: "Deploy", composer: "" } }, "c", true);
+      expect(await sendToDesktop("c", "hello", path, deps)).toBe("unconfirmed");
+      expect(state.sessions.c?.composer).toBe("hello");
+      expect(await sendToDesktop("c", "again", path, deps)).toBe("unconfirmed");
+      expect(state.sessions.c?.composer).toBe("again");
+    }, 30_000);
+  },
+);

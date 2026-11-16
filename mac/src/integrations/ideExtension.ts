@@ -27,6 +27,8 @@ export type IdeResult =
   | "busy"
   /** No editor content is visible: the screen is locked. */
   | "locked"
+  /** The keys went in with Send, but the prompt never showed up in the transcript: it may still arrive. */
+  | "unconfirmed"
   | "failed";
 
 const trace = (...a: unknown[]) => {
@@ -242,7 +244,8 @@ export async function sendToIde(
     }
     // Send is enabled only while the editor holds text: the person's draft, unless it's text Relay typed itself
     // that a stale tree still shows.
-    if (send.bool("AXEnabled") && !deps.typedByRelay(sessionId, box.string("AXValue"))) return "draft";
+    const leftover = send.bool("AXEnabled");
+    if (leftover && !deps.typedByRelay(sessionId, box.string("AXValue"))) return "draft";
 
     // The editor takes a moment to accept focus from the background: ask again for up to a second.
     window.setBool("AXMain", true);
@@ -256,12 +259,19 @@ export async function sendToIde(
       trace("composer didn't take focus");
       return "failed";
     }
+    if (leftover) {
+      // Text of Relay's own whose Return was lost: typing after it would send both.
+      box.setString("AXValue", " ");
+      await deps.sleep(200);
+      box.setString("AXValue", "");
+    }
     const started = Date.now();
     await deps.typeToPid(pid, text, { submit: true });
     const sent = transcript ? await deps.waitForPrompt(transcript, text, started) : false;
-    if (sent) deps.rememberTyped(sessionId, text);
+    // Unconfirmed text may still sit in the editor: it must not read as the person's draft next time.
+    deps.rememberTyped(sessionId, text);
     trace("confirmed", sent);
-    return sent ? "sent" : "failed";
+    return sent ? "sent" : "unconfirmed";
   } catch (err) {
     trace("error", err);
     return "failed";

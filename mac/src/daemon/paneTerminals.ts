@@ -95,12 +95,20 @@ export function paneTypeSteps(
   return steps;
 }
 
+/** A step failed after text had already gone into the prompt. */
+export class PartlyTyped extends Error {}
+
 /** Runs the steps in order (each one's `args` start with the terminal's program). */
 async function runSteps(target: PaneTarget, steps: PaneStep[], what: string): Promise<void> {
+  let typed = false;
   for (const step of steps) {
     if (step.waitMs) await Bun.sleep(step.waitMs);
     const res = await execFull(target, step.args, step.stdin);
-    if (res.code !== 0) throw new Error(`${target.kind} ${what} failed (${res.code})`);
+    if (res.code !== 0) {
+      const msg = `${target.kind} ${what} failed (${res.code})`;
+      throw typed ? new PartlyTyped(msg) : new Error(msg);
+    }
+    typed = true;
   }
 }
 

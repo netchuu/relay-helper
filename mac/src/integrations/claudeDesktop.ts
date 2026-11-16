@@ -22,6 +22,8 @@ export type DesktopResult =
   | "draft"
   /** The window shows no content: the screen is locked (macOS hides it then). */
   | "locked"
+  /** Send was pressed but the prompt never showed up in the transcript: it may still arrive. */
+  | "unconfirmed"
   | "failed";
 
 interface DesktopSession {
@@ -448,10 +450,10 @@ export async function sendToDesktop(
     }
     // Confirmed only by Claude Code itself: the composer can't be trusted in the background (stale tree).
     const confirmed = transcript ? await waitForPrompt(transcript, text, started) : true;
-    if (confirmed) deps.typed.remember(sessionId, text);
-    else await clear();
+    // Unconfirmed text stays in the composer, remembered as Relay's: the next send replaces the whole value.
+    deps.typed.remember(sessionId, text);
     await restore();
-    return confirmed ? "sent" : fail("failed", "failed at confirm");
+    return confirmed ? "sent" : fail("unconfirmed");
   } catch {
     return fail("failed");
   } finally {

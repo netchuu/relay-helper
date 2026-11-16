@@ -3,11 +3,12 @@ import { CHILD_PATH } from "../config.ts";
 import {
   askForAccessibility,
   axAllowed,
+  type DesktopResult,
   desktopReady,
   desktopSessionWithoutPermission,
   sendToDesktop,
 } from "../integrations/claudeDesktop.ts";
-import { isIdeSessionSync, sendToIde } from "../integrations/ideExtension.ts";
+import { type IdeResult, isIdeSessionSync, sendToIde } from "../integrations/ideExtension.ts";
 import { log } from "../log.ts";
 import { claudeInFront } from "../platform/foreground.ts";
 import { platform } from "../platform/index.ts";
@@ -17,6 +18,7 @@ import { cleanTypedText } from "../shell/typedText.ts";
 import {
   type PaneInfo,
   type PaneTarget,
+  PartlyTyped,
   paneEnter,
   paneInfo,
   paneScreen,
@@ -46,10 +48,7 @@ export interface HeadlessRoute {
 
 export interface DeliveryResult {
   via: DeliveryRoute;
-  /**
-   * False when the message was typed into a terminal but never submitted: it still sits in the prompt after Enter
-   * was pressed twice. Absent when it went through or couldn't be checked.
-   */
+  /** False when the message was typed but never seen to arrive (terminal: Enter pressed twice; app or editor: no transcript). */
   submitted?: false;
 }
 
@@ -143,7 +142,31 @@ export interface TypeOps {
   sleep?(ms: number): Promise<void>;
   /** Whether no key was pressed at this Mac since the session's prompt was last submitted. Absent: false. */
   noKeySincePrompt?(sessionId: string): boolean;
+  /** The desktop app and editor routes. Absent: the real ones. */
+  gui?: GuiOps;
 }
+
+/** The desktop app and editor routes of `deliver`; tests swap them. */
+export interface GuiOps {
+  desktopReady(sessionId: string): Promise<boolean>;
+  sendToDesktop(sessionId: string, text: string, transcript: string | null): Promise<DesktopResult>;
+  isIdeSession(transcript: string | null): boolean;
+  axAllowed(): boolean;
+  sendToIde(
+    sessionId: string,
+    text: string,
+    transcript: string | null,
+    userActive?: boolean,
+  ): Promise<IdeResult>;
+}
+
+export const defaultGuiOps: GuiOps = {
+  desktopReady,
+  sendToDesktop,
+  isIdeSession: (t) => process.platform === "darwin" && isIdeSessionSync(t),
+  axAllowed,
+  sendToIde,
+};
 
 export const defaultTypeOps: TypeOps = {
   pty: (socketPath, token, pid, text, force) => typeIntoPty(socketPath, token, pid, text, { force }),
@@ -189,32 +212,36 @@ export async function deliver(
     await settleAfterEscape(session.id, ops);
     const typed = await typeIntoTerminal(session, text, opts, ops);
     if (typed) {
-      const submitted = await confirmSubmitted(session, text, typed, opts, ops);
-      return submitted === false ? { via: typed, submitted } : { via: typed };
+      const submitted = await confirmSubmitted(session, text, typed.route, opts, ops);
+      const unsent = submitted === false || (typed.partial && submitted !== true);
+      return unsent ? { via: typed.route, submitted: false } : { via: typed.route };
     }
     if (opts.terminalOnly) throw new DeliveryError("Relay can't type into this session's terminal.");
     if (desktopSessionWithoutPermission(session.id)) {
       const asked = askForAccessibility();
       if (asked !== "skipped") log.info("accessibility", { result: asked, for: session.id });
     }
-    if (await desktopReady(session.id)) {
+    const gui = ops.gui ?? defaultGuiOps;
+    if (await gui.desktopReady(session.id)) {
       if (opts.locked) throw new WaitForUnlock("the Mac is locked");
-      const result = await sendToDesktop(session.id, text, transcriptPathFor(session));
+      const result = await gui.sendToDesktop(session.id, text, transcriptPathFor(session));
       log.info("desktop route", { sessionId: session.id, result });
       if (result === "sent") return { via: "desktop" };
+      if (result === "unconfirmed") return { via: "desktop", submitted: false };
       if (result === "locked") throw new WaitForUnlock("the Mac is locked");
       // A draft in the composer, no unique sidebar row, or anything unexpected: the inbox, below.
     }
     const transcript = transcriptPathFor(session);
-    if (process.platform === "darwin" && isIdeSessionSync(transcript)) {
-      if (!axAllowed()) {
+    if (gui.isIdeSession(transcript)) {
+      if (!gui.axAllowed()) {
         const asked = askForAccessibility();
         if (asked !== "skipped") log.info("accessibility", { result: asked, for: session.id });
       } else {
         if (opts.locked) throw new WaitForUnlock("the Mac is locked");
-        const result = await sendToIde(session.id, text, transcript, opts.userTypingNow);
+        const result = await gui.sendToIde(session.id, text, transcript, opts.userTypingNow);
         log.info("ide route", { sessionId: session.id, result });
         if (result === "sent") return { via: "ide" };
+        if (result === "unconfirmed") return { via: "ide", submitted: false };
         if (result === "locked") throw new WaitForUnlock("the Mac is locked");
         // Someone's draft, the editor in use, the tab not open, or anything unexpected: the inbox, below.
       }
@@ -317,7 +344,7 @@ async function confirmSubmitted(
   if (!(await pressEnter(session, route, ops))) return null;
   if (await waitFor()) return true;
   const after = await promptAfterTyping(session, route, ops);
-  if (after !== undefined && holdsMessage(after, text)) {
+  if (after === undefined || holdsMessage(after, text)) {
     log.warn("typed message still unsent", { sessionId: session.id, route });
     return false;
   }
@@ -330,7 +357,7 @@ async function typeIntoTerminal(
   text: string,
   opts: DeliverOptions,
   ops: TypeOps,
-): Promise<TerminalRoute | null> {
+): Promise<{ route: TerminalRoute; partial?: true } | null> {
   const anyway = opts.typeAnyway === true;
   const active = opts.idleSeconds !== null && opts.idleSeconds < PAUSE_SECONDS;
   if (session.ptySocket && session.ptyToken && session.pid) {
@@ -340,7 +367,8 @@ async function typeIntoTerminal(
     } catch {
       // the tab is gone; try the next route
     }
-    if (reply?.ok) return "pty";
+    if (reply?.ok) return { route: "pty" };
+    if (reply && !reply.ok && reply.reason === "typed_not_sent") return { route: "pty", partial: true };
     // `relay shell` waited for a quiet moment in that tab and none came, or its prompt holds a draft. One from
     // before `force` keeps refusing while you type; after TYPE_ANYWAY_MS that one gives way to the next route.
     if (reply && !reply.ok && (reply.reason === "typing" || reply.reason === "draft") && !anyway)
@@ -353,8 +381,9 @@ async function typeIntoTerminal(
       if (!anyway && (draft || active)) throw new WaitForPause("tmux", draft ? "draft" : "typing");
       try {
         await ops.tmux(session.tmuxSocket, session.tmuxPane, draft ? afterBreak(text) : text);
-        return "tmux";
-      } catch {
+        return { route: "tmux" };
+      } catch (err) {
+        if (err instanceof PartlyTyped) return { route: "tmux", partial: true };
         // try the next route
       }
     }
@@ -367,8 +396,9 @@ async function typeIntoTerminal(
       if (!anyway && (draft || active)) throw new WaitForPause(pane.kind, draft ? "draft" : "typing");
       try {
         await ops.paneType(pane, draft ? afterBreak(text) : text);
-        return pane.kind;
-      } catch {
+        return { route: pane.kind };
+      } catch (err) {
+        if (err instanceof PartlyTyped) return { route: pane.kind, partial: true };
         // try the next route
       }
     }
@@ -386,7 +416,7 @@ async function typeIntoTerminal(
       ? null
       : promptDraft(tab.screen, { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true });
   if (!anyway && (draft || (tab.front && active))) throw new WaitForPause(app, draft ? "draft" : "typing");
-  if (await ops.type(app, tty, draft ? afterBreak(text) : text)) return app;
+  if (await ops.type(app, tty, draft ? afterBreak(text) : text)) return { route: app };
   log.info("typing failed, no route left", { sessionId: session.id, app, tty });
   return null;
 }
@@ -884,6 +914,7 @@ export function tmuxTypeSteps(socket: string, pane: string, text: string): TmuxS
 }
 
 export async function tmuxType(socket: string, pane: string, text: string): Promise<void> {
+  let typed = false;
   for (const step of tmuxTypeSteps(socket, pane, text)) {
     if (step.waitMs) await Bun.sleep(step.waitMs);
     const proc = Bun.spawn(step.args, {
@@ -893,7 +924,9 @@ export async function tmuxType(socket: string, pane: string, text: string): Prom
       env: { PATH: CHILD_PATH },
     });
     const code = await proc.exited;
-    if (code !== 0) throw new DeliveryError(`tmux ${step.args[3]} failed (${code})`);
+    const msg = `tmux ${step.args[3]} failed (${code})`;
+    if (code !== 0) throw typed ? new PartlyTyped(msg) : new DeliveryError(msg);
+    if (step.args[3] === "send-keys" || step.args[3] === "paste-buffer") typed = true;
   }
 }
 

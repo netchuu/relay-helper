@@ -148,9 +148,7 @@ for (const where of ["pty", "tmux", "iterm"] as const) {
         { ...base, submitted: () => t.hook(), submitWaitMs: 300 },
         t.ops,
       );
-      // `relay shell`'s prompt can't be read, so the second miss can't be confirmed there.
-      if (where === "pty") expect(res.submitted).toBeUndefined();
-      else expect(res.submitted).toBe(false);
+      expect(res.submitted).toBe(false);
       expect(t.log.filter((l) => l === "enter")).toHaveLength(1);
     });
   });

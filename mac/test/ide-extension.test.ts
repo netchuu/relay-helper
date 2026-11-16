@@ -121,6 +121,10 @@ class Fake {
     if (attr === "AXFocused") return this.focused;
     return Boolean(this.props[attr]);
   }
+  setString(attr: string, value: string) {
+    this.props[attr] = value;
+    return true;
+  }
   setBool(attr: string, value: boolean) {
     if (attr === "AXFocused" && value && ++this.asks >= this.focusAfter) this.focused = true;
     if (attr === "AXMain") this.main = value;
@@ -338,6 +342,23 @@ describe("sendToIde", () => {
     expect(await send()).toBe("sent");
   });
 
+  test("Relay's own leftover text is cleared before typing, so the two don't go out as one", async () => {
+    pids["com.microsoft.VSCode"] = 10;
+    const t = tab({ text: "The build finished without errors", sendEnabled: true, draft: "hello" });
+    apps.set(10, appWith(windowWith(t.area)));
+    relayTyped = true;
+    expect(await send()).toBe("sent");
+    expect(t.composer.props.AXValue).toBe("");
+  });
+
+  test("a person's draft is never cleared", async () => {
+    pids["com.microsoft.VSCode"] = 10;
+    const t = tab({ text: "The build finished without errors", sendEnabled: true, draft: "mine" });
+    apps.set(10, appWith(windowWith(t.area)));
+    expect(await send()).toBe("draft");
+    expect(t.composer.props.AXValue).toBe("mine");
+  });
+
   test("focus is asked for again until it takes, up to seven times", async () => {
     pids["com.microsoft.VSCode"] = 10;
     const slow = tab({ text: "The build finished without errors", focusAfter: 4 });
@@ -351,12 +372,12 @@ describe("sendToIde", () => {
     expect(typed).toHaveLength(1);
   });
 
-  test("not confirmed by the transcript: failed and not remembered", async () => {
+  test("not confirmed by the transcript: unconfirmed, and remembered so it is not a draft", async () => {
     pids["com.microsoft.VSCode"] = 10;
     apps.set(10, appWith(windowWith(tab({ text: "The build finished without errors" }).area)));
     confirm = false;
-    expect(await send()).toBe("failed");
-    expect(remembered).toEqual([]);
+    expect(await send()).toBe("unconfirmed");
+    expect(remembered).toHaveLength(1);
   });
 
   test("an error from the system: failed, and the tree is still released", async () => {

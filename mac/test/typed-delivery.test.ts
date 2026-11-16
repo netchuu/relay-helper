@@ -814,7 +814,7 @@ describe("relay shell: drafts and typing anyway", () => {
   test("force: Claude quit before Enter: no Enter is written", async () => {
     let calls = 0;
     const x = ctx({ isForeground: async () => ++calls < 2 });
-    expect(await answerRequest(req({ force: true }), x.c)).toEqual({ ok: false, reason: "not_foreground" });
+    expect(await answerRequest(req({ force: true }), x.c)).toEqual({ ok: false, reason: "typed_not_sent" });
     expect(x.written).not.toContain("\r");
   });
 

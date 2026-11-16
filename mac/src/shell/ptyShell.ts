@@ -23,7 +23,7 @@ export interface TypeRequest {
 
 export type TypeReply =
   | { ok: true }
-  | { ok: false; reason: "auth" | "not_foreground" | "typing" | "draft" | "bad_request" };
+  | { ok: false; reason: "auth" | "not_foreground" | "typing" | "draft" | "bad_request" | "typed_not_sent" };
 
 /** The shell to run: $SHELL, else the platform default. */
 export function userShell(env: Record<string, string | undefined> = process.env): string {
@@ -96,8 +96,8 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
   const { body, enter } = typedBytes(ctx.hasDraft?.() ? `\n\n${text}` : text, ctx.pasteOn());
   ctx.write(body);
   await ctx.sleep(150);
-  // Enter is what runs a command: check once more that the agent is still in front.
-  if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "not_foreground" };
+  // Enter is what runs a command: check once more that the agent is still in front. The text is already typed.
+  if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "typed_not_sent" };
   ctx.write(enter);
   ctx.sentEnter?.();
   return { ok: true };
