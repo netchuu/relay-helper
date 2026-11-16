@@ -23,7 +23,11 @@ const secretFlag = (flag: string) => {
   if (/(?:^|-)(?:api-?key|access-?key|apikey|accesskey)(?:-|$)/.test(joined)) return true;
   // One-word compounds: `--authtoken`, `--accesstoken`, `--apitoken`, `--secretkey`.
   const compound = /^(?:auth|access|api|refresh|bearer|session|secret|private|client)(?:token|secret|key)$/;
-  return words.some((w) => /^(?:token|password|passwd|passphrase|secret|auth)$/.test(w) || compound.test(w));
+  // A prefix glued to the word: `--dbpassword`, `--idtoken`, `--usertoken`. `--tokens` and `--tokenizer` don't end in it.
+  const glued = /^[a-z]{1,12}(?:token|password|passwd|passphrase|secret)$/;
+  return words.some(
+    (w) => /^(?:token|password|passwd|passphrase|secret|auth)$/.test(w) || compound.test(w) || glued.test(w),
+  );
 };
 
 /** A word that may stand after a secret-looking name in code: `req.body.password`, `process.env.GITHUB_TOKEN`. */
@@ -34,7 +38,11 @@ const codeReference = (v: string) => {
   const parts = v.split(/\??\./);
   // A random token or a dotted password has the same shape. Only a well-known root (`req.`, `process.env.`),
   // or a lowercase chain that ends in a secret word (`form.data.password`), reads as code.
-  if (CODE_ROOTS.test(parts[0]!)) return parts.every((p) => p.length <= 40);
+  // A part with letters and digits mixed and no `_` (`data.Xk39fJ2mQz`) is a random value, not a property name.
+  if (CODE_ROOTS.test(parts[0]!))
+    return parts.every(
+      (p) => p.length <= 40 && !(p.length >= 8 && /\d/.test(p) && /[A-Za-z]/.test(p) && !p.includes("_")),
+    );
   return (
     /^[a-z_$]/.test(parts[0]!) &&
     /(?:token|password|passwd|secret|key)$/i.test(parts[parts.length - 1]!) &&
@@ -49,6 +57,9 @@ const codeReference = (v: string) => {
  */
 const SECRET_NAME =
   "(?:api[_-]?key|secret|token|pass(?:w(?:or)?d|phrase)|(?<![A-Za-z])pass|private[_-]?key|access[_-]?key|client[_-]?secret)";
+
+const endsWithSecretWord = (name: string) =>
+  /(?:api[_-]?key|secret|token|pass(?:w(?:or)?d|phrase)|private[_-]?key|access[_-]?key)["']?$/i.test(name);
 
 const quotedOrWord = `(?:"([^"\\n]{6,})"|'([^'\\n]{6,})'|(["']?)([^\\s"',;]{8,}))`;
 
@@ -99,8 +110,9 @@ const RULES: Rule[] = [
   {
     // `sshpass -p …`, `docker login -u me -p …`: `-p` takes the password, with or without a space.
     kind: "cli-password",
-    // The gap stops at the command sshpass wraps: the `-p` of `ssh -p 2222` is a port.
-    re: /(\b(?:sshpass|(?:docker|podman|nerdctl)\s+login)\b(?:(?!\s(?:ssh|scp|sftp|rsync)\b)[^\n;&|]){0,300}?\s-p(?:\s+|(?=['"])|=))('[^']*'|"[^"]*"|[^\s'"][^\s]*)/g,
+    // The gap of sshpass stops at the command it wraps: the `-p` of `ssh -p 2222` is a port. A `docker login` has no
+    // wrapped command, so a user or host named `sftp` or `ssh.example.com` doesn't stop it.
+    re: /(\b(?:sshpass\b(?:(?!\s(?:ssh|scp|sftp|rsync)\b)[^\n;&|]){0,300}?|(?:docker|podman|nerdctl)\s+login\b[^\n;&|]{0,300}?)\s-p(?:\s+|(?=['"])|=))('[^']*'|"[^"]*"|[^\s'"][^\s]*)/g,
     replace: (m, prefix = "", v = "") => (alreadyRedacted(v) ? m : `${prefix}${tag("cli-password")}`),
   },
   {
@@ -151,7 +163,8 @@ const RULES: Rule[] = [
         // Code and prose, not values: `getItem("token")`, `req.body.password`, `The secret: consistency beats…`.
         if (/^(?:[\w.]+\(|[[{(])/.test(v) || codeReference(v)) return m;
         // A name that goes on with a letter (`tokenizer`, `secretName`) is a secret only with a digit in the value.
-        if (/^[A-Za-z]/.test(rest) && !/\d/.test(v)) return m;
+        // Unless the name itself ends with a secret word (`secretPassword`, `tokenSecret`).
+        if (/^[A-Za-z]/.test(rest) && !/\d/.test(v) && !endsWithSecretWord(name)) return m;
         // A letters-only value followed by more words is prose; one that ends the line is a password.
         const next = whole.slice(Number(offset) + m.length);
         if (onlyLetters(v) && v.length < 20 && (sep === ":" || before || after) && /^[ \t]+\S/.test(next))
