@@ -4,15 +4,7 @@ import type { HookReply } from "./broker.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { Registry, SessionRecord } from "./registry.ts";
 
-/**
- * Continuing a session whose terminal is closed (`session.resume`): the conversation is still on disk, so the helper
- * starts `claude --resume` without a terminal, speaking Claude Code's stream-json protocol on its pipes, and keeps
- * that process. Each later message is one JSON line on its stdin. Permission requests arrive on its stdout
- * (`can_use_tool`) and are answered through Relay's own prompts.
- *
- * The stream-json control protocol is Claude Code's, not a documented API: a process that doesn't answer is
- * stopped and the request fails with a plain sentence.
- */
+/** Continues a session without a terminal (`session.resume`): `claude --resume` over stream-json pipes, permissions via Relay prompts. */
 
 export class ResumeError extends Error {
   constructor(
@@ -95,8 +87,7 @@ interface Owned {
   abort: AbortController;
   /** One per permission request still open, by request_id. */
   requests: Map<string, AbortController>;
-  /** A Stop waiting for the process to end the turn, by the request_id of its interrupt. Settled by the matching
-   * `control_response` (what Claude Code sends for an interrupt) or by a `result` line. */
+  /** A Stop waiting for the turn to end, by its interrupt's request_id; settled by `control_response` or `result`. */
   turnEnded: Map<string, () => void>;
 }
 
@@ -164,11 +155,7 @@ export class HeadlessSessions {
     this.d.registry.setStatus(sessionId, "working");
   }
 
-  /**
-   * Stop: asks the owned process to end its current turn (stream-json `interrupt` control request) and waits for
-   * it to report the turn over. A process that doesn't within the timeout is ended instead, so a Stop never
-   * leaves the session working. Resolves "interrupted", or "ended" when the process had to go.
-   */
+  /** Stop: sends an `interrupt`; a process that doesn't end the turn in time is killed. Resolves "interrupted" or "ended". */
   async interrupt(sessionId: string, timeoutMs = INTERRUPT_TIMEOUT_MS): Promise<"interrupted" | "ended"> {
     const entry = this.owned.get(sessionId);
     if (!entry) throw new ResumeError("unavailable", "This session doesn't run in Relay.");
@@ -208,10 +195,7 @@ export class HeadlessSessions {
     for (const [id, entry] of [...this.owned]) this.drop(id, entry);
   }
 
-  /**
-   * Reads the process's stdout until it ends. Resolves when Claude Code announces itself (`system`/`init`); rejects
-   * when it exits first or says nothing within the timeout.
-   */
+  /** Reads stdout until it ends; resolves on `system`/`init`, rejects on early exit or timeout. */
   private watch(id: string, entry: Owned): Promise<void> {
     const { child } = entry;
     let errText = "";

@@ -19,20 +19,10 @@ interface Stream {
   authTimer: ReturnType<typeof setTimeout>;
 }
 
-/**
- * Keeps this Mac connected to its room on the Cloudflare relay and serves each phone stream through
- * an end-to-end-encrypted MacChannel + ClientSession. Reconnects within seconds; never blocks hooks.
- */
-/**
- * How often the helper pings its relay connection. A pong must be back by the next ping (so a dead link is
- * dropped within two intervals), and the room's own pong within two intervals of the first ping.
- */
+/** Keeps this Mac connected to its relay room and serves each phone stream over an encrypted channel. */
+/** How often the relay connection is pinged; a pong must be back by the next ping. */
 const KEEPALIVE_MS = Number(process.env.RELAY_KEEPALIVE_MS) || 5_000;
-/**
- * How long a connection attempt may take to open. Without a limit, an attempt that stalls (the TCP
- * connection opens but the upgrade never answers, common on a phone hotspot) never opens and never
- * closes, so nothing retries and the helper stays offline until it restarts.
- */
+/** Longest an attempt may take to open; a stalled upgrade (phone hotspots) would otherwise never retry. */
 const CONNECT_TIMEOUT_MS = 8_000;
 /** The watchdog ticks this often; a tick that comes more than WAKE_JUMP_MS late means the machine slept. */
 const WATCHDOG_MS = 1_000;
@@ -144,11 +134,7 @@ export class RelayLink {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /**
-   * A permanent watchdog: a tick that arrives more than 5 s late means the machine slept (the socket is stale,
-   * and a retry timer may be minutes away), and a change of network interfaces means the old route is gone.
-   * Either one reconnects at once, also while waiting out a backoff.
-   */
+  /** Watchdog: a late tick (sleep) or changed network interfaces reconnects at once, even during a backoff. */
   private startWatchdog(): void {
     if (this.watchdog) this.clock.clearInterval(this.watchdog);
     let last = this.clock.now();
@@ -236,8 +222,7 @@ export class RelayLink {
       if (closed) return;
       detach();
       if (this.stopped) return;
-      // 4000 = replaced by another connection for the same room. Once can be our own late attempt (retry
-      // normally); twice in a row is a second daemon: back off longer.
+      // 4000 = replaced by another connection: once is our own late attempt, twice a second daemon.
       this.replacedInARow = code === 4000 ? this.replacedInARow + 1 : 0;
       const failedFast = this.clock.now() - startedAt < FAST_FAIL_MS;
       let delay: number;
@@ -301,13 +286,7 @@ export class RelayLink {
     };
   }
 
-  /**
-   * After the computer sleeps or loses its network, the socket can look open on both ends while nothing
-   * gets through: the Worker keeps the room, phones can't reach this helper, and nobody notices. So ping
-   * every KEEPALIVE_MS (Cloudflare answers pings itself) and drop the socket when a pong doesn't come
-   * back before the next ping. The room's own pong is required too, within two intervals of the
-   * first ping, so a room that never hears this socket is dropped as well.
-   */
+  /** After sleep or a lost network the socket can look open while nothing gets through: ping, drop it on a missed pong. */
   private startKeepalive(ws: WebSocket, drop: () => void): void {
     this.stopKeepalive();
     let awaitingPong = false;
@@ -319,9 +298,7 @@ export class RelayLink {
     this.keepalive = this.clock.setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (this.awaitingRoomPong) this.roomMissed++;
-      // The edge answers protocol pings itself, so a pong proves only the path to the edge. The room's own pong
-      // proves its code still hears this socket and can send to it: without it, phones that open streams never
-      // reach this helper while everything else looks healthy.
+      // The edge answers protocol pings itself; only the room's own pong proves the room still hears this socket.
       const roomSilent = this.roomMissed >= 2;
       if (awaitingPong || roomSilent) {
         log.info("relay connection went quiet; reconnecting", { missedPong: awaitingPong, roomSilent });

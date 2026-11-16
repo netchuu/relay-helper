@@ -56,11 +56,7 @@ export interface Alert {
 /** The visible text Apple, Google and the relay see; the phone shows the decrypted text instead. */
 export const GENERIC_ALERT = { title: "Relay", body: "New activity on your Mac" } as const;
 
-/**
- * What a phone without a push key (paired before push keys existed) gets instead of the alert: no title, body,
- * question or options, only that something happened. Its text would otherwise cross Apple, Google and the relay
- * in plaintext. A newer one replaces the older one instead of stacking.
- */
+/** The alert for a phone without a push key: no text, which would cross Apple, Google and the relay in plaintext. */
 export const contentFreeAlert = (): Alert => ({
   ...GENERIC_ALERT,
   category: Category.notice,
@@ -164,20 +160,12 @@ export function turnAlert(turn: Turn, name: string): Alert {
   };
 }
 
-/**
- * The most plaintext (title, body and data as JSON, in UTF-8 bytes) one sealed push may carry. The relay
- * accepts 4,096 bytes of APNs payload and 4,000 of FCM data, which leaves about 2,813 for this at the
- * longest thread id it allows.
- */
+/** Most plaintext UTF-8 bytes one sealed push may carry (relay limits: 4,096 APNs, 4,000 FCM data). */
 export const MAX_SEALED_BYTES = 2800;
 
 const jsonBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 
-/**
- * The alert cut down so its sealed text fits MAX_SEALED_BYTES whatever the session name, question or options:
- * the question gives way first (cut on whole characters), then the buttons, then the title and body.
- * Alerts that already fit come back unchanged.
- */
+/** The alert cut to fit MAX_SEALED_BYTES: question first, then buttons, then title and body. */
 export function fitAlert(alert: Alert): Alert {
   const plain = (a: Alert) => ({ title: a.title, body: a.body, data: a.data });
   if (jsonBytes(plain(alert)) <= MAX_SEALED_BYTES) return alert;
@@ -209,11 +197,7 @@ const sealAlert = (alert: Alert, pushKey: string): string => {
   return sealForPhone(pushKey, { title: a.title, body: a.body, data: a.data });
 };
 
-/**
- * The APNs payload with the real text encrypted for one phone (sealForPhone). Apple and the relay see a
- * generic alert, the category (so the action buttons work) and an opaque blob; the phone's Notification
- * Service Extension decrypts the blob and shows the real title, body and data.
- */
+/** The APNs payload with the text sealed for one phone: Apple sees a generic alert, the category and a blob. */
 export function sealedApnsPayload(alert: Alert, pushKey: string): object {
   return {
     aps: {
@@ -227,11 +211,7 @@ export function sealedApnsPayload(alert: Alert, pushKey: string): object {
   };
 }
 
-/**
- * The FCM message with the real text encrypted for one phone, in the same format as iOS (sealForPhone).
- * Google and the relay see only the category and the thread (session) id, as Apple does for iOS; the
- * Android app decrypts `enc` with its push key and builds the notification and its buttons.
- */
+/** The FCM message with the text sealed for one phone; Google sees only the category and thread id. */
 export function sealedFcmMessage(alert: Alert, pushKey: string): FcmMessage {
   return {
     data: {
@@ -262,11 +242,7 @@ export function apnsPayload(alert: Alert): object {
   };
 }
 
-/**
- * The FCM message for an alert in plain text: data-only, so the Android app builds the notification (and its
- * action buttons) itself. FCM data values must all be strings; `options` travels as a JSON array string.
- * pushAll uses it only for contentFreeAlert.
- */
+/** The plain-text FCM message, data-only; FCM data values must be strings, so `options` is a JSON string. */
 export function fcmMessage(alert: Alert): FcmMessage {
   const data: Record<string, string> = {
     title: alert.title,
@@ -288,19 +264,13 @@ export function fcmMessage(alert: Alert): FcmMessage {
   };
 }
 
-/**
- * Pushes to paired phones while you are away from the Mac (presence), never while you are at it.
- * Prompts are always visible in the terminal too, so a push is a convenience, never the only path.
- */
+/** Pushes to paired phones while you are away from the Mac, never while you are at it. */
 export class Notifier {
   private unsubscribe: (() => void) | null = null;
   private wasPresent = true;
   /** Open prompts the phone has already been told about (their own push, or a reminder). */
   private readonly told = new Set<string>();
-  /**
-   * A turn's "is done" alert held back because background shells or agents still run: the session shows as
-   * working until the last one ends, and the alert goes out then. The newest turn's alert replaces an older one.
-   */
+  /** A "done" alert held back while background shells or agents still run; sent when the last ends. */
   private readonly heldDone = new Map<string, Alert>();
 
   constructor(
@@ -335,8 +305,7 @@ export class Notifier {
     try {
       if (event.type === "presence.changed") {
         const present = event.presence.present;
-        // Leaving the Mac with things still waiting: one reminder instead of silence. Only for prompts the
-        // phone hasn't heard about: stepping away again doesn't repeat the same ones.
+        // One reminder for waiting prompts the phone hasn't heard about.
         if (this.wasPresent && !present) {
           const open = this.broker.listOpen();
           const news = open.some((p) => !this.told.has(p.id));

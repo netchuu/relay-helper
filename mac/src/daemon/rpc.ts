@@ -80,11 +80,7 @@ export interface RpcDeps {
   hasTranscript?: (session: SessionRecord) => boolean;
 }
 
-/**
- * How long `session.send` waits for a pause in your typing before answering "queued" and leaving the message to the
- * reply queue: well inside the phone's 20 s reply timeout, so the phone shows "Sending…" and then sent, and never
- * "Couldn't send" for a message that will arrive.
- */
+/** How long `session.send` waits for a typing pause before answering "queued"; well inside the phone's 20 s timeout. */
 export const INLINE_PAUSE_WAIT = { inlineMs: 12_000, pollMs: 500 };
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
@@ -109,10 +105,7 @@ class RpcFailure extends Error {
   }
 }
 
-/**
- * A list of newest-first items cut (oldest dropped) until its JSON fits one reply. The phone sees a shorter page, as
- * when a session has little history.
- */
+/** Newest-first items, oldest dropped until the JSON fits one reply. */
 function fitReply<T>(items: T[]): T[] {
   let size = 2;
   const kept: T[] = [];
@@ -224,8 +217,7 @@ export function createRpc(
         return { sessionId } satisfies SessionStarted;
       } catch (err) {
         if (err instanceof StartError) {
-          // Claude Code was launched with the message but the session wasn't found: still a start, and it is
-          // audited (the short id when the launch printed one; the directory and the length, never the message).
+          // Launched but the session wasn't found: still a start, audited without the message.
           if (err.launched)
             audit(d.db, actor, "session.start", {
               ...(err.launched.shortId ? { sessionId: err.launched.shortId } : {}),
@@ -271,8 +263,7 @@ export function createRpc(
     },
 
     "session.turns": ({ sessionId, limit, before }) => {
-      // Up to and including `before`: a turn the next prompt closed ends at the very moment that one started, which
-      // is the time the phone gives. (A turn it already has may come along; it knows its turns by id.)
+      // Inclusive of `before`: a turn closed by the next prompt ends exactly when that one started.
       const rows = d.db
         .query(
           "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at <= ? ORDER BY ended_at DESC LIMIT ?",
@@ -295,8 +286,7 @@ export function createRpc(
         before: oldest,
         cwd: session.cwd,
       });
-      // A recorded turn whose start isn't known (a Stop with no prompt before it) can't keep its own transcript
-      // copy out by time: the copy ends a moment before the record does. Told by its answer instead.
+      // A turn with no known start can't be matched to its transcript copy by time; match by answer.
       const startless = d.db
         .query(
           "SELECT summary, ended_at FROM turns WHERE session_id = ? AND started_at IS NULL AND ended_at IS NOT NULL",
@@ -312,8 +302,7 @@ export function createRpc(
     },
 
     "session.send": async ({ sessionId, text: message, attachments: ids, sendId }, actor) => {
-      // The same message again (Try Again after its reply was lost): answered as the first time, never typed
-      // twice. One still on its way is waited for; one that failed is sent now.
+      // A retried message gets the first answer, never typed twice; a failed one is sent again.
       if (sendId) {
         for (;;) {
           const earlier = sent.get(sessionId, sendId);
@@ -495,8 +484,7 @@ export function createRpc(
     "device.registerPush": ({ platform, token, environment }, actor) => {
       const deviceId = actor.startsWith("device:") ? actor.slice("device:".length) : null;
       if (!deviceId) throw new RpcFailure("bad_request", "only a paired device can register for push");
-      // The token lives in apns_token for both services. APNs tokens are hex (case-insensitive);
-      // FCM tokens are case-sensitive, so only APNs ones are normalised.
+      // Both services use apns_token; only APNs (hex) tokens are lowercased, FCM ones are case-sensitive.
       d.db
         .query("UPDATE devices SET apns_token = ?, apns_env = ?, push_platform = ? WHERE id = ?")
         .run(platform === "apns" ? token.toLowerCase() : token, environment, platform, deviceId);
@@ -638,11 +626,7 @@ export function createRpc(
     return run;
   }
 
-  /**
-   * Types the message in, or sends it through the session's other routes. When it has to wait (the Mac locked for
-   * the desktop app, or you typing in that terminal or a draft in its prompt), it waits here for a pause for a few
-   * seconds, then goes into the reply queue: `via: "queued"`.
-   */
+  /** Types the message in or sends it by another route; after a few seconds' wait for a pause it is queued (`via: "queued"`). */
   async function sendNow(
     session: SessionRecord,
     text: string,
@@ -672,8 +656,7 @@ export function createRpc(
         tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
       });
       const waited = Date.now() - arrived;
-      // Before typing: its UserPromptSubmit hook arrives before deliver() returns (the desktop and IDE routes
-      // wait for the transcript), and must know this came from the phone, not the person at the Mac.
+      // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
       notePhoneTyped(sessionId, text);
       // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
       const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`);

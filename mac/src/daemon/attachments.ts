@@ -33,12 +33,7 @@ import {
 import { errMessage, log } from "../log.ts";
 import type { DB } from "./db.ts";
 
-/**
- * Photos and files sent from a phone. The phone uploads each one in chunks
- * (`attachment.begin` → `attachment.chunk`… → `attachment.end`), the helper saves it under
- * `<dir>/<session>/<id8>-<name>` (0600, folders 0700), and `session.send` types its path into the session after
- * the message. Unfinished uploads go after an hour, saved files after 7 days.
- */
+/** Photos and files from the phone: chunked upload, saved under `<dir>/<session>/<id8>-<name>`, path typed after the message. */
 
 /** A refusal with a plain sentence the phone can show. */
 export class AttachmentError extends Error {
@@ -97,17 +92,11 @@ interface Row {
   removed_at: number | null;
 }
 
-/**
- * The name the file is saved under after its id prefix, or an error. Refused: empty, a slash or backslash, "..",
- * control, line separator and bidi characters, more than NAME_MAX_BYTES. The saved name has only letters, digits,
- * ".", "_" and "-": every other character (a space, a quote, a bracket) becomes "_", so the path typed into the
- * session needs no quotes. Claude Code turns a bare path into "[Image #N]" but not a quoted one with spaces.
- */
+/** The saved name after the id prefix, or an error. Other characters become "_": Claude Code only turns a bare path into "[Image #N]". */
 export function checkName(raw: string): { name: string; saved: string } {
   const name = raw.normalize("NFC").trim();
   if (!name || name === "." || name.includes("..") || /[/\\]/.test(name)) throw badRequest(words.badName);
-  // Control characters, line and paragraph separators, and the bidi marks, embeddings, overrides and isolates
-  // that can make a name read differently from what it is.
+  // Control, line separator and bidi characters can make a name read differently from what it is.
   if (/[\p{Cc}\p{Zl}\p{Zp}؜‎‏‪-‮⁦-⁩]/u.test(name)) throw badRequest(words.badName);
   if (Buffer.byteLength(name, "utf8") > NAME_MAX_BYTES) throw badRequest(words.longName);
   return { name, saved: name.replace(/[^\p{L}\p{N}\p{M}._-]/gu, "_") };
@@ -230,10 +219,7 @@ export const systemThumbnailer: Thumbnailer = async (src, out) => {
 };
 
 export class AttachmentStore {
-  /**
-   * Which chunks of each unfinished upload arrived. `complete` when this helper saw the upload from its begin; after
-   * a restart it didn't, and `end` relies on the size and the hash alone.
-   */
+  /** Chunks that arrived per upload; `complete` only if seen from `begin`, else `end` trusts size and hash. */
   private readonly received = new Map<string, { chunks: Set<number>; complete: boolean }>();
   private readonly now: () => number;
   private readonly thumbnailer: Thumbnailer;
@@ -349,11 +335,7 @@ export class AttachmentStore {
     return toRef({ ...r, path, finished_at: this.now() });
   }
 
-  /**
-   * An attachment the phone removed before sending it: an unfinished upload is dropped (its partial file and
-   * row), a saved file and its thumbnail are deleted and the row marked removed, as `sweep` does after 7 days, so a
-   * prompt that has its path still shows a chip. Unknown or already removed: nothing to do, not an error.
-   */
+  /** Drops an unfinished upload or deletes a saved file (row marked removed). Unknown or removed is not an error. */
   discard(p: { id: string }): AttachmentDiscarded {
     const r = this.row(p.id);
     if (!r || r.removed_at !== null) return { id: p.id, discarded: false };
@@ -369,10 +351,7 @@ export class AttachmentStore {
     return { id: r.id, discarded: true };
   }
 
-  /**
-   * The saved attachments for `session.send`, in the order given (repeats once). Refused: more than ATTACHMENTS_MAX,
-   * one that isn't this session's, unfinished, or removed.
-   */
+  /** The saved attachments for `session.send`, in order, each once; refuses too many, foreign, unfinished or removed ones. */
   forSend(sessionId: string, ids: string[]): AttachmentRef[] {
     const unique = [...new Set(ids)];
     if (unique.length > ATTACHMENTS_MAX) throw badRequest(words.tooMany);
@@ -445,10 +424,7 @@ export class AttachmentStore {
     };
   }
 
-  /**
-   * Removes unfinished uploads older than an hour and saved attachments older than 7 days (their rows stay,
-   * marked removed, for 90 days), and files nobody tracks that are as old.
-   */
+  /** Removes unfinished uploads after an hour, saved files after 7 days (rows stay 90), and old untracked files. */
   sweep(): { uploads: number; files: number } {
     const now = this.now();
     let uploads = 0;
@@ -527,10 +503,7 @@ export class AttachmentStore {
   }
 }
 
-/**
- * The attachments whose paths are in a prompt, in the order they appear there; undefined when none. Reads the
- * database only, so turns recorded anywhere (hooks, the transcript, a stopped turn) can carry them.
- */
+/** The attachments whose paths are in a prompt, in order; undefined when none. Reads the database only. */
 export function attachmentsInPrompt(
   db: DB,
   sessionId: string,
@@ -599,10 +572,7 @@ function storedAttachments(db: DB, sessionId: string, turnId: string): Attachmen
   }
 }
 
-/**
- * `{attachments}` for a Turn or turn.started, or nothing: the ones recorded with the turn (`turnId`) first, then
- * any whose path the prompt still holds, each once.
- */
+/** `{attachments}` for a Turn or turn.started: recorded ones first, then those whose path the prompt holds. */
 export function attachmentFields(
   db: DB,
   sessionId: string,

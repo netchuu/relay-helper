@@ -13,11 +13,7 @@ import { redact } from "./redact.ts";
 import { closeOpenFence, splitBlocks } from "./render.ts";
 import { TimelineReader } from "./timeline.ts";
 
-/**
- * Live messages: what Claude writes between its tool calls. No hook fires for
- * text, so they come from the transcript: live while the turn runs, and from one read at its end. The final
- * answer is never one of them; it stays `Turn.summary`.
- */
+/** Live messages: what Claude writes between tool calls, read from the transcript (no hook fires for text). */
 
 /** A message as the transcript has it, before redaction and the cut (to compare with the final answer). */
 export interface RawMessage {
@@ -35,11 +31,7 @@ interface Entry {
   message?: { model?: string; content?: unknown };
 }
 
-/**
- * The message in a transcript entry, or null: only Claude's own text in the main conversation, not a subagent's,
- * an API error, Claude Code's synthetic entries, thinking or tool calls. An entry with several text blocks is
- * one message.
- */
+/** The message in a transcript entry, or null: only Claude's own text in the main conversation. */
 export function messageFrom(entry: unknown, since?: number): RawMessage | null {
   const e = entry as Entry;
   if (e?.type !== "assistant" || e.isSidechain || e.isApiErrorMessage) return null;
@@ -53,11 +45,7 @@ export function messageFrom(entry: unknown, since?: number): RawMessage | null {
   return { id: e.uuid, raw: texts.join("\n\n"), at: Number.isNaN(at) ? 0 : at };
 }
 
-/**
- * Redacted (whole, before any cut, so a cut never leaves the start of a secret), then at most TURN_MESSAGE_MAX
- * characters as people see them, " …" included: whole paragraphs first, never ending inside a fenced code block
- * (an open fence is closed), else cut at a word. Never splits a character.
- */
+/** Redacted before the cut (so no secret's start survives), then cut to TURN_MESSAGE_MAX at a paragraph, closing open fences. */
 export function shownMessage(m: RawMessage): TurnMessage {
   const text = redact(m.raw)
     .replace(/\r\n/g, "\n")
@@ -82,8 +70,7 @@ function cut(text: string): string {
     out = candidate;
   }
   if (out) return `${closeOpenFence(out).trimEnd()}${ELLIPSIS}`;
-  // The first paragraph alone is too long: as much of it as fits, at a word when one is near the end, with an
-  // open fence closed and the ellipsis.
+  // The first paragraph alone is too long: cut at a word, close any open fence.
   const g = graphemes(splitBlocks(text)[0] ?? text);
   let n = Math.min(g.length, TURN_MESSAGE_MAX);
   for (;;) {
@@ -102,10 +89,7 @@ function cut(text: string): string {
   }
 }
 
-/**
- * A finished turn's messages: without the final answer (the last message, when its text is the answer's), shown,
- * at most TURN_MESSAGES_MAX with the rest counted.
- */
+/** A finished turn's messages without the final answer, at most TURN_MESSAGES_MAX with the rest counted. */
 export function finishedMessages(
   raw: RawMessage[],
   answer: string | null,
@@ -153,9 +137,7 @@ export function parseMessagesJson(json: string | null | undefined): {
   }
 }
 
-// ---------------------------------------------------------------------------------------------------
 // Live
-// ---------------------------------------------------------------------------------------------------
 
 interface Following {
   turnId: string;
@@ -191,12 +173,7 @@ export function resetLiveMessages(): void {
   live.clear();
 }
 
-/**
- * Follows the transcript of each running turn and emits `turn.message` once per message, in order, at most
- * TURN_MESSAGES_MAX per turn, and `turn.action` once per action and thinking line (again when an action turns out
- * failed), at most TURN_ACTIONS_LIVE_MAX per turn (turn-timeline). Reads what was appended on every tool hook
- * (`poll`) and every `pollMs`.
- */
+/** Follows each running turn's transcript, emitting `turn.message` and `turn.action` once each, on every tool hook and `pollMs`. */
 export class MessageTracker {
   private readonly turns = new Map<string, Following>();
   private readonly pollMs: number;

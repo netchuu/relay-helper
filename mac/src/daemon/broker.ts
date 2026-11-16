@@ -69,10 +69,7 @@ const clip = (s: string, n = 80) => {
 /** What `answer_json` holds: the phone's answer, or the phone's Stop (never sent on the wire as an Answer). */
 type StoredAnswer = Answer | { kind: "stop" };
 
-/**
- * A few words for the Inbox history and the chat. Answers from the phone are known exactly; at the Mac a
- * question's picks are known from its PostToolUse, anything else only that it was answered.
- */
+/** A few words for the Inbox history and chat; at the Mac only a question's picks are known. */
 export function outcomeOf(by: ResolvedBy | null, answer: StoredAnswer | null): string | null {
   if (!by) return null;
   if (answer?.kind === "stop") return "Stopped";
@@ -96,14 +93,7 @@ export function outcomeOf(by: ResolvedBy | null, answer: StoredAnswer | null): s
   }
 }
 
-/**
- * Owns open prompts (questions, plans, permissions). A prompt is opened by a PermissionRequest hook
- * that then waits; it is closed exactly once, by whichever comes first:
- *  - an answer from the phone            -> the hook prints the decision
- *  - an answer at the Mac terminal       -> detected via later hook events; the hook is released silently
- *  - a newer prompt/turn end/session end -> "superseded"
- *  - the timeout                          -> "timeout"
- */
+/** Owns open prompts; each closes once: phone answer, Mac answer (seen via hooks), "superseded" or "timeout". */
 export class Broker {
   private readonly waiters = new Map<string, Waiter>();
 
@@ -176,11 +166,7 @@ export class Broker {
     );
   }
 
-  /**
-   * Answer from a paired device. First answer wins; later ones get `conflict`, except the same answer again from
-   * a phone: a phone re-sends an answer whose reply it never got (a link that died on the way back), and that
-   * one already went through.
-   */
+  /** Answer from a paired device. First wins, later ones get `conflict`, except a phone re-sending the same answer. */
   answer(promptId: string, answer: Answer, actor: string): AnswerResult {
     const row = this.db.query("SELECT * FROM prompts WHERE id = ?").get(promptId) as PromptRow | null;
     if (!row) return { ok: false, code: "not_found", message: "unknown prompt" };
@@ -238,11 +224,7 @@ export class Broker {
     return { ok: true };
   }
 
-  /**
-   * The phone's Stop while the session waits on a prompt: answers the prompt whose hook is waiting with
-   * deny-and-interrupt and closes it as "Stopped"; the session's other open prompts close as superseded.
-   * Returns the answered prompt's ID, or null when no hook was waiting (then Esc has to do it).
-   */
+  /** The phone's Stop on a waiting prompt: deny-and-interrupt, closed as "Stopped". Returns its ID, or null if no hook waited. */
   stop(sessionId: string, actor: string): string | null {
     const rows = this.listOpenRows(sessionId).sort((a, b) => a.created_at - b.created_at);
     const answered = rows.find((r) => this.waiters.has(r.id));
@@ -255,10 +237,7 @@ export class Broker {
     return answered.id;
   }
 
-  /**
-   * Called for hook events that prove a prompt was settled elsewhere. Closes matching open prompts of
-   * the session and releases their hooks without output.
-   */
+  /** For hook events proving a prompt was settled elsewhere: closes it and releases its hook silently. */
   settleFromSessionEvent(
     sessionId: string,
     event: {
@@ -330,11 +309,7 @@ export class Broker {
   }
 }
 
-/**
- * What was picked for an AskUserQuestion answered in the terminal, from its PostToolUse: Claude Code puts
- * `answers` (question → chosen label or typed text) in the tool's result, and in its input once answered.
- * Undefined when neither has them, so the history says only that it was answered on the Mac.
- */
+/** What was picked for an AskUserQuestion answered in the terminal, from `answers` in its PostToolUse; else undefined. */
 export function macAnswers(event: {
   toolInput?: Record<string, unknown>;
   toolResponse?: unknown;
