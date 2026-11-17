@@ -35,7 +35,20 @@ for ARCH in arm64 x64; do
   ZIP="$DIST/relay-$VERSION-darwin-$ARCH.zip"
   ditto -c -k --keepParent "$OUT" "$ZIP"
   echo "• notarizing darwin-$ARCH (takes a few minutes)"
-  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  # notarytool can exit 0 on a rejected submission, so read the verdict instead of the exit status.
+  RESULT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json)" || {
+    echo "$RESULT" >&2
+    echo "notarytool failed for darwin-$ARCH." >&2
+    exit 1
+  }
+  field() { printf '%s' "$RESULT" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1; }
+  STATUS="$(field status)"
+  if [[ "$STATUS" != "Accepted" ]]; then
+    echo "$RESULT" >&2
+    echo "Apple did not accept darwin-$ARCH (status: ${STATUS:-unknown}, submission id: $(field id))." >&2
+    echo "See why: xcrun notarytool log $(field id) --keychain-profile $NOTARY_PROFILE" >&2
+    exit 1
+  fi
   rm "$ZIP"
 
   tar -C "$DIST" -czf "$DIST/relay-$VERSION-darwin-$ARCH.tar.gz" "relay-$VERSION-darwin-$ARCH"
