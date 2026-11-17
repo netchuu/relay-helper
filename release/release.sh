@@ -45,17 +45,17 @@ echo "• built into $DIST"
 cat "$DIST/SHA256SUMS"
 
 if [[ "$PUBLISH" == "--publish" ]]; then
-  gh release create "v$VERSION" --repo "$TAP_REPO" --title "Relay $VERSION" \
-    --notes "Relay helper $VERSION for macOS and Linux" "$DIST"/*.tar.gz "$DIST/SHA256SUMS"
   WORK="$(mktemp -d)"
-  gh repo clone "$TAP_REPO" "$WORK" -- --depth 1 -q
   trap 'rm -rf "$WORK"' EXIT
+  gh repo clone "$TAP_REPO" "$WORK" -- --depth 1 -q
   mkdir -p "$WORK/Formula"
   cp "$DIST/relay.rb" "$WORK/Formula/relay.rb"
   cp "$DIST/install.sh" "$WORK/install.sh"
   cp "$ROOT/release/tap-README.md" "$WORK/README.md"
   git -C "$WORK" add -A
-  git -C "$WORK" commit -qm "Relay $VERSION"
-  git -C "$WORK" push -q
+  "$ROOT/release/tap-commit.sh" "$WORK" "$VERSION"
+  gh release create "v$VERSION" --repo "$TAP_REPO" --title "Relay $VERSION" \
+    --notes "Relay helper $VERSION for macOS and Linux" "$DIST"/*.tar.gz "$DIST/SHA256SUMS"
+  git -C "$WORK" -c credential.helper= -c credential.helper='!gh auth git-credential' push -q
   echo "• published: brew install ${TAP_REPO%%/*}/tap/relay"
 fi

@@ -10,9 +10,14 @@ ENTITLEMENTS="$ROOT/release/entitlements.plist"
 
 # Sign by fingerprint: with two copies of the certificate in the keychain, signing by name fails as
 # "ambiguous".
-IDENTITY="${RELAY_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/Developer ID Application/ {print $2; exit}')}"
+#
+# RELAY_KEYCHAIN (set by keychain.sh in CI) names a keychain file to sign and notarize from; unset, the
+# login keychain is used.
+KC=()
+[[ -z "${RELAY_KEYCHAIN:-}" ]] || KC=(--keychain "$RELAY_KEYCHAIN")
+IDENTITY="${RELAY_SIGN_IDENTITY:-$(security find-identity -v -p codesigning ${RELAY_KEYCHAIN:-} | awk '/Developer ID Application/ {print $2; exit}')}"
 [[ -n "$IDENTITY" ]] || { echo "No 'Developer ID Application' certificate in the keychain." >&2; exit 1; }
-echo "• signing with: $(security find-identity -v -p codesigning | grep "$IDENTITY" | sed 's/.*"\(.*\)"/\1/')"
+echo "• signing with: $(security find-identity -v -p codesigning ${RELAY_KEYCHAIN:-} | grep "$IDENTITY" | sed 's/.*"\(.*\)"/\1/')"
 cd "$ROOT"
 
 for ARCH in arm64 x64; do
@@ -26,7 +31,7 @@ for ARCH in arm64 x64; do
       --target="bun-darwin-$ARCH" \
       --define "process.env.RELAY_VERSION=\"$VERSION\"" \
       "mac/src/$SRC" --outfile "$OUT/$NAME" >/dev/null
-    codesign --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$OUT/$NAME"
+    codesign ${KC[@]+"${KC[@]}"} --force --timestamp --options runtime --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" "$OUT/$NAME"
     codesign --verify --strict "$OUT/$NAME"
   done
   cp "$ROOT/release/LICENSE.txt" "$OUT/"
@@ -36,7 +41,7 @@ for ARCH in arm64 x64; do
   ditto -c -k --keepParent "$OUT" "$ZIP"
   echo "• notarizing darwin-$ARCH (takes a few minutes)"
   # notarytool can exit 0 on a rejected submission, so read the verdict instead of the exit status.
-  RESULT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json)" || {
+  RESULT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" ${KC[@]+"${KC[@]}"} --wait --output-format json)" || {
     echo "$RESULT" >&2
     echo "notarytool failed for darwin-$ARCH." >&2
     exit 1
@@ -46,7 +51,7 @@ for ARCH in arm64 x64; do
   if [[ "$STATUS" != "Accepted" ]]; then
     echo "$RESULT" >&2
     echo "Apple did not accept darwin-$ARCH (status: ${STATUS:-unknown}, submission id: $(field id))." >&2
-    echo "See why: xcrun notarytool log $(field id) --keychain-profile $NOTARY_PROFILE" >&2
+    echo "See why: xcrun notarytool log $(field id) --keychain-profile $NOTARY_PROFILE ${KC[*]-}" >&2
     exit 1
   fi
   rm "$ZIP"

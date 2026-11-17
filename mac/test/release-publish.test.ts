@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,8 +33,7 @@ function run(failCommit: boolean, dropFormula = false) {
   const gitconfig = join(tmp, "gitconfig");
   writeFileSync(
     gitconfig,
-    `[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n` +
-      (failCommit ? `[core]\n\thooksPath = ${hooks}\n` : ""),
+    `[init]\n\tdefaultBranch = main\n` + (failCommit ? `[core]\n\thooksPath = ${hooks}\n` : ""),
   );
   writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\necho 'hook refuses' >&2\nexit 1\n");
   chmodSync(join(hooks, "pre-commit"), 0o755);
@@ -40,7 +47,7 @@ function run(failCommit: boolean, dropFormula = false) {
     Bun.spawnSync(["bash", "-c", cmd], { cwd: tmp, env, stdout: "pipe", stderr: "pipe" });
   const tap = join(tmp, "tap.git");
   const seed = sh(
-    `git init -q --bare tap.git && git clone -q tap.git seed 2>/dev/null && mkdir seed/Formula && echo 'version "0.0.1"' > seed/Formula/relay.rb && git -C seed add -A && git -C seed -c core.hooksPath=/dev/null commit -qm old && git -C seed push -q origin HEAD:main`,
+    `git init -q --bare tap.git && git clone -q tap.git seed 2>/dev/null && mkdir seed/Formula && echo 'version "0.0.1"' > seed/Formula/relay.rb && git -C seed add -A && git -C seed -c user.name=Seed -c user.email=seed@example.invalid -c core.hooksPath=/dev/null commit -qm old && git -C seed push -q origin HEAD:main`,
   );
   expect(seed.exitCode).toBe(0);
   writeFileSync(
@@ -53,6 +60,7 @@ function run(failCommit: boolean, dropFormula = false) {
   writeFileSync(join(dist, "relay-9.9.9-darwin-arm64.tar.gz"), "x");
   writeFileSync(join(dist, "SHA256SUMS"), "x");
   writeFileSync(join(root, "release", "tap-README.md"), "# tap\n");
+  copyFileSync(join(releaseSh, "../tap-commit.sh"), join(root, "release", "tap-commit.sh"));
   const script = join(tmp, "publish.sh");
   writeFileSync(
     script,

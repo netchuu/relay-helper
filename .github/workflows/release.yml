@@ -1,0 +1,92 @@
+# Builds, signs, notarizes and publishes a helper release from a pushed v* tag: release/release.sh does the work.
+#
+# Secrets (repository secrets in netchuu/relay-helper, set by the maintainer):
+#   RELAY_SIGN_CERT_P12_BASE64  Developer ID Application certificate with its key, a .p12, base64-encoded
+#   RELAY_SIGN_CERT_PASSWORD    the .p12 password
+#   RELAY_NOTARY_APPLE_ID       Apple ID for notarization
+#   RELAY_NOTARY_TEAM_ID        its team ID
+#   RELAY_NOTARY_PASSWORD       an app-specific password for that Apple ID
+#   RELAY_TAP_TOKEN             a token that can write to netchuu/homebrew-tap (GITHUB_TOKEN cannot)
+# A missing or empty secret stops the run before anything is built, so no unsigned build is published.
+#
+# This runs only `bun run test`. The other release gates (`bun run test:all --all`, the reconnect e2e and
+# `bun run e2e:real`) need the maintainer's Mac and a real Claude Code, so they run before the tag is pushed.
+#
+# Run it by hand from the Actions tab with publish off: it builds everything and attaches the tarballs to the
+# run as an artifact, and the tap is not touched. A manual run only appears once this file is on main.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to the tap (off builds only and attaches the tarballs to the run)"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag matches the version and is on main
+        if: env.PUBLISH == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="$REF_NAME"
+          [[ "$EVENT" == "push" ]] || TAG="v$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          release/check-tag.sh "$TAG"
+      - name: Release secrets are set
+        env:
+          RELAY_SIGN_CERT_P12_BASE64: ${{ secrets.RELAY_SIGN_CERT_P12_BASE64 }}
+          RELAY_SIGN_CERT_PASSWORD: ${{ secrets.RELAY_SIGN_CERT_PASSWORD }}
+          RELAY_NOTARY_APPLE_ID: ${{ secrets.RELAY_NOTARY_APPLE_ID }}
+          RELAY_NOTARY_TEAM_ID: ${{ secrets.RELAY_NOTARY_TEAM_ID }}
+          RELAY_NOTARY_PASSWORD: ${{ secrets.RELAY_NOTARY_PASSWORD }}
+          RELAY_TAP_TOKEN: ${{ secrets.RELAY_TAP_TOKEN }}
+        run: release/check-secrets.sh "$([[ "$PUBLISH" == "true" ]] && echo --publish)"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.10
+      - run: brew install tmux
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - name: Import the signing certificate into a temporary keychain
+        env:
+          RELAY_SIGN_CERT_P12_BASE64: ${{ secrets.RELAY_SIGN_CERT_P12_BASE64 }}
+          RELAY_SIGN_CERT_PASSWORD: ${{ secrets.RELAY_SIGN_CERT_PASSWORD }}
+          RELAY_NOTARY_APPLE_ID: ${{ secrets.RELAY_NOTARY_APPLE_ID }}
+          RELAY_NOTARY_TEAM_ID: ${{ secrets.RELAY_NOTARY_TEAM_ID }}
+          RELAY_NOTARY_PASSWORD: ${{ secrets.RELAY_NOTARY_PASSWORD }}
+        run: release/keychain.sh setup
+      - name: Build, sign, notarize and publish
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELAY_TAP_TOKEN }}
+        run: release/release.sh "$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n 1)" --publish
+      - name: Build, sign and notarize
+        if: env.PUBLISH != 'true'
+        run: release/release.sh "$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n 1)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: relay-release
+          path: |
+            release/dist/*/*.tar.gz
+            release/dist/*/SHA256SUMS
+      - name: Remove the temporary keychain
+        if: always()
+        run: release/keychain.sh teardown

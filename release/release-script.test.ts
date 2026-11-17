@@ -71,3 +71,30 @@ describe("release.sh --publish and the gh account", () => {
     expect(calls()).not.toContain("gh ");
   });
 });
+
+describe("tap-commit.sh", () => {
+  test("commits with no git identity configured", () => {
+    const repo = join(root, "tap");
+    const clean = {
+      PATH: process.env.PATH ?? "",
+      HOME: root,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+    };
+    const run = (...a: string[]) =>
+      Bun.spawnSync(a, { env: clean, cwd: root, stdout: "pipe", stderr: "pipe" });
+    run("git", "init", "-q", repo);
+    writeFileSync(join(repo, "f"), "x");
+    run("git", "-C", repo, "add", "f");
+    const r = run("bash", join(import.meta.dir, "tap-commit.sh"), repo, "9.9.9");
+    expect(r.stderr.toString()).toBe("");
+    expect(run("git", "-C", repo, "log", "-1", "--format=%s").stdout.toString().trim()).toBe("Relay 9.9.9");
+  });
+
+  test("release.sh commits before it creates the release and pushes with gh's token", () => {
+    const s = readFileSync(SCRIPT, "utf8");
+    expect(s.indexOf("tap-commit.sh")).toBeGreaterThan(0);
+    expect(s.indexOf("tap-commit.sh")).toBeLessThan(s.indexOf("gh release create"));
+    expect(s).toContain("credential.helper='!gh auth git-credential'");
+  });
+});
