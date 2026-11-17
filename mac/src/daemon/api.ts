@@ -4,6 +4,7 @@ import { askForAccessibility, axAllowed } from "../integrations/claudeDesktop.ts
 import { errMessage, log } from "../log.ts";
 import { hostInfo } from "../platform/index.ts";
 import {
+  ambiguousDeviceIds,
   authenticate,
   createPairingCode,
   type Device,
@@ -73,6 +74,8 @@ export function startLocalServer(opts: {
           return json({ accessibility: askForAccessibility({ force: true }) === "allowed" });
         if (req.method === "POST" && url.pathname === "/admin/devices/revoke") {
           const { id } = (await req.json()) as { id: string };
+          const ambiguous = ambiguousDeviceIds(opts.db, id);
+          if (ambiguous.length > 0) return json({ revoked: false, ambiguous });
           return json({ revoked: revokeDevice(opts.db, id) });
         }
         return json({ error: "not found" }, 404);

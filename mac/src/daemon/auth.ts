@@ -119,9 +119,26 @@ export function onDeviceRevoked(listener: RevokedListener): () => void {
   return () => revokedListeners.delete(listener);
 }
 
-/** Revokes a device and clears its push token; the phone's own Unpair (actor `device:<id>`) matches its id only. */
+/** Ids of the active devices a name matches when it is not an id and more than one device has it. */
+export function ambiguousDeviceIds(db: DB, idOrName: string): string[] {
+  if (db.query("SELECT 1 FROM devices WHERE id = ? AND revoked_at IS NULL").get(idOrName)) return [];
+  const ids = (
+    db
+      .query("SELECT id FROM devices WHERE name = ? AND revoked_at IS NULL ORDER BY created_at, id")
+      .all(idOrName) as {
+      id: string;
+    }[]
+  ).map((r) => r.id);
+  return ids.length > 1 ? ids : [];
+}
+
+/**
+ * Revokes a device and clears its push token; the phone's own Unpair (actor `device:<id>`) matches its id only.
+ * A name shared by several active devices revokes none of them (see `ambiguousDeviceIds`).
+ */
 export function revokeDevice(db: DB, idOrName: string, actor = "cli"): boolean {
   const byName = actor === "cli";
+  if (byName && ambiguousDeviceIds(db, idOrName).length > 0) return false;
   const ids = (
     db
       .query(`SELECT id FROM devices WHERE (id = ?${byName ? " OR name = ?" : ""}) AND revoked_at IS NULL`)

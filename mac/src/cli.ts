@@ -596,7 +596,16 @@ async function devices(args: string[]): Promise<void> {
       unix: paths.hookSock,
       body: JSON.stringify({ id: args[1] }),
     });
-    console.log(((await res.json()) as { revoked: boolean }).revoked ? "revoked" : "no such active device");
+    const out = (await res.json()) as { revoked: boolean; ambiguous?: string[] };
+    if (out.ambiguous) {
+      console.log(
+        `More than one active device is named "${args[1]}". Nothing was revoked. Pass an id instead:`,
+      );
+      for (const id of out.ambiguous) console.log(`  relay devices revoke ${id}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(out.revoked ? "revoked" : "no such active device");
     return;
   }
   const list = (await fetch("http://relay/admin/devices", { unix: paths.hookSock }).then((r) =>
