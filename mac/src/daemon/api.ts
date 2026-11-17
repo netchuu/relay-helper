@@ -113,6 +113,8 @@ interface WsData {
   unsubscribe: () => void;
   stopRevokeWatch?: () => void;
   leave?: () => void;
+  unpairing?: boolean;
+  revokedDuringUnpair?: boolean;
 }
 
 /** 4401: app-defined "unauthorized"; the client reconnects, gets a 401 and shows pairing again. */
@@ -181,7 +183,10 @@ export function startAppServer(opts: {
         });
         // Revoked (relay devices revoke / Unpair) while connected and idle: drop the socket right away.
         ws.data.stopRevokeWatch = onDeviceRevoked((id) => {
-          if (id === ws.data.device.id) closeRevoked(ws);
+          if (id !== ws.data.device.id) return;
+          // The phone's own Unpair is still being answered: close right after the reply.
+          if (ws.data.unpairing) ws.data.revokedDuringUnpair = true;
+          else closeRevoked(ws);
         });
       },
       async message(ws, raw) {
@@ -201,6 +206,8 @@ export function startAppServer(opts: {
         }
         // A throw here would be an unhandled rejection that ends the helper: answer this call instead.
         let outcome: RpcOutcome;
+        const unpairing = req.method === "device.unpair";
+        if (unpairing) ws.data.unpairing = true;
         try {
           outcome = await opts.rpc(req.method, req.params, `device:${ws.data.device.id}`);
         } catch (err) {
@@ -208,6 +215,10 @@ export function startAppServer(opts: {
           outcome = { error: { code: "internal", message: "internal error" } };
         }
         ws.send(wellFormedJSON({ type: "rpc", id: req.id ?? null, ...outcome }));
+        if (unpairing) {
+          ws.data.unpairing = false;
+          if (ws.data.revokedDuringUnpair) closeRevoked(ws);
+        }
       },
       close(ws) {
         ws.data.unsubscribe();

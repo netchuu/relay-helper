@@ -31,6 +31,8 @@ export class ClientSession {
   private stopRevokeWatch: (() => void) | null = null;
   private failedAuth = 0;
   private closed = false;
+  private unpairing = false;
+  private revokedDuringUnpair = false;
   /** The phone said in `hello` it reassembles pieces: nothing is cut or left out for size. */
   private pieces = false;
 
@@ -83,14 +85,23 @@ export class ClientSession {
 
     if (!this.device) return this.reply(id, { error: { code: "unauthorized", message: "say hello first" } });
     if (!isDeviceActive(this.deps.db, this.device.id)) return this.fatal("device revoked");
-    this.reply(
-      id,
-      await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, {
-        overRelay: true,
-        pieces: this.pieces,
-      }),
-      req.method,
-    );
+    const unpairing = req.method === "device.unpair";
+    if (unpairing) this.unpairing = true;
+    try {
+      this.reply(
+        id,
+        await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, {
+          overRelay: true,
+          pieces: this.pieces,
+        }),
+        req.method,
+      );
+    } finally {
+      if (unpairing) {
+        this.unpairing = false;
+        if (this.revokedDuringUnpair) this.fatal("device revoked");
+      }
+    }
   }
 
   close(): void {
@@ -108,7 +119,10 @@ export class ClientSession {
     // Revoked while connected: end the stream; the phone's next hello is refused and it asks to re-pair.
     this.stopRevokeWatch?.();
     this.stopRevokeWatch = onDeviceRevoked((id) => {
-      if (id === device.id) this.fatal("device revoked");
+      if (id !== device.id) return;
+      // The phone's own Unpair is still being answered: close right after the reply.
+      if (this.unpairing) this.revokedDuringUnpair = true;
+      else this.fatal("device revoked");
     });
     if (!this.unsubscribe) {
       this.leave ??= this.deps.phones?.join() ?? null;
