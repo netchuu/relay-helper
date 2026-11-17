@@ -386,12 +386,16 @@ async function doctor(): Promise<void> {
   else if (service.state === "stopped") bad(`service: ${service.mode}, stopped — \`relay restart\``);
   else ok(`service: ${service.mode}`);
   for (const note of service.notes) ({ ok, warn, bad })[note.level](`service: ${note.text}`);
-  const settings = readSettings(DEFAULT_SETTINGS);
+  const saved = savedSettingsPath(config.settingsPath);
+  const settingsPath = saved ?? DEFAULT_SETTINGS;
+  const settings = readSettings(settingsPath);
   const relayHooks = countHooks(settings);
   const expected = Object.keys(relayHooksFor(HOOK_BIN)).length;
   relayHooks >= expected
-    ? ok(`hooks: ${relayHooks} Relay hooks in ${DEFAULT_SETTINGS}`)
-    : bad(`hooks: ${relayHooks}/${expected} installed — \`relay install\``);
+    ? ok(`hooks: ${relayHooks} Relay hooks in ${settingsPath}`)
+    : bad(
+        `hooks: ${relayHooks}/${expected} installed in ${settingsPath} — \`relay install${saved ? ` --settings ${JSON.stringify(saved)}` : ""}\``,
+      );
   if (settings.crossSessionInbound === "refuse")
     bad('crossSessionInbound is "refuse": free text can\'t reach sessions');
 
