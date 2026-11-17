@@ -202,9 +202,6 @@ async function install(args: string[]): Promise<void> {
   if (!dryRun && claudeBin) saveConfig({ claudeBin });
   // New installs use the hosted relay, so the phone reaches the Mac from any network.
   if (!dryRun && !config.relayUrl) saveConfig({ relayUrl: DEFAULT_RELAY_URL });
-  // A person's install decides which settings file later updates and `relay pair` use.
-  if (!dryRun && !fromUpdate && !fromPair)
-    saveConfig({ settingsPath: settingsPath === DEFAULT_SETTINGS ? undefined : settingsPath });
 
   // 3. Hooks.
   const before = readSettings(settingsPath);
@@ -223,6 +220,9 @@ async function install(args: string[]): Promise<void> {
   }
   writeSavedStatusLine(withStatus.saved);
   const backup = writeSettings(settingsPath, settings);
+  // A person's install decides which settings file later updates and `relay pair` use; saved only once the write worked.
+  if (!fromUpdate && !fromPair)
+    saveConfig({ settingsPath: settingsPath === DEFAULT_SETTINGS ? undefined : settingsPath });
   console.log(`• hooks installed in ${settingsPath}${backup ? ` (backup: ${backup})` : ""}`);
 
   // 4. Zed's terminal has no outside way to type into it: start it through `relay shell` instead, so
