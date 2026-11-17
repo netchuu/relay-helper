@@ -1,5 +1,5 @@
 // What is left of the plan limits and context, from Claude Code's status line, kept per session and sent to the phones.
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,17 @@ import {
   statusLineKey,
   writeSavedStatusLine,
 } from "../src/install.ts";
+import { platform } from "../src/platform/index.ts";
+
+// A session reports its model only where /model can be typed; the Linux build has no terminal app, so these
+// sessions stand for the Mac's iTerm2.
+const tabRoutes = platform.typing.routes;
+beforeAll(() => {
+  platform.typing.routes = (t) => (t === "iTerm.app" || !t ? ["iterm"] : []);
+});
+afterAll(() => {
+  platform.typing.routes = tabRoutes;
+});
 
 const BIN = "/Users/me/.relay/bin/relay-hook";
 const dirs: string[] = [];
