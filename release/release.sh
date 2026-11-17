@@ -49,9 +49,13 @@ if [[ "$PUBLISH" == "--publish" ]]; then
     --notes "Relay helper $VERSION for macOS and Linux" "$DIST"/*.tar.gz "$DIST/SHA256SUMS"
   WORK="$(mktemp -d)"
   gh repo clone "$TAP_REPO" "$WORK" -- --depth 1 -q
-  mkdir -p "$WORK/Formula" && cp "$DIST/relay.rb" "$WORK/Formula/relay.rb" && cp "$DIST/install.sh" "$WORK/install.sh"
+  trap 'rm -rf "$WORK"' EXIT
+  mkdir -p "$WORK/Formula"
+  cp "$DIST/relay.rb" "$WORK/Formula/relay.rb"
+  cp "$DIST/install.sh" "$WORK/install.sh"
   cp "$ROOT/release/tap-README.md" "$WORK/README.md"
-  git -C "$WORK" add -A && git -C "$WORK" commit -qm "Relay $VERSION" && git -C "$WORK" push -q
-  rm -rf "$WORK"
+  git -C "$WORK" add -A
+  git -C "$WORK" commit -qm "Relay $VERSION"
+  git -C "$WORK" push -q
   echo "• published: brew install ${TAP_REPO%%/*}/tap/relay"
 fi
