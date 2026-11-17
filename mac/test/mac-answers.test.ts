@@ -758,3 +758,63 @@ describe("other prompts and other sources", () => {
     expect(s.recent(q.prompt.id)).toMatchObject({ resolvedBy: "phone", outcome: "Stopped" });
   });
 });
+
+describe("a question whose hook ended before its PostToolUse", () => {
+  const picks = { "Which steps view?": "Timeline" };
+
+  test("the picks arrive as a second prompt.closed and the history shows them", async () => {
+    const s = setup();
+    const q = s.ask(sid(), "AskUserQuestion", QUESTION);
+    q.abort();
+    await q.reply;
+    expect(s.closedEvents(q.prompt.id).map((e) => e.outcome)).toEqual(["Answered on the Mac"]);
+    await s.hook("PostToolUse", q.prompt.sessionId, answeredAtMac(picks));
+    expect(s.closedEvents(q.prompt.id).map((e) => e.outcome)).toEqual(["Answered on the Mac", "Timeline"]);
+    expect(s.recent(q.prompt.id)).toMatchObject({ resolvedBy: "mac", outcome: "Timeline" });
+    for (const e of s.closedEvents(q.prompt.id)) expect(() => RelayEventSchema.parse(e)).not.toThrow();
+  });
+
+  test("dismissed with Esc: no PostToolUse, it stays closed as answered on the Mac", async () => {
+    const s = setup();
+    const q = s.ask(sid(), "AskUserQuestion", QUESTION);
+    q.abort();
+    await q.reply;
+    expect(s.broker.listOpen(q.prompt.sessionId)).toEqual([]);
+    expect(s.recent(q.prompt.id)).toMatchObject({ resolvedBy: "mac", outcome: "Answered on the Mac" });
+  });
+
+  test("a PostToolUse without picks changes nothing", async () => {
+    const s = setup();
+    const q = s.ask(sid(), "AskUserQuestion", QUESTION);
+    q.abort();
+    await q.reply;
+    await s.hook("PostToolUse", q.prompt.sessionId, answeredAtMac({}));
+    expect(s.closedEvents(q.prompt.id)).toHaveLength(1);
+  });
+
+  test("a question answered from the phone is not changed by a late PostToolUse", async () => {
+    const s = setup();
+    const q = s.ask(sid(), "AskUserQuestion", QUESTION);
+    expect(
+      s.broker.answer(
+        q.prompt.id,
+        { kind: "question", answers: { "Which steps view?": "Live line" } },
+        "test",
+      ).ok,
+    ).toBe(true);
+    await q.reply;
+    await s.hook("PostToolUse", q.prompt.sessionId, answeredAtMac(picks));
+    expect(s.recent(q.prompt.id)).toMatchObject({ resolvedBy: "phone", outcome: "Live line" });
+    expect(s.closedEvents(q.prompt.id)).toHaveLength(1);
+  });
+
+  test("a second PostToolUse does not announce the picks twice", async () => {
+    const s = setup();
+    const q = s.ask(sid(), "AskUserQuestion", QUESTION);
+    q.abort();
+    await q.reply;
+    await s.hook("PostToolUse", q.prompt.sessionId, answeredAtMac(picks));
+    await s.hook("PostToolUse", q.prompt.sessionId, answeredAtMac(picks));
+    expect(s.closedEvents(q.prompt.id)).toHaveLength(2);
+  });
+});

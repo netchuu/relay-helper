@@ -73,6 +73,9 @@ const clip = (s: string, n = 80) => {
   return chars.length > n ? `${chars.slice(0, n - 1).join("")}…` : s;
 };
 
+/** How long after a question closed at the Mac its late PostToolUse may still add the picks. */
+const LATE_PICKS_MS = 2 * 60_000;
+
 /** What `answer_json` holds: the phone's answer, or the phone's Stop (never sent on the wire as an Answer). */
 type StoredAnswer = Answer | { kind: "stop" };
 
@@ -258,7 +261,9 @@ export class Broker {
       toolResponse?: unknown;
     },
   ): void {
-    for (const p of this.listOpenRows(sessionId)) {
+    const open = this.listOpenRows(sessionId);
+    if (!open.some((p) => p.tool_name === event.toolName)) this.addMacPicks(sessionId, event);
+    for (const p of open) {
       const sameTool = event.toolName !== undefined && event.toolName === p.tool_name;
       const inputMatches =
         sameTool &&
@@ -270,6 +275,39 @@ export class Broker {
       if (endsTurn) this.close(p.id, event.hookEventName === "UserPromptSubmit" ? "mac" : "superseded");
       else if (inputMatches) this.close(p.id, "mac", p.kind === "question" ? macAnswers(event) : undefined);
     }
+  }
+
+  /**
+   * A question's waiting hook can end before the PostToolUse that carries its picks arrives: the prompt was
+   * already closed as answered at the Mac without them. The picks complete it, sent as a second `prompt.closed`.
+   */
+  private addMacPicks(
+    sessionId: string,
+    event: {
+      hookEventName: string;
+      toolName?: string;
+      toolInput?: Record<string, unknown>;
+      toolResponse?: unknown;
+    },
+  ): void {
+    if (event.hookEventName !== "PostToolUse" || event.toolName === undefined) return;
+    const answer = macAnswers(event);
+    if (!answer) return;
+    const row = this.db
+      .query(
+        `SELECT id FROM prompts WHERE session_id = ? AND tool_name = ? AND kind = 'question' AND status = 'closed'
+         AND resolved_by = 'mac' AND answer_json IS NULL AND resolved_at > ? ORDER BY resolved_at DESC LIMIT 1`,
+      )
+      .get(sessionId, event.toolName, Date.now() - LATE_PICKS_MS) as { id: string } | null;
+    if (!row) return;
+    this.db.query("UPDATE prompts SET answer_json = ? WHERE id = ?").run(JSON.stringify(answer), row.id);
+    this.events.emit({
+      type: "prompt.closed",
+      promptId: row.id,
+      resolvedBy: "mac",
+      outcome: outcomeOf("mac", answer),
+    });
+    this.onChange(sessionId);
   }
 
   /** Closes prompts older than the timeout. */
