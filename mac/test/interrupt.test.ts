@@ -72,6 +72,7 @@ function setup(opts: { inboxFails?: boolean } = {}) {
       if (keys.tmuxFails) throw new Error("no tmux");
       keys.tmux.push({ socket, pane });
     },
+    inFront: async () => true,
     routes: () => keys.routes,
     app: async (route) => {
       keys.app.push(route);

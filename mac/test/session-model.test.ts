@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +39,15 @@ function terminal() {
   };
   return { ops, typed, state };
 }
+
+// The Linux build has no terminal app to type into; these sessions stand for the Mac's iTerm2.
+const tabRoutes = platform.typing.routes;
+beforeAll(() => {
+  platform.typing.routes = (t) => (t === "iTerm.app" || !t ? ["iterm"] : []);
+});
+afterAll(() => {
+  platform.typing.routes = tabRoutes;
+});
 
 function helper(env: Record<string, unknown> = { termProgram: "iTerm.app", claudePid: 4242 }) {
   const db = openDb(":memory:");

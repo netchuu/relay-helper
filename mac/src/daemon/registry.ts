@@ -16,6 +16,7 @@ import { backgroundOf } from "./background.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import { heldField, permissionModeField } from "./held.ts";
+import { terminalRoutesOf } from "./inject.ts";
 import { sessionModels } from "./model.ts";
 import { paneTargetOf } from "./paneTerminals.ts";
 import { withoutIdeContext } from "./render.ts";
@@ -217,9 +218,8 @@ export function replyRouteOf(s: SessionRecord): {
   if (s.status === "ended") return {};
   // A message to the helper's own process is an ordinary user message.
   if (s.runsInHelper) return { replyRoute: "typed" };
-  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket) || paneTargetOf(s)) return { replyRoute: "typed" };
+  if (terminalRoutesOf(s, { promised: true }).length > 0) return { replyRoute: "typed" };
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
-  if (s.terminal === "iTerm.app") return { replyRoute: "typed" };
   // The Claude desktop app and the editor extension: typed with Accessibility, which the phone can point to.
   const appSession = isAppSession(s);
   if (appSession && axAllowed()) return { replyRoute: "typed" };
@@ -234,14 +234,20 @@ function modelOf(id: string): { model?: string; effort?: string } {
 
 /** A session of the Claude desktop app or an editor extension. */
 function isAppSession(s: SessionRecord): boolean {
-  return desktopTitle(s.id) !== null || isIdeSessionSync(transcriptPathFor(s));
+  return appRouteOf(s) !== null;
 }
 
-/** Whether `/model` can be typed into the session's own terminal (not the desktop app or editors), so the phone may offer the picker. */
+/** Which app a session of the Claude desktop app or an editor extension lives in; null for a terminal session. */
+export function appRouteOf(s: SessionRecord): "desktop app" | "editor extension" | null {
+  if (desktopTitle(s.id) !== null) return "desktop app";
+  return isIdeSessionSync(transcriptPathFor(s)) ? "editor extension" : null;
+}
+
+/** Whether `/model` can be typed into the session's own terminal (not the desktop app, editors or inbox), so the phone may offer the picker. */
 function modelChangeable(s: SessionRecord): boolean {
-  if (s.ptySocket || (s.tmuxPane && s.tmuxSocket) || paneTargetOf(s)) return true;
-  if (s.terminal === "iTerm.app") return true;
-  return !isAppSession(s);
+  if (s.runsInHelper) return false;
+  // An app session that names no terminal has none to find a tab in.
+  return terminalRoutesOf(s, { promised: isAppSession(s) }).length > 0;
 }
 
 /** What still runs in the background (background-work); left out when nothing does. */

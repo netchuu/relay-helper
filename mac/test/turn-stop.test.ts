@@ -77,6 +77,7 @@ function setup(opts: Opts = {}) {
       keys.tmux++;
       if (keys.tmuxDelayMs) await Bun.sleep(keys.tmuxDelayMs);
     },
+    inFront: async () => true,
     routes: () => keys.routes,
     app: async () => {
       keys.app++;

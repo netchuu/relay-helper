@@ -20,6 +20,7 @@ import {
   type PaneTarget,
   PartlyTyped,
   paneEnter,
+  paneEscape,
   paneInfo,
   paneScreen,
   paneTargetOf,
@@ -275,44 +276,17 @@ async function promptAfterTyping(
   ops: TypeOps,
 ): Promise<string | null | undefined> {
   if (route === "pty") return undefined;
-  if (route === "tmux") {
-    const screen =
-      session.tmuxSocket && session.tmuxPane
-        ? await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane)
-        : null;
-    return screen === null ? null : promptDraft(screen);
-  }
-  if (route === "wezterm" || route === "kitty") {
-    const target = paneTargetOf(session);
-    const screen = target && ops.paneScreen ? await ops.paneScreen(target) : null;
-    return screen === null ? null : promptDraft(screen);
-  }
-  const tty = foundTty.get(session.id) ?? (await ops.ttyOf(session.pid));
-  const tab = tty ? await ops.peek(route, tty) : null;
-  return tab?.screen == null ? null : promptDraft(tab.screen);
+  const read = await routesFor(session, typeWire(ops))
+    .find((r) => r.kind === route)
+    ?.read();
+  return read?.screen == null ? null : promptDraft(read.screen);
 }
 
 async function pressEnter(session: SessionRecord, route: TerminalRoute, ops: TypeOps): Promise<boolean> {
   try {
-    if (route === "pty")
-      return session.ptySocket && session.ptyToken && session.pid && ops.enterPty
-        ? (await ops.enterPty(session.ptySocket, session.ptyToken, session.pid)).ok
-        : false;
-    if (route === "tmux") {
-      if (!session.tmuxSocket || !session.tmuxPane || !ops.tmuxEnter) return false;
-      if (!(await claudeIsInFrontInPane(session, ops))) return false;
-      await ops.tmuxEnter(session.tmuxSocket, session.tmuxPane);
-      return true;
-    }
-    if (route === "wezterm" || route === "kitty") {
-      const target = paneTargetOf(session);
-      if (!target || !ops.paneEnter || !(await claudeIsInPaneTerminal(session, target, ops))) return false;
-      await ops.paneEnter(target);
-      return true;
-    }
-    const tty = foundTty.get(session.id) ?? (await ops.ttyOf(session.pid));
-    if (!tty || !ops.enter || !(await claudeIsInFront(session, tty, ops))) return false;
-    return await ops.enter(route, tty);
+    const found = routesFor(session, typeWire(ops)).find((r) => r.kind === route);
+    const ready = found ? await found.probe() : null;
+    return ready ? await ready.key("enter") : false;
   } catch {
     return false;
   }
@@ -360,65 +334,320 @@ async function typeIntoTerminal(
 ): Promise<{ route: TerminalRoute; partial?: true } | null> {
   const anyway = opts.typeAnyway === true;
   const active = opts.idleSeconds !== null && opts.idleSeconds < PAUSE_SECONDS;
-  if (session.ptySocket && session.ptyToken && session.pid) {
-    let reply: TypeReply | null = null;
+  for (const route of routesFor(session, typeWire(ops))) {
+    const ready = await route.probe();
+    if (!ready) continue;
+    // A tab's text has no attributes: with no key pressed here since the prompt was submitted, what it shows in
+    // the prompt is Claude Code's grey suggestion, not typing.
+    const draft =
+      ready.screen === null
+        ? null
+        : promptDraft(ready.screen, {
+            ...(route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {}),
+          });
+    if (!anyway && (draft || (ready.front && active)))
+      throw new WaitForPause(route.kind, draft ? "draft" : "typing");
+    const outcome = await ready.type(draft ? afterBreak(text) : text, anyway);
+    if (outcome === "sent") return { route: route.kind };
+    if (outcome === "partial") return { route: route.kind, partial: true };
+    log.info("typing failed", { sessionId: session.id, route: route.kind });
+  }
+  return null;
+}
+
+type KeyName = "enter" | "escape";
+
+/** What a route does with a message: typed whole, typed in part (text went in, then a step failed), or not at all. */
+type TypeOutcome = "sent" | "partial" | "failed";
+
+/** A route whose session is reachable and whose Claude Code is in front; only then can it type or press a key. */
+interface ReplyReady {
+  /** The prompt's screen; null when it can't be read. */
+  screen: string | null;
+  /** Whether a person may be typing in it right now (tmux and panes: always asked about; tabs: only when the tab is in front). */
+  front: boolean;
+  type(text: string, force: boolean): Promise<TypeOutcome>;
+  key(key: KeyName): Promise<boolean>;
+}
+
+/** One way into a session's own terminal. */
+interface ReplyRoute {
+  kind: TerminalRoute;
+  /** The screen has no attributes, so a suggestion can't be told from typing without the keyboard's idle time. */
+  plainText: boolean;
+  /** Ready when the session is reachable here and Claude Code is the program in front; null otherwise. */
+  probe(): Promise<ReplyReady | null>;
+  /** The screen alone, without the in-front check; null when this route has none to read. */
+  read(): Promise<{ screen: string | null } | null>;
+}
+
+/** The transports the routes use. TypeOps and KeyOps each fill the ones they have; a missing one fails closed. */
+interface Wire {
+  ptyType?: TypeOps["pty"];
+  ptyKey?(socketPath: string, token: string, pid: number, key: KeyName): Promise<TypeReply>;
+  tmuxScreen?: TypeOps["tmuxScreen"];
+  tmuxType?(socket: string, pane: string, text: string): Promise<void>;
+  tmuxKey?(socket: string, pane: string, key: KeyName): Promise<void>;
+  tmuxPaneTty?: TypeOps["tmuxPaneTty"];
+  paneScreen?: TypeOps["paneScreen"];
+  paneType?: TypeOps["paneType"];
+  paneKey?(target: PaneTarget, key: KeyName): Promise<void>;
+  paneInfo?: TypeOps["paneInfo"];
+  tabRoutes(termProgram: string | null): TypingRoute[];
+  tabPeek?: TypeOps["peek"];
+  tabType?: TypeOps["type"];
+  tabKey?(route: TypingRoute, tty: string, key: KeyName): Promise<boolean>;
+  ttyOf: TypeOps["ttyOf"];
+  viewerTtyOf?: TypeOps["viewerTtyOf"];
+  inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
+}
+
+function typeWire(ops: TypeOps): Wire {
+  return {
+    ptyType: ops.pty,
+    ptyKey: (socketPath, token, pid, key) =>
+      key === "enter" && ops.enterPty
+        ? ops.enterPty(socketPath, token, pid)
+        : Promise.reject(new DeliveryError("no such key")),
+    tmuxScreen: ops.tmuxScreen,
+    tmuxType: ops.tmux,
+    tmuxKey: async (socket, pane, key) => {
+      if (key !== "enter" || !ops.tmuxEnter) throw new DeliveryError("no such key");
+      await ops.tmuxEnter(socket, pane);
+    },
+    tmuxPaneTty: ops.tmuxPaneTty,
+    paneScreen: ops.paneScreen,
+    paneType: ops.paneType,
+    paneKey: async (target, key) => {
+      if (key !== "enter" || !ops.paneEnter) throw new DeliveryError("no such key");
+      await ops.paneEnter(target);
+    },
+    paneInfo: ops.paneInfo,
+    tabRoutes: ops.routes,
+    tabPeek: ops.peek,
+    tabType: ops.type,
+    tabKey: async (route, tty, key) => (key === "enter" && ops.enter ? ops.enter(route, tty) : false),
+    ttyOf: ops.ttyOf,
+    viewerTtyOf: ops.viewerTtyOf,
+    inFront: ops.inFront,
+  };
+}
+
+function keyWire(ops: KeyOps): Wire {
+  return {
+    ptyKey: (socketPath, token, pid, key) =>
+      key === "escape" ? ops.pty(socketPath, token, pid) : Promise.reject(new DeliveryError("no such key")),
+    tmuxKey: async (socket, pane, key) => {
+      if (key !== "escape") throw new DeliveryError("no such key");
+      await ops.tmux(socket, pane);
+    },
+    tmuxPaneTty: ops.tmuxPaneTty,
+    paneKey: async (target, key) => {
+      if (key !== "escape" || !ops.pane) throw new DeliveryError("no such key");
+      await ops.pane(target);
+    },
+    paneInfo: ops.paneInfo,
+    tabRoutes: ops.routes,
+    tabKey: async (route, tty, key) => (key === "escape" ? ops.app(route, tty) : false),
+    ttyOf: ops.ttyOf,
+    viewerTtyOf: ops.viewerTtyOf,
+    inFront: ops.inFront ?? (async () => false),
+  };
+}
+
+// Which routes exist needs no I/O, so the reply and model flags can read it.
+function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
+  const routes: ReplyRoute[] = [];
+  const guarded = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
     try {
-      reply = await ops.pty(session.ptySocket, session.ptyToken, session.pid, text, anyway);
+      return await fn();
     } catch {
-      // the tab is gone; try the next route
+      return fallback;
     }
-    if (reply?.ok) return { route: "pty" };
-    if (reply && !reply.ok && reply.reason === "typed_not_sent") return { route: "pty", partial: true };
-    // `relay shell` waited for a quiet moment in that tab and none came, or its prompt holds a draft. One from
-    // before `force` keeps refusing while you type; after TYPE_ANYWAY_MS that one gives way to the next route.
-    if (reply && !reply.ok && (reply.reason === "typing" || reply.reason === "draft") && !anyway)
-      throw new WaitForPause("pty", reply.reason);
+  };
+  if (session.ptySocket) {
+    const { ptySocket: socketPath } = session;
+    const token = session.ptyToken ?? "";
+    const pid = session.pid ?? 0;
+    routes.push({
+      kind: "pty",
+      plainText: false,
+      read: async () => null,
+      // `relay shell` checks for itself that Claude Code is in front of its terminal.
+      probe: async () =>
+        !session.ptyToken || !session.pid
+          ? null
+          : {
+              screen: null,
+              front: false,
+              type: async (text, force) => {
+                let reply: TypeReply | null = null;
+                try {
+                  reply = (await wire.ptyType?.(socketPath, token, pid, text, force)) ?? null;
+                } catch {
+                  // the tab is gone; try the next route
+                }
+                if (reply?.ok) return "sent";
+                if (reply && !reply.ok && reply.reason === "typed_not_sent") return "partial";
+                // `relay shell` waited for a quiet moment in that tab and none came, or its prompt holds a draft. One from
+                // before `force` keeps refusing while you type; after TYPE_ANYWAY_MS that one gives way to the next route.
+                if (reply && !reply.ok && (reply.reason === "typing" || reply.reason === "draft") && !force)
+                  throw new WaitForPause("pty", reply.reason);
+                return "failed";
+              },
+              // A `relay shell` from before key requests answers bad_request (no text): the next route.
+              key: (key) =>
+                guarded(async () => (await wire.ptyKey?.(socketPath, token, pid, key))?.ok === true, false),
+            },
+    });
   }
   if (session.tmuxPane && session.tmuxSocket) {
-    const screen = await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane);
-    if (screen !== null && (await claudeIsInFrontInPane(session, ops))) {
-      const draft = promptDraft(screen);
-      if (!anyway && (draft || active)) throw new WaitForPause("tmux", draft ? "draft" : "typing");
-      try {
-        await ops.tmux(session.tmuxSocket, session.tmuxPane, draft ? afterBreak(text) : text);
-        return { route: "tmux" };
-      } catch (err) {
-        if (err instanceof PartlyTyped) return { route: "tmux", partial: true };
-        // try the next route
-      }
-    }
+    const { tmuxSocket: socket, tmuxPane: pane } = session;
+    routes.push({
+      kind: "tmux",
+      plainText: false,
+      read: async () => {
+        const read = wire.tmuxScreen;
+        const screen = read ? await guarded(() => read(socket, pane), null) : null;
+        return screen === null ? null : { screen };
+      },
+      probe: async () => {
+        const screen = wire.tmuxScreen ? await wire.tmuxScreen(socket, pane) : null;
+        if (wire.tmuxScreen && screen === null) return null;
+        if (!(await claudeIsInFrontInPane(session, wire))) return null;
+        return {
+          screen,
+          front: true,
+          type: async (text) => {
+            try {
+              await wire.tmuxType?.(socket, pane, text);
+              return wire.tmuxType ? "sent" : "failed";
+            } catch (err) {
+              return err instanceof PartlyTyped ? "partial" : "failed";
+            }
+          },
+          key: (key) =>
+            guarded(async () => {
+              if (!wire.tmuxKey) return false;
+              await wire.tmuxKey(socket, pane, key);
+              return true;
+            }, false),
+        };
+      },
+    });
   }
-  const pane = paneTargetOf(session);
-  if (pane && ops.paneScreen && ops.paneType) {
-    const screen = await ops.paneScreen(pane);
-    if (screen !== null && (await claudeIsInPaneTerminal(session, pane, ops))) {
-      const draft = promptDraft(screen);
-      if (!anyway && (draft || active)) throw new WaitForPause(pane.kind, draft ? "draft" : "typing");
-      try {
-        await ops.paneType(pane, draft ? afterBreak(text) : text);
-        return { route: pane.kind };
-      } catch (err) {
-        if (err instanceof PartlyTyped) return { route: pane.kind, partial: true };
-        // try the next route
-      }
-    }
+  const target = paneTargetOf(session);
+  if (target) {
+    routes.push({
+      kind: target.kind,
+      plainText: false,
+      read: async () => {
+        const read = wire.paneScreen;
+        const screen = read ? await guarded(() => read(target), null) : null;
+        return screen === null ? null : { screen };
+      },
+      probe: async () => {
+        const screen = wire.paneScreen ? await wire.paneScreen(target) : null;
+        if (wire.paneScreen && screen === null) return null;
+        if (!(await claudeIsInPaneTerminal(session, target, wire))) return null;
+        return {
+          screen,
+          front: true,
+          type: async (text) => {
+            if (!wire.paneType) return "failed";
+            try {
+              await wire.paneType(target, text);
+              return "sent";
+            } catch (err) {
+              return err instanceof PartlyTyped ? "partial" : "failed";
+            }
+          },
+          key: (key) =>
+            guarded(async () => {
+              if (!wire.paneKey) return false;
+              await wire.paneKey(target, key);
+              return true;
+            }, false),
+        };
+      },
+    });
   }
-  const routes = ops.routes(session.terminal);
-  if (!routes.length) return null;
-  const found = await findTab(session, routes, ops);
-  if (!found) return null;
-  const { app, tty, tab } = found;
-  if (!(await claudeIsInFront(session, tty, ops))) return null;
-  // The tab's text has no attributes: with no key pressed here since the prompt was submitted, what it shows in
-  // the prompt is Claude Code's grey suggestion, not typing.
-  const draft =
-    tab.screen === null
-      ? null
-      : promptDraft(tab.screen, { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true });
-  if (!anyway && (draft || (tab.front && active))) throw new WaitForPause(app, draft ? "draft" : "typing");
-  if (await ops.type(app, tty, draft ? afterBreak(text) : text)) return { route: app };
-  log.info("typing failed, no route left", { sessionId: session.id, app, tty });
-  return null;
+  for (const app of wire.tabRoutes(session.terminal)) {
+    routes.push({
+      kind: app,
+      plainText: true,
+      read: async () => {
+        const peek = wire.tabPeek;
+        if (!peek) return null;
+        const { ttys } = await candidateTtys(session, wire);
+        for (const { tty } of ttys) {
+          const tab = await guarded(() => peek(app, tty), null);
+          if (!tab) continue;
+          foundTty.set(session.id, tty);
+          return { screen: tab.screen };
+        }
+        return null;
+      },
+      probe: async () => {
+        const { ttys, missing } = await candidateTtys(session, wire);
+        const failed = [...missing];
+        // The next tab, from `from`, that exists and has this session's Claude Code in front: the remembered tab may
+        // run another session now, and a suspended Claude Code leaves the tab to vim or the shell.
+        const scan = async (from: number): Promise<{ at: number; tty: string; tab: TabView } | null> => {
+          for (let at = from; at < ttys.length; at++) {
+            const { tty, by } = ttys[at] as (typeof ttys)[number];
+            let tab: TabView = { screen: null, front: true };
+            if (wire.tabPeek) {
+              const peeked = await wire.tabPeek(app, tty);
+              if (!peeked) {
+                failed.push(`${app} has no tab on ${tty} (from the ${by})`);
+                continue;
+              }
+              tab = peeked;
+              foundTty.set(session.id, tty);
+            }
+            if (await claudeIsInFront(session, tty, wire)) return { at, tty, tab };
+          }
+          return null;
+        };
+        const first = await scan(0);
+        if (!first) {
+          if (wire.tabPeek) {
+            foundTty.delete(session.id);
+            log.info("no terminal tab for the session", {
+              sessionId: session.id,
+              pid: session.pid,
+              tried: failed,
+            });
+          }
+          return null;
+        }
+        return {
+          screen: first.tab.screen,
+          front: first.tab.front,
+          type: async (text) => ((await wire.tabType?.(app, first.tty, text)) === true ? "sent" : "failed"),
+          // A key that doesn't land goes to the next tab in front, as the earlier tabs may be stale.
+          key: async (key) => {
+            for (let found: typeof first | null = first; found; found = await scan(found.at + 1))
+              if (await guarded(async () => (await wire.tabKey?.(app, found.tty, key)) === true, false))
+                return true;
+            return false;
+          },
+        };
+      },
+    });
+  }
+  return routes;
+}
+
+/**
+ * The kinds of terminal route the session has, without probing anything. A session that never named its terminal
+ * is still typed into when its tab is found, but `promised` (what the reply flag says) counts tabs only for a named one.
+ */
+export function terminalRoutesOf(session: SessionRecord, opts: { promised?: boolean } = {}): TerminalRoute[] {
+  return routesFor(session, typeWire(defaultTypeOps))
+    .filter((r) => !opts.promised || !r.plainText || session.terminal !== null)
+    .map((r) => r.kind);
 }
 
 /**
@@ -525,45 +754,14 @@ export async function candidateTtys(
   return { ttys, missing };
 }
 
-/** The first terminal tab that exists for the session; logs which lookups failed when none does. */
-async function findTab(
-  session: SessionRecord,
-  routes: TypingRoute[],
-  ops: TypeOps,
-): Promise<{ app: TypingRoute; tty: string; tab: TabView } | null> {
-  const { ttys, missing } = await candidateTtys(session, ops);
-  const failed = [...missing];
-  for (const { tty, by } of ttys)
-    for (const app of routes) {
-      const tab = await ops.peek(app, tty);
-      if (tab) {
-        foundTty.set(session.id, tty);
-        return { app, tty, tab };
-      }
-      failed.push(`${app} has no tab on ${tty} (from the ${by})`);
-    }
-  foundTty.delete(session.id);
-  log.info("no terminal tab for the session", { sessionId: session.id, pid: session.pid, tried: failed });
-  return null;
-}
-
 /** The route a message to this session would be typed through right now, without typing; null when there is none. */
 export async function typingRouteFor(
   session: SessionRecord,
   ops: TypeOps = defaultTypeOps,
 ): Promise<TerminalRoute | null> {
-  if (session.ptySocket && session.ptyToken && session.pid) return "pty";
-  if (
-    session.tmuxPane &&
-    session.tmuxSocket &&
-    (await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane)) !== null
-  )
-    return "tmux";
-  const pane = paneTargetOf(session);
-  if (pane && ops.paneScreen && (await ops.paneScreen(pane)) !== null) return pane.kind;
-  const routes = ops.routes(session.terminal);
-  const found = routes.length ? await findTab(session, routes, ops) : null;
-  return found ? found.app : null;
+  for (const route of routesFor(session, typeWire(ops)))
+    if (await route.probe().catch(() => null)) return route.kind;
+  return null;
 }
 
 /** Claude Code's suggested next message on screen: null when none, undefined when the screen can't be read. Quiet. */
@@ -572,26 +770,17 @@ export async function readSuggestion(
   ops: TypeOps = defaultTypeOps,
 ): Promise<string | null | undefined> {
   try {
-    if (session.tmuxPane && session.tmuxSocket) {
-      const screen = await ops.tmuxScreen(session.tmuxSocket, session.tmuxPane);
-      if (screen !== null) return promptSuggestionRead(screen);
+    for (const route of routesFor(session, typeWire(ops))) {
+      const read = await route.read();
+      if (!read) continue;
+      if (read.screen === null) return undefined;
+      // A tab's text has no attributes: with no key pressed here since the prompt was submitted, what the prompt
+      // shows is the suggestion, not typing.
+      return promptSuggestionRead(
+        read.screen,
+        route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {},
+      );
     }
-    const routes = ops.routes(session.terminal);
-    if (!routes.length) return undefined;
-    const { ttys } = await candidateTtys(session, ops);
-    for (const { tty } of ttys)
-      for (const app of routes) {
-        const tab = await ops.peek(app, tty);
-        if (!tab) continue;
-        foundTty.set(session.id, tty);
-        // No attributes in the tab's text: with no key pressed here since the prompt was submitted, what the prompt
-        // shows is the suggestion, not typing.
-        return tab.screen === null
-          ? undefined
-          : promptSuggestionRead(tab.screen, {
-              noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true,
-            });
-      }
   } catch {
     // the screen can't be read right now
   }
@@ -602,15 +791,18 @@ export async function readSuggestion(
 export const STOP_TEXT = "Stop what you're doing now and wait for my next message.";
 export const STOP_MESSAGE = `${PHONE_PREFIX}\n${STOP_TEXT}`;
 
-export type EscapeRoute = "pty" | "tmux" | TypingRoute;
+export type EscapeRoute = TerminalRoute;
 
 /** The transports `pressEscape` uses; tests swap them. */
 export interface KeyOps {
   pty(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmux(socket: string, pane: string): Promise<void>;
+  /** A WezTerm pane or kitty window. */
+  pane?(target: PaneTarget): Promise<void>;
+  paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   /** As in TypeOps: when present, Esc goes to the pane only if Claude Code is in front there. */
   tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
-  inFront?(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
+  inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
   routes(termProgram: string | null): TypingRoute[];
   app(route: TypingRoute, tty: string): Promise<boolean>;
   ttyOf(pid: number | null): Promise<string | null>;
@@ -620,6 +812,8 @@ export interface KeyOps {
 export const defaultKeyOps: KeyOps = {
   pty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
   tmux: tmuxEscape,
+  pane: paneEscape,
+  paneInfo,
   tmuxPaneTty,
   inFront: claudeInFront,
   routes: (t) => platform.typing.routes(t),
@@ -633,45 +827,9 @@ export async function pressEscape(
   session: SessionRecord,
   ops: KeyOps = defaultKeyOps,
 ): Promise<EscapeRoute | null> {
-  if (session.ptySocket && session.ptyToken && session.pid) {
-    try {
-      // A `relay shell` from before key requests answers bad_request (no text): try the next route.
-      if ((await ops.pty(session.ptySocket, session.ptyToken, session.pid)).ok)
-        return pressed(session, "pty");
-    } catch {
-      // the tab is gone
-    }
-  }
-  if (
-    session.tmuxPane &&
-    session.tmuxSocket &&
-    (await claudeIsInFrontInPane(session, {
-      tmuxPaneTty: ops.tmuxPaneTty,
-      ttyOf: ops.ttyOf,
-      inFront: ops.inFront ?? (async () => true),
-    }))
-  ) {
-    try {
-      await ops.tmux(session.tmuxSocket, session.tmuxPane);
-      return pressed(session, "tmux");
-    } catch {
-      // try the next route
-    }
-  }
-  const routes = ops.routes(session.terminal);
-  if (routes.length) {
-    const { ttys } = await candidateTtys(session, ops);
-    const frontOps = {
-      inFront: ops.inFront ?? (async () => true),
-      ttyOf: ops.ttyOf,
-      viewerTtyOf: ops.viewerTtyOf,
-    };
-    for (const { tty } of ttys) {
-      // Esc goes only to a tab where this session's Claude Code is the program in front, as typing does: the
-      // remembered tab may run another session now, and a suspended Claude Code leaves the tab to vim or the shell.
-      if (!(await claudeIsInFront(session, tty, frontOps, "pressing Esc"))) continue;
-      for (const app of routes) if (await ops.app(app, tty)) return pressed(session, app);
-    }
+  for (const route of routesFor(session, keyWire(ops))) {
+    const ready = await route.probe().catch(() => null);
+    if (ready && (await ready.key("escape"))) return pressed(session, route.kind);
   }
   return null;
 }

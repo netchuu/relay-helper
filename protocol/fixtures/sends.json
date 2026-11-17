@@ -116,6 +116,14 @@
     "turnId": null,
     "heldAtMac": true
   },
+  "interruptWezterm": {
+    "via": "wezterm",
+    "turnId": null
+  },
+  "interruptKitty": {
+    "via": "kitty",
+    "turnId": null
+  },
   "resultRepeat": {
     "via": "tmux",
     "repeat": true

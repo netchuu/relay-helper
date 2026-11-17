@@ -189,7 +189,7 @@ export class TurnStopper {
     // 2. Esc in the session's terminal.
     const route = await pressEscape(fresh, this.keys);
     if (route) {
-      const result = { via: route as InterruptVia, turnId: null as string | null };
+      const result = { via: route, turnId: null as string | null };
       this.lastEsc.set(sessionId, { at: Date.now(), result, turnId: open?.id ?? null });
       if (open) result.turnId = await this.waitForMarker(sessionId, open);
       return done(result.via, result.turnId);

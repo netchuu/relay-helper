@@ -88,6 +88,7 @@ beforeEach(() => {
     tmux: async () => {
       throw new Error("no pane");
     },
+    inFront: async () => true,
     routes: () => [],
     app: async () => false,
     ttyOf: async () => null,

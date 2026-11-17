@@ -73,6 +73,11 @@ export function paneEnterSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\r", false)];
 }
 
+/** Esc alone. */
+export function paneEscapeSteps(target: PaneTarget): PaneStep[] {
+  return [sendText(target, "\u001b", false)];
+}
+
 /**
  * The commands that type a message: the text (pasted when it holds a newline or tab, so it stays one message), each
  * attachment path pasted on its own, then Enter.
@@ -143,6 +148,10 @@ export async function paneType(
 
 export async function paneEnter(target: PaneTarget): Promise<void> {
   await runSteps(target, paneEnterSteps(target), "send-text");
+}
+
+export async function paneEscape(target: PaneTarget): Promise<void> {
+  await runSteps(target, paneEscapeSteps(target), "send-text");
 }
 
 /** The pane's visible text with its escape codes (the dim attribute marks a suggestion), or null when it can't be read. */

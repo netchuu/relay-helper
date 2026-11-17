@@ -23,7 +23,7 @@ import { runDaemon } from "./daemon/main.ts";
 import { kittyDoctorNote } from "./daemon/paneTerminals.ts";
 import { liveTmuxSockets } from "./daemon/presence.ts";
 import { iosPushStatus, loadApnsConfig } from "./daemon/push.ts";
-import { pinnedFirst, Registry } from "./daemon/registry.ts";
+import { appRouteOf, pinnedFirst, Registry } from "./daemon/registry.ts";
 import {
   BIN_DIR,
   chooseSettingsPath,
@@ -350,17 +350,22 @@ async function doctorTyping(ok: (m: string) => void, warn: (m: string) => void):
   try {
     const registry = new Registry(openDb(paths.db), new EventLog(openDb(":memory:")));
     const without: string[] = [];
+    const lines: string[] = [];
     for (const s of registry.list()) {
-      if (s.kind === "background" || !s.pid || (await typingRouteFor(s)) !== null) continue;
-      without.push(`${s.name ?? s.project} (${s.id.slice(0, 8)})`);
+      if (s.kind === "background" || !s.pid) continue;
+      const label = `${s.name ?? s.project} (${s.id.slice(0, 8)})`;
+      const route = (await typingRouteFor(s)) ?? appRouteOf(s);
+      if (route) lines.push(`${label}: ${route}`);
+      else without.push(label);
     }
     const kitty = kittyDoctorNote(registry.list());
     if (kitty) warn(kitty);
-    without.length
-      ? warn(
-          `typing: no terminal found for ${without.join(", ")}; messages from the phone reach these as notes`,
-        )
-      : ok("typing: every running session has a terminal to type into");
+    for (const line of lines) ok(`typing: ${line}`);
+    if (without.length)
+      warn(
+        `typing: no terminal found for ${without.join(", ")}; messages from the phone reach these as notes`,
+      );
+    if (!lines.length && !without.length) ok("typing: no running sessions");
   } catch {
     // no database yet
   }

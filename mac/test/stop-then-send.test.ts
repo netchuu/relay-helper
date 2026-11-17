@@ -96,6 +96,7 @@ function keys(log: string[]): KeyOps {
       return { ok: true };
     },
     tmux: async () => void log.push("esc"),
+    inFront: async () => true,
     routes: () => ["iterm"] as TypingRoute[],
     app: async () => {
       log.push("esc");

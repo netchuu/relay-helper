@@ -368,7 +368,17 @@ export const TurnsWithLive = z.object({ turns: z.array(Turn), live: LiveTurn.nul
 export type TurnsWithLive = z.infer<typeof TurnsWithLive>;
 
 /** How session.interrupt reached Claude ("message": asked, not stopped yet); apps treat any other value as a stop. */
-export const InterruptVia = z.enum(["prompt", "pty", "tmux", "iterm", "inbox", "message", "headless"]);
+export const InterruptVia = z.enum([
+  "prompt",
+  "pty",
+  "tmux",
+  "iterm",
+  "wezterm",
+  "kitty",
+  "inbox",
+  "message",
+  "headless",
+]);
 export type InterruptVia = z.infer<typeof InterruptVia>;
 
 export const InterruptResult = z.object({

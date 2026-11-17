@@ -631,6 +631,9 @@ const sends = {
   sessionHeld: Session.parse({ ...session, heldAtMac: true, permissionMode: "bypassPermissions" }),
   // The phone's Stop held at the Mac: nothing stopped.
   interruptHeld: InterruptResult.parse({ via: "message", turnId: null, heldAtMac: true }),
+  // The phone's Stop pressed as Esc in a WezTerm pane or a kitty window.
+  interruptWezterm: InterruptResult.parse({ via: "wezterm", turnId: null }),
+  interruptKitty: InterruptResult.parse({ via: "kitty", turnId: null }),
   // The same id again: nothing typed, the first send's answer.
   resultRepeat: SendResult.parse({ via: "tmux", repeat: true }),
   // No reply came: the phone asks once.
