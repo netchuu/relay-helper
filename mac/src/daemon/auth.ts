@@ -14,6 +14,11 @@ export function pairingAttemptAllowed(now = Date.now()): boolean {
   pairingAttempts.push(now);
   return true;
 }
+/** For tests: the list is module state shared by every test in the process. */
+export function resetPairingAttempts(): void {
+  pairingAttempts.length = 0;
+}
+
 // No 0/O/1/I/L: the code may be typed by hand.
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
