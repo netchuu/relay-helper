@@ -308,20 +308,27 @@ export class Notifier {
         // One reminder for waiting prompts the phone hasn't heard about.
         if (this.wasPresent && !present) {
           const open = this.broker.listOpen();
-          const news = open.some((p) => !this.told.has(p.id));
-          for (const p of open) this.told.add(p.id);
+          const fresh = open.filter((p) => !this.told.has(p.id));
+          const news = fresh.length > 0;
+          for (const p of fresh) this.told.add(p.id);
+          // A reminder that reached no phone leaves the prompts untold, so the next step away sends it again.
+          const untellIfLost = (reached: number) => {
+            if (reached === 0) for (const p of fresh) this.told.delete(p.id);
+          };
           if (news && open.length === 1 && open[0])
-            await this.pushAll(promptAlert(open[0], this.name(open[0].sessionId)));
+            untellIfLost(await this.pushAll(promptAlert(open[0], this.name(open[0].sessionId))));
           else if (news && open.length > 1)
-            await this.pushAll({
-              title: `${open.length} things are waiting for you`,
-              body: [...new Set(open.map((p) => this.name(p.sessionId)))].join(", "),
-              category: Category.notice,
-              threadId: "relay",
-              // A newer reminder replaces the older one instead of stacking.
-              collapseId: "relay-waiting",
-              data: {},
-            });
+            untellIfLost(
+              await this.pushAll({
+                title: `${open.length} things are waiting for you`,
+                body: [...new Set(open.map((p) => this.name(p.sessionId)))].join(", "),
+                category: Category.notice,
+                threadId: "relay",
+                // A newer reminder replaces the older one instead of stacking.
+                collapseId: "relay-waiting",
+                data: {},
+              }),
+            );
         }
         this.wasPresent = present;
         return;
@@ -347,7 +354,8 @@ export class Notifier {
         return;
       }
       if (event.type === "prompt.opened") this.told.add(event.prompt.id);
-      await this.pushAll(alert);
+      const reached = await this.pushAll(alert);
+      if (reached === 0 && event.type === "prompt.opened") this.told.delete(event.prompt.id);
     } catch (err) {
       log.warn("push failed", { err: errMessage(err) });
     }

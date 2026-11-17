@@ -330,3 +330,70 @@ describe("loadApnsConfig", () => {
     expect(config?.keyId).toBe("ABC1234567");
   });
 });
+
+describe("a push that reached no phone", () => {
+  const setup = (first: { status: number; reason?: string }) => {
+    const db = openDb(":memory:");
+    db.query(
+      "INSERT INTO devices (id, name, token_hash, created_at, apns_token, apns_env, push_key) VALUES ('ios', 'iPhone', 'h', 0, ?, 'sandbox', ?)",
+    ).run("a".repeat(64), PUSH_KEY);
+    const events = new EventLog(db);
+    const broker = new Broker(db, events);
+    let present = true;
+    const presence = { get: () => ({ mode: "auto", present, idleSeconds: 0, locked: false }) };
+    const registry = { get: () => ({ name: "aalam-3d" }) };
+    const calls: number[] = [];
+    const apns = {
+      send: async () => {
+        const result = calls.length === 0 ? first : { status: 200 };
+        calls.push(result.status);
+        return result;
+      },
+    };
+    const notifier = new Notifier(db, events, presence as never, registry as never, broker, {
+      apns,
+    } as never);
+    notifier.start();
+    const setPresent = async (p: boolean) => {
+      present = p;
+      events.emit({ type: "presence.changed", presence: presence.get() } as never);
+      await Bun.sleep(20);
+    };
+    const ask = (command: string) =>
+      broker.open({ session_id: "s1", tool_name: "Bash", tool_input: { command } }).prompt;
+    return { calls, setPresent, ask };
+  };
+
+  for (const failure of [
+    { status: 0, reason: "timed out" },
+    { status: 429, reason: "too many pushes to this device" },
+    { status: 503, reason: "push failed" },
+  ]) {
+    test(`a prompt whose push failed with ${failure.status} is pushed when you step away again`, async () => {
+      const { calls, setPresent, ask } = setup(failure);
+      await setPresent(false);
+      ask("ls");
+      await waitFor(() => calls.length >= 1, 30_000, "the first push");
+      await setPresent(true);
+      await setPresent(false);
+      expect(calls).toEqual([failure.status, 200]);
+      // That one reached the phone: stepping away again repeats nothing.
+      await setPresent(true);
+      await setPresent(false);
+      expect(calls).toHaveLength(2);
+    });
+  }
+
+  test("a reminder that failed is sent again the next time you step away", async () => {
+    const { calls, setPresent, ask } = setup({ status: 0, reason: "timed out" });
+    ask("ls");
+    await setPresent(false);
+    expect(calls).toEqual([0]);
+    await setPresent(true);
+    await setPresent(false);
+    expect(calls).toEqual([0, 200]);
+    await setPresent(true);
+    await setPresent(false);
+    expect(calls).toHaveLength(2);
+  });
+});
