@@ -109,8 +109,8 @@ export class HeadlessSessions {
     return this.owned.get(sessionId)?.child.pid ?? null;
   }
 
-  /** Starts the process for `session` and sends `text` as its first message. */
-  async resume(session: SessionRecord, text: string): Promise<void> {
+  /** Starts the process for `session` and sends `text` as its first message; `onWritten` runs once the text is on stdin. */
+  async resume(session: SessionRecord, text: string, onWritten?: () => void): Promise<void> {
     const id = session.id;
     if (!text.trim()) throw new ResumeError("bad_request", "Write a message to continue the session with.");
     // Taken before the first await: two requests at once never start two copies.
@@ -132,6 +132,7 @@ export class HeadlessSessions {
     try {
       child.stdin.write(userLine(text));
       child.stdin.flush();
+      onWritten?.();
       await init;
     } catch (err) {
       this.drop(id, entry);

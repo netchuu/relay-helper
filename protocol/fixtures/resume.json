@@ -18,7 +18,8 @@
   },
   "params": {
     "sessionId": "4375b77a-1111-2222-3333-444455556666",
-    "text": "Carry on with the coupon fix"
+    "text": "Carry on with the coupon fix",
+    "sendId": "5d1c2b7e-3f0a-4e55-9a51-6c7f0d2a8b13"
   },
   "result": {
     "via": "headless"

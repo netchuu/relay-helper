@@ -701,6 +701,7 @@ const resume = {
   params: RpcSchemas["session.resume"].parse({
     sessionId: session.id,
     text: "Carry on with the coupon fix",
+    sendId: "5d1c2b7e-3f0a-4e55-9a51-6c7f0d2a8b13",
   }),
   result: SessionResumed.parse({ via: "headless" }),
   // Later messages go to the helper's process: `session.send` answers with this route.

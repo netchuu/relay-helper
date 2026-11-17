@@ -579,6 +579,8 @@ export const RpcSchemas = {
   "session.resume": z.object({
     sessionId: z.string(),
     text: z.string().min(1).max(20_000),
+    /** Like `session.send`'s: `session.delivered` and a repeated `session.send` with it know this message, also while Claude Code is still starting. */
+    sendId: z.string().min(1).max(SEND_ID_MAX).optional(),
   }),
   /** A session's finished turns, newest first; `before` pages back by the time the phone's oldest turn started. */
   "session.turns": z.object({

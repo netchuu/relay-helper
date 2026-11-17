@@ -161,6 +161,42 @@ function isHighSurrogate(code: number): boolean {
 export function createRpc(
   d: RpcDeps,
 ): (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome> {
+  async function resumeSession(
+    { sessionId, text }: { sessionId: string; text: string },
+    actor: string,
+    onWritten?: () => void,
+  ): Promise<SessionResumed> {
+    const session = d.registry.get(sessionId);
+    if (!session) throw new RpcFailure("not_found", "session not found");
+    if (!d.headless) throw new RpcFailure("unavailable", "Sessions can't be continued on this computer.");
+    if (d.headless.has(sessionId))
+      throw new RpcFailure("conflict", "This session already runs in Relay. Send the message as a reply.");
+    // Never a second copy of a session that is still alive: its terminal, app or editor has the process.
+    if (session.pid !== null && processAlive(session.pid))
+      throw new RpcFailure(
+        "conflict",
+        "This session is still running on the computer. Reply to it instead of continuing it again.",
+      );
+    if (session.status !== "ended" && session.pid === null)
+      throw new RpcFailure(
+        "conflict",
+        "This session is still listed as running. Reply to it instead of continuing it again.",
+      );
+    if (!hasTranscript(session))
+      throw new RpcFailure("not_found", "This session's conversation is no longer on the computer.");
+    await inOrder(sessionId, async () => {
+      notePhoneTyped(sessionId, text);
+      try {
+        await (d.headless as HeadlessSessions).resume(session, text, onWritten);
+      } catch (err) {
+        if (err instanceof ResumeError) throw new RpcFailure(err.code, err.message);
+        throw err;
+      }
+    });
+    audit(d.db, actor, "session.resume", { sessionId, chars: text.length });
+    return { via: "headless" } satisfies SessionResumed;
+  }
+
   const handlers: { [M in RpcMethod]: Handler<M> } = {
     sync: ({ sinceSeq }, _actor, opts) => {
       const oldest = d.events.oldestSeq();
@@ -230,36 +266,31 @@ export function createRpc(
       }
     },
 
-    "session.resume": async ({ sessionId, text }, actor) => {
-      const session = d.registry.get(sessionId);
-      if (!session) throw new RpcFailure("not_found", "session not found");
-      if (!d.headless) throw new RpcFailure("unavailable", "Sessions can't be continued on this computer.");
-      if (d.headless.has(sessionId))
-        throw new RpcFailure("conflict", "This session already runs in Relay. Send the message as a reply.");
-      // Never a second copy of a session that is still alive: its terminal, app or editor has the process.
-      if (session.pid !== null && processAlive(session.pid))
-        throw new RpcFailure(
-          "conflict",
-          "This session is still running on the computer. Reply to it instead of continuing it again.",
-        );
-      if (session.status !== "ended" && session.pid === null)
-        throw new RpcFailure(
-          "conflict",
-          "This session is still listed as running. Reply to it instead of continuing it again.",
-        );
-      if (!hasTranscript(session))
-        throw new RpcFailure("not_found", "This session's conversation is no longer on the computer.");
-      await inOrder(sessionId, async () => {
-        notePhoneTyped(sessionId, text);
-        try {
-          await (d.headless as HeadlessSessions).resume(session, text);
-        } catch (err) {
-          if (err instanceof ResumeError) throw new RpcFailure(err.code, err.message);
-          throw err;
-        }
-      });
-      audit(d.db, actor, "session.resume", { sessionId, chars: text.length });
-      return { via: "headless" } satisfies SessionResumed;
+    "session.resume": async (params, actor) => {
+      const { sessionId, sendId } = params;
+      // A repeat (the first call's reply was lost, or it is still starting Claude Code) never starts a second message.
+      if (sendId) {
+        const earlier = sent.get(sessionId, sendId);
+        if (earlier && (await earlier.catch(() => null))) return { via: "headless" } satisfies SessionResumed;
+      }
+      if (!sendId) return await resumeSession(params, actor);
+      const k = `${sessionId}\u0000${sendId}`;
+      let written: (ok: boolean) => void = () => {};
+      resumeWritten.set(
+        k,
+        new Promise<boolean>((resolve) => {
+          written = resolve;
+        }),
+      );
+      const resuming = resumeSession(params, actor, () => written(true));
+      // A start that fails after the write ends the process and forgets the id: the phone watches for the turn and
+      // offers Try Again as a new send if none comes.
+      const done = () => {
+        written(false);
+        resumeWritten.delete(k);
+      };
+      resuming.then(done, done);
+      return await sent.track(sessionId, sendId, resuming);
     },
 
     "session.turns": ({ sessionId, limit, before }) => {
@@ -326,7 +357,15 @@ export function createRpc(
     },
 
     "session.delivered": async ({ sessionId, sendId }) => {
-      const first = await sent.get(sessionId, sendId)?.catch(() => null);
+      const pending = sent.get(sessionId, sendId)?.catch(() => null);
+      const wrote = resumeWritten.get(`${sessionId}\u0000${sendId}`);
+      // A resume whose text is already on stdin counts as delivered while it still waits for system/init.
+      const first = pending
+        ? await Promise.race([
+            pending,
+            wrote?.then((ok) => (ok ? { via: "headless" as const } : pending)) ?? pending,
+          ])
+        : null;
       return (first ? { delivered: true, via: first.via } : { delivered: false }) satisfies DeliveryCheck;
     },
 
@@ -549,6 +588,8 @@ export function createRpc(
   };
 
   const sent = new SentMessages(undefined, undefined, undefined, d.db);
+  /** Per resume with a sendId: settles true once its text is on stdin, false when the resume ends without that. */
+  const resumeWritten = new Map<string, Promise<boolean>>();
 
   /** session.send without its `sendId`: checks the message, then types it in (or queues it) after earlier ones. */
   async function send(

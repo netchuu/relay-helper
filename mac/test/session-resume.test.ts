@@ -150,7 +150,10 @@ describe("session.resume", () => {
     events.subscribe((e) => {
       if (e.type === "session.upsert") seen.push(e.session);
     });
-    const res = (await call("session.resume", { sessionId: ID, text: "carry on" })) as { result: unknown };
+    const res = (await call("session.resume", {
+      sessionId: ID,
+      text: "carry on",
+    })) as { result: unknown };
     expect(SessionResumed.parse(res.result)).toEqual({ via: "headless" });
 
     const started = JSON.parse(readFileSync(join(tools, "argv.json"), "utf8"));
@@ -175,7 +178,10 @@ describe("session.resume", () => {
     ended();
     await call("session.resume", { sessionId: ID, text: "first" });
     const pid = headless.pidOf(ID);
-    const res = (await call("session.send", { sessionId: ID, text: "second" })) as { result: unknown };
+    const res = (await call("session.send", {
+      sessionId: ID,
+      text: "second",
+    })) as { result: unknown };
     expect(SendResult.parse(res.result)).toEqual({ via: "headless" });
     await until(() => lines().length === 2);
     expect(lines()).toEqual(["first", "second"]);
@@ -185,7 +191,10 @@ describe("session.resume", () => {
   test("a permission request reaches the phone as a prompt, and the answer goes back to the process", async () => {
     ended();
     await call("session.resume", { sessionId: ID, text: "first" });
-    await call("session.send", { sessionId: ID, text: "this needs permission" });
+    await call("session.send", {
+      sessionId: ID,
+      text: "this needs permission",
+    });
     await until(() => broker.listOpen(ID).length === 1);
     const prompt = broker.listOpen(ID)[0];
     expect(prompt?.kind).toBe("permission");
@@ -204,7 +213,10 @@ describe("session.resume", () => {
     });
 
     // A denial carries the sentence Claude gets.
-    await call("session.send", { sessionId: ID, text: "again, needs permission" });
+    await call("session.send", {
+      sessionId: ID,
+      text: "again, needs permission",
+    });
     await until(() => broker.listOpen(ID).length === 1);
     await call("prompt.answer", {
       promptId: broker.listOpen(ID)[0]?.id,
@@ -218,7 +230,10 @@ describe("session.resume", () => {
   test("the hook and the process asking for the same tool call open one prompt", async () => {
     ended();
     await call("session.resume", { sessionId: ID, text: "first" });
-    await call("session.send", { sessionId: ID, text: "this needs permission" });
+    await call("session.send", {
+      sessionId: ID,
+      text: "this needs permission",
+    });
     await until(() => broker.listOpen(ID).length === 1);
     const hook = await hooks.handle(
       {
@@ -247,13 +262,61 @@ describe("session.resume", () => {
     expect(answers()).toEqual([]);
   });
 
+  test("a resume that is still starting is delivered, and Try Again with its sendId isn't typed twice", async () => {
+    ended();
+    writeFileSync(join(tools, "slow"), "");
+    const sendId = "send-1";
+    const resuming = call("session.resume", {
+      sessionId: ID,
+      text: "carry on",
+      sendId,
+    });
+    await Bun.sleep(100);
+    // The fake takes 400 ms to answer init: the answer must come well before it.
+    const early = await Promise.race([
+      call("session.delivered", { sessionId: ID, sendId }),
+      Bun.sleep(200).then(() => "late"),
+    ]);
+    expect(early).toEqual({ result: { delivered: true, via: "headless" } });
+    const retried = await call("session.send", {
+      sessionId: ID,
+      text: "carry on",
+      sendId,
+    });
+    expect(retried).toEqual({ result: { via: "headless", repeat: true } });
+    await resuming;
+    await Bun.sleep(100);
+    expect(lines()).toEqual(["carry on"]);
+    expect(await call("session.delivered", { sessionId: ID, sendId })).toEqual({
+      result: { delivered: true, via: "headless" },
+    });
+  });
+
+  test("a resume that fails is not remembered as delivered", async () => {
+    ended();
+    writeFileSync(join(tools, "refuse"), "");
+    const sendId = "send-2";
+    const failed = await call("session.resume", {
+      sessionId: ID,
+      text: "carry on",
+      sendId,
+    });
+    expect(failed).toEqual({ error: expect.anything() });
+    expect(await call("session.delivered", { sessionId: ID, sendId })).toEqual({
+      result: { delivered: false },
+    });
+  });
+
   test("a message sent while the resume still waits for Claude Code follows it", async () => {
     ended();
     writeFileSync(join(tools, "slow"), "");
     const resuming = call("session.resume", { sessionId: ID, text: "first" });
     await Bun.sleep(100);
     expect(registry.get(ID)?.status).toBe("ended");
-    const second = await call("session.send", { sessionId: ID, text: "second" });
+    const second = await call("session.send", {
+      sessionId: ID,
+      text: "second",
+    });
     expect(second).toEqual({ result: expect.anything() });
     await resuming;
     await until(() => lines().length === 2);
@@ -262,7 +325,10 @@ describe("session.resume", () => {
 
   test("a prompt nobody answered becomes a denial when the process goes away, not a hang", async () => {
     ended();
-    await call("session.resume", { sessionId: ID, text: "this needs permission" });
+    await call("session.resume", {
+      sessionId: ID,
+      text: "this needs permission",
+    });
     await until(() => broker.listOpen(ID).length === 1);
     headless.stopAll();
     expect(broker.listOpen(ID)).toEqual([]);
@@ -272,7 +338,10 @@ describe("session.resume", () => {
   test("never resumes a session whose process is alive, or one that already runs here", async () => {
     // Alive: this very test process stands in for the terminal's Claude Code.
     ended(ID, process.pid);
-    const alive = (await call("session.resume", { sessionId: ID, text: "hi" })) as {
+    const alive = (await call("session.resume", {
+      sessionId: ID,
+      text: "hi",
+    })) as {
       error: { code: string; message: string; canResume?: true };
     };
     expect(alive.error.code).toBe("conflict");
@@ -299,7 +368,10 @@ describe("session.resume", () => {
     ]);
     const codes = both.map((r) => ("error" in r ? r.error.code : "ok")).sort();
     expect(codes).toEqual(["conflict", "ok"]);
-    const again = (await call("session.resume", { sessionId: ID, text: "three" })) as {
+    const again = (await call("session.resume", {
+      sessionId: ID,
+      text: "three",
+    })) as {
       error: { code: string };
     };
     expect(again.error.code).toBe("conflict");
@@ -309,13 +381,19 @@ describe("session.resume", () => {
 
   test("a send to a session with no live process says it can be resumed; a live one doesn't", async () => {
     ended();
-    const gone = (await call("session.send", { sessionId: ID, text: "hi" })) as {
+    const gone = (await call("session.send", {
+      sessionId: ID,
+      text: "hi",
+    })) as {
       error: { code: string; canResume?: true };
     };
     expect(gone.error).toMatchObject({ code: "not_found", canResume: true });
 
     db.query("UPDATE sessions SET pid = ? WHERE id = ?").run(process.pid, ID);
-    const live = (await call("session.send", { sessionId: ID, text: "hi" })) as {
+    const live = (await call("session.send", {
+      sessionId: ID,
+      text: "hi",
+    })) as {
       error: { canResume?: true };
     };
     expect(live.error.canResume).toBeUndefined();
@@ -338,7 +416,10 @@ describe("session.resume", () => {
   test("a Claude Code that refuses or stays silent fails the request with a plain sentence", async () => {
     ended();
     writeFileSync(join(tools, "refuse"), "");
-    const refused = (await call("session.resume", { sessionId: ID, text: "hi" })) as {
+    const refused = (await call("session.resume", {
+      sessionId: ID,
+      text: "hi",
+    })) as {
       error: { code: string; message: string };
     };
     expect(refused.error.code).toBe("unavailable");
@@ -348,7 +429,10 @@ describe("session.resume", () => {
     rmSync(join(tools, "refuse"));
     writeFileSync(join(tools, "silent"), "");
     build(300);
-    const silent = (await call("session.resume", { sessionId: ID, text: "hi" })) as {
+    const silent = (await call("session.resume", {
+      sessionId: ID,
+      text: "hi",
+    })) as {
       error: { code: string; message: string };
     };
     expect(silent.error.code).toBe("unavailable");
@@ -357,11 +441,17 @@ describe("session.resume", () => {
   });
 
   test("an unknown session is not_found, and an empty message is refused", async () => {
-    const missing = (await call("session.resume", { sessionId: "nope", text: "hi" })) as {
+    const missing = (await call("session.resume", {
+      sessionId: "nope",
+      text: "hi",
+    })) as {
       error: { code: string };
     };
     expect(missing.error.code).toBe("not_found");
-    const empty = (await call("session.resume", { sessionId: ID, text: "" })) as { error: { code: string } };
+    const empty = (await call("session.resume", {
+      sessionId: ID,
+      text: "",
+    })) as { error: { code: string } };
     expect(empty.error.code).toBe("bad_request");
   });
 });
