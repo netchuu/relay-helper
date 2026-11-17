@@ -189,10 +189,11 @@ export function createRpc(
     if (!hasTranscript(session))
       throw new RpcFailure("not_found", "This session's conversation is no longer on the computer.");
     await inOrder(sessionId, async () => {
-      notePhoneTyped(sessionId, text);
+      notePhoneTyped(sessionId, text, false, undefined, true);
       try {
         await (d.headless as HeadlessSessions).resume(session, text, onWritten);
       } catch (err) {
+        dropPhoneTyped(sessionId, text);
         if (err instanceof ResumeError) throw new RpcFailure(err.code, err.message);
         throw err;
       }
@@ -721,13 +722,18 @@ export function createRpc(
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
     if (d.headless?.has(sessionId)) {
-      notePhoneTyped(sessionId, text, false, sendId);
-      return await deliver(
-        session,
-        text,
-        { idleSeconds: null, userTypingNow: false, preferTyping: false, headless: d.headless },
-        d.typeOps,
-      );
+      notePhoneTyped(sessionId, text, false, sendId, true);
+      try {
+        return await deliver(
+          session,
+          text,
+          { idleSeconds: null, userTypingNow: false, preferTyping: false, headless: d.headless },
+          d.typeOps,
+        );
+      } catch (err) {
+        dropPhoneTyped(sessionId, text);
+        throw err;
+      }
     }
     const waiting = d.replies?.list(sessionId) ?? [];
     // Replies already waiting go first: keep the order the person sent them in.

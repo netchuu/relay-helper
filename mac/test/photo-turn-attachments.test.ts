@@ -7,6 +7,7 @@ import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
+import { ResumeError } from "../src/daemon/headless.ts";
 import {
   dropPhoneTyped,
   type HookEnvelope,
@@ -29,7 +30,7 @@ afterEach(() => {
   resetLiveSteps();
 });
 
-function setup(dir: string, dbPath = ":memory:") {
+function setup(dir: string, dbPath = ":memory:", extra: object = {}) {
   const transcript = join(dir, "t.jsonl");
   writeFileSync(transcript, "");
   const db = openDb(dbPath);
@@ -45,7 +46,16 @@ function setup(dir: string, dbPath = ":memory:") {
     get: () => ({ mode: "auto", present: true, idleSeconds: 0, locked: false }),
   } as unknown as PresenceMonitor;
   const hooks = new HookHandler({ db, events, registry, broker, presence, config, steps });
-  const rpc = createRpc({ db, events, registry, broker, presence, config, steps } as unknown as RpcDeps);
+  const rpc = createRpc({
+    db,
+    events,
+    registry,
+    broker,
+    presence,
+    config,
+    steps,
+    ...extra,
+  } as unknown as RpcDeps);
   const call = async <T>(method: string, params: object): Promise<T> => {
     const out = (await rpc(method, params, "device:d1")) as { result?: T; error?: { message: string } };
     if (out.error) throw new Error(out.error.message);
@@ -72,7 +82,7 @@ function setup(dir: string, dbPath = ":memory:") {
     ).run(id, sessionId, path, Date.now(), Date.now());
     return path;
   };
-  return { db, seen, call, hook, photo };
+  return { db, registry, seen, call, hook, photo };
 }
 
 type Started = Extract<RelayEvent, { type: "turn.started" }>;
@@ -347,4 +357,51 @@ test("a Mac prompt that only contains the caption, long after a delivering messa
   const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
   expect(ids(started?.attachments) ?? []).toEqual([]);
   expect(phoneTypePending(id, text)).toBe(true);
+});
+
+test("a failed resume leaves no entry behind for the retry's turn", async () => {
+  const id = "pt-resume-fail";
+  let calls = 0;
+  const headless = {
+    has: () => false,
+    resume: async () => {
+      if (++calls === 1) throw new ResumeError("unavailable", "Claude Code exited");
+    },
+  };
+  const s = setup(tmpDir(), ":memory:", { headless, hasTranscript: () => true });
+  s.db
+    .query(
+      "INSERT INTO sessions (id, cwd, project, status, pid, started_at, updated_at, ended_at) VALUES (?, '/tmp', 'p', 'ended', NULL, 1000, 2000, 2000)",
+    )
+    .run(id);
+  const a = s.photo(id, "pa");
+  const b = s.photo(id, "pb");
+  await expect(s.call("session.resume", { sessionId: id, text: `look\n${a}` })).rejects.toThrow();
+  await s.call("session.resume", { sessionId: id, text: `look\n${b}` });
+  s.registry.ownedByHelper = () => true;
+  await s.hook("UserPromptSubmit", id, { prompt: `look ${b}` });
+  const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+  expect(ids(started?.attachments)).toEqual(["pb"]);
+});
+
+test("a failed send to a helper-run session leaves no entry behind for the next turn", async () => {
+  const id = "pt-send-fail";
+  let calls = 0;
+  const headless = {
+    has: () => true,
+    send: async () => {
+      if (++calls === 1) throw new Error("stdin closed");
+    },
+  };
+  const s = setup(tmpDir(), ":memory:", { headless });
+  await s.hook("SessionStart", id);
+  const a = s.photo(id, "pa");
+  const b = s.photo(id, "pb");
+  await expect(s.call("session.send", { sessionId: id, text: `look\n${a}` })).rejects.toThrow();
+  expect(phoneTypePending(id, `look ${a}`)).toBe(false);
+  await s.call("session.send", { sessionId: id, text: `look\n${b}` });
+  s.registry.ownedByHelper = () => true;
+  await s.hook("UserPromptSubmit", id, { prompt: `look ${b}` });
+  const started = s.seen.filter((e): e is Started => e.type === "turn.started").at(-1);
+  expect(ids(started?.attachments)).toEqual(["pb"]);
 });

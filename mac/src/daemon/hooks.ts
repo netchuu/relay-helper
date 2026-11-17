@@ -55,18 +55,23 @@ export interface HookDeps {
 const NO_OUTPUT: HookReply = { stdout: "" };
 
 /** Text recently typed into a tmux pane on the phone's behalf, so it isn't mistaken for local presence. */
-const phoneTyped = new Map<
-  string,
-  {
-    text: string;
-    head: string;
-    paths: string[];
-    at: number;
-    notedAt: number;
-    delivering: boolean;
-    sendId?: string;
-  }
->();
+type PhoneTyped = {
+  text: string;
+  head: string;
+  paths: string[];
+  at: number;
+  notedAt: number;
+  delivering: boolean;
+  sendId?: string;
+};
+/** Newest last. A terminal session keeps one; a session the helper runs keeps every message it hasn't reported yet. */
+const phoneTyped = new Map<string, PhoneTyped[]>();
+
+function removeTyped(sessionId: string, entry: PhoneTyped): void {
+  const rest = (phoneTyped.get(sessionId) ?? []).filter((e) => e !== entry);
+  if (rest.length > 0) phoneTyped.set(sessionId, rest);
+  else phoneTyped.delete(sessionId);
+}
 
 /** Whitespace squashed and zero-width characters dropped, so two renderings of one message compare equal. */
 function squash(t: string): string {
@@ -91,10 +96,16 @@ const PHONE_TYPED_KEEP_MS = 30 * 60_000;
  * `delivering`: the message is still waiting to be typed (the caller calls `phoneTypeDelivered` when `deliver`
  * returns), so another prompt must not discard it and its age counts from when it was typed.
  */
-export function notePhoneTyped(sessionId: string, text: string, delivering = false, sendId?: string): void {
+export function notePhoneTyped(
+  sessionId: string,
+  text: string,
+  delivering = false,
+  sendId?: string,
+  keepEarlier = false,
+): void {
   const clean = cleanTypedText(text);
   const paths = splitAttachmentPaths(clean).paths.map((p) => p.replace(/^"|"$/g, ""));
-  phoneTyped.set(sessionId, {
+  const entry: PhoneTyped = {
     text: clean,
     head: typedHead(clean),
     paths,
@@ -102,20 +113,25 @@ export function notePhoneTyped(sessionId: string, text: string, delivering = fal
     notedAt: Date.now(),
     delivering,
     ...(sendId ? { sendId } : {}),
-  });
+  };
+  const earlier = keepEarlier
+    ? (phoneTyped.get(sessionId) ?? []).filter((e) => Date.now() - e.notedAt < PHONE_TYPED_KEEP_MS)
+    : [];
+  phoneTyped.set(sessionId, [...earlier, entry]);
 }
 
 /** The message `notePhoneTyped` stored was typed just now: its age starts here. */
 export function phoneTypeDelivered(sessionId: string, text: string): void {
-  const typed = phoneTyped.get(sessionId);
-  if (typed?.text !== cleanTypedText(text)) return;
+  const typed = phoneTyped.get(sessionId)?.findLast((e) => e.text === cleanTypedText(text));
+  if (!typed) return;
   typed.delivering = false;
   typed.at = Date.now();
 }
 
 /** Forgets what `notePhoneTyped` stored when nothing was typed (queued, failed), so a Mac prompt can't match it. */
 export function dropPhoneTyped(sessionId: string, text: string): void {
-  if (phoneTyped.get(sessionId)?.text === cleanTypedText(text)) phoneTyped.delete(sessionId);
+  const typed = phoneTyped.get(sessionId)?.findLast((e) => e.text === cleanTypedText(text));
+  if (typed) removeTyped(sessionId, typed);
 }
 
 /** First messages of sessions the phone is starting: their id isn't known until the launch returns. */
@@ -191,8 +207,7 @@ function matchesLatePhoneTyped(typed: { head: string; paths: string[] }, prompt:
 
 /** Whether the phone's text typed at `since` hasn't come back as a UserPromptSubmit hook yet (it isn't submitted). */
 export function phoneTypePending(sessionId: string, text: string): boolean {
-  const typed = phoneTyped.get(sessionId);
-  return typed !== undefined && typed.text === cleanTypedText(text);
+  return phoneTyped.get(sessionId)?.some((e) => e.text === cleanTypedText(text)) ?? false;
 }
 
 /** A notice during a running turn belongs to it; a Stop within this time means it was the next turn (hooks raced). */
@@ -290,7 +305,12 @@ export class HookHandler {
           this.heldNotice.set(sessionId, Date.now());
           return NO_OUTPUT;
         }
-        const typed = phoneTyped.get(sessionId);
+        // A session the helper runs has no keyboard: every prompt is the phone's, and several can be waiting.
+        const owned = this.d.registry.ownedByHelper(sessionId);
+        const waiting = phoneTyped.get(sessionId) ?? [];
+        const typed = owned
+          ? (waiting.find((e) => matchesPhoneTyped(e, prompt)) ?? waiting.find((e) => e.delivering))
+          : waiting.at(-1);
         // Whether this prompt is what the phone typed: the photo goes with it however late Claude Code reports it
         // (an unsent message the person submits at the Mac later). Only a recent one counts as the phone's own
         // typing for presence.
@@ -310,9 +330,9 @@ export class HookHandler {
         let typedSendId: string | undefined;
         // Another prompt after the presence window: the typed message was dropped or replaced, so its photo is not
         // waiting for a later prompt.
-        if (!system && typed && !matched && late) phoneTyped.delete(sessionId);
+        if (!system && typed && !matched && late) removeTyped(sessionId, typed);
         if (matched && typed) {
-          phoneTyped.delete(sessionId);
+          removeTyped(sessionId, typed);
           typedPaths = typed.paths;
           typedSendId = typed.sendId;
         } else if (!system) {
@@ -324,7 +344,7 @@ export class HookHandler {
         }
         // The stop message the helper sent through the inbox: it cut the old turn off, which ends as stopped.
         const inboxStop = this.d.stopper?.takeInboxStop(sessionId, prompt) ?? null;
-        if (!fromPhone && !inboxStop && !system) this.d.presence.noteLocalActivity();
+        if (!fromPhone && !inboxStop && !system && !owned) this.d.presence.noteLocalActivity();
         this.beginTurn(
           sessionId,
           prompt,
