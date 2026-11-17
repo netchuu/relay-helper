@@ -109,9 +109,9 @@ class RpcFailure extends Error {
 }
 
 /** Newest-first items, oldest dropped until the JSON fits one reply. */
-function fitReply<T>(items: T[], opts: RpcOpts): T[] {
+function fitReply<T>(items: T[], opts: RpcOpts, reserve = 0): T[] {
   if (opts.pieces) return items;
-  let size = 2;
+  let size = 2 + reserve;
   const kept: T[] = [];
   for (const item of items) {
     const bytes = Buffer.byteLength(JSON.stringify(item)) + 1;
@@ -200,6 +200,29 @@ export function createRpc(
     audit(d.db, actor, "session.resume", { sessionId, chars: text.length });
     return { via: "headless" } satisfies SessionResumed;
   }
+
+  /** The turn a session is working on right now, or null. */
+  const liveTurn = (sessionId: string) => {
+    const row = d.db
+      .query(
+        "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND ended_at IS NULL AND started_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(sessionId) as { id: string; prompt: string | null; started_at: number } | null;
+    if (!row) return null;
+    const step = liveStep(sessionId, row.id);
+    const files = attachmentFields(d.db, sessionId, row.prompt, row.id);
+    const messages = liveMessages(sessionId, row.id);
+    const actions = liveActions(sessionId, row.id);
+    return {
+      turnId: row.id,
+      prompt: row.prompt ?? "",
+      startedAt: row.started_at,
+      ...files,
+      ...(step ? { step } : {}),
+      ...(messages.length ? { messages } : {}),
+      ...(actions.length ? { actions: actions.map((a) => ({ ...a })) } : {}),
+    };
+  };
 
   const handlers: { [M in RpcMethod]: Handler<M> } = {
     sync: ({ sinceSeq }, _actor, opts) => {
@@ -299,46 +322,53 @@ export function createRpc(
       return await sent.track(sessionId, sendId, resuming);
     },
 
-    "session.turns": ({ sessionId, limit, before }, _actor, opts) => {
-      // Inclusive of `before`: a turn closed by the next prompt ends exactly when that one started.
-      const rows = d.db
-        .query(
-          "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at <= ? ORDER BY ended_at DESC LIMIT ?",
-        )
-        .all(sessionId, before ?? Number.MAX_SAFE_INTEGER, limit) as TurnRow[];
-      const recorded = rows.map((r) => ({
-        ...toTurn(r),
-        ...attachmentFields(d.db, sessionId, r.prompt, r.id),
-      }));
-      if (recorded.length >= limit) return fitReply(recorded, opts);
-      // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
-      const session = d.registry.get(sessionId);
-      const path = session ? transcriptPathFor(session) : null;
-      if (!session || !path) return fitReply(recorded, opts);
-      const oldest = recorded.length ? Math.min(...recorded.map((t) => t.startedAt ?? t.endedAt)) : before;
-      const older = transcriptTurns(sessionId, path, {
-        limit: limit - recorded.length,
-        previewChars: d.config.previewChars,
-        working: session.status === "working" && recorded.length === 0,
-        before: oldest,
-        cwd: session.cwd,
-      });
-      // A turn with no known start can't be matched to its transcript copy by time; match by answer.
-      const startless = d.db
-        .query(
-          "SELECT summary, ended_at FROM turns WHERE session_id = ? AND started_at IS NULL AND ended_at IS NOT NULL",
-        )
-        .all(sessionId) as { summary: string | null; ended_at: number }[];
-      return fitReply(
-        [
-          ...recorded,
-          ...withoutRecordedCopies(older, startless).map((t) => ({
-            ...t,
-            ...attachmentFields(d.db, sessionId, t.prompt),
-          })),
-        ],
-        opts,
-      );
+    "session.turns": ({ sessionId, limit, before, withLive }, _actor, opts) => {
+      const page = (reserve: number) => {
+        // Inclusive of `before`: a turn closed by the next prompt ends exactly when that one started.
+        const rows = d.db
+          .query(
+            "SELECT * FROM turns WHERE session_id = ? AND ended_at IS NOT NULL AND ended_at <= ? ORDER BY ended_at DESC LIMIT ?",
+          )
+          .all(sessionId, before ?? Number.MAX_SAFE_INTEGER, limit) as TurnRow[];
+        const recorded = rows.map((r) => ({
+          ...toTurn(r),
+          ...attachmentFields(d.db, sessionId, r.prompt, r.id),
+        }));
+        if (recorded.length >= limit) return fitReply(recorded, opts, reserve);
+        // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
+        const session = d.registry.get(sessionId);
+        const path = session ? transcriptPathFor(session) : null;
+        if (!session || !path) return fitReply(recorded, opts, reserve);
+        const oldest = recorded.length ? Math.min(...recorded.map((t) => t.startedAt ?? t.endedAt)) : before;
+        const older = transcriptTurns(sessionId, path, {
+          limit: limit - recorded.length,
+          previewChars: d.config.previewChars,
+          working: session.status === "working" && recorded.length === 0,
+          before: oldest,
+          cwd: session.cwd,
+        });
+        // A turn with no known start can't be matched to its transcript copy by time; match by answer.
+        const startless = d.db
+          .query(
+            "SELECT summary, ended_at FROM turns WHERE session_id = ? AND started_at IS NULL AND ended_at IS NOT NULL",
+          )
+          .all(sessionId) as { summary: string | null; ended_at: number }[];
+        return fitReply(
+          [
+            ...recorded,
+            ...withoutRecordedCopies(older, startless).map((t) => ({
+              ...t,
+              ...attachmentFields(d.db, sessionId, t.prompt),
+            })),
+          ],
+          opts,
+          reserve,
+        );
+      };
+      if (!withLive) return page(0);
+      // A phone that asked for it gets the running turn in the same reply, so opening a chat is one round trip.
+      const live = liveTurn(sessionId);
+      return { turns: page(Buffer.byteLength(JSON.stringify(live)) + 32), live };
     },
 
     "session.send": async ({ sessionId, text: message, attachments: ids, sendId }, actor) => {
@@ -554,27 +584,7 @@ export function createRpc(
       return { ok: revokeDevice(d.db, deviceId, actor) };
     },
 
-    "session.live": ({ sessionId }) => {
-      const row = d.db
-        .query(
-          "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND ended_at IS NULL AND started_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
-        )
-        .get(sessionId) as { id: string; prompt: string | null; started_at: number } | null;
-      if (!row) return null;
-      const step = liveStep(sessionId, row.id);
-      const files = attachmentFields(d.db, sessionId, row.prompt, row.id);
-      const messages = liveMessages(sessionId, row.id);
-      const actions = liveActions(sessionId, row.id);
-      return {
-        turnId: row.id,
-        prompt: row.prompt ?? "",
-        startedAt: row.started_at,
-        ...files,
-        ...(step ? { step } : {}),
-        ...(messages.length ? { messages } : {}),
-        ...(actions.length ? { actions: actions.map((a) => ({ ...a })) } : {}),
-      };
-    },
+    "session.live": ({ sessionId }) => liveTurn(sessionId),
 
     "push.key": (_params, actor) => {
       const deviceId = actor.startsWith("device:") ? actor.slice("device:".length) : null;

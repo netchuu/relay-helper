@@ -28,6 +28,7 @@ import {
   TurnFullResult,
   TurnMessage,
   TurnStep,
+  TurnsWithLive,
   Usage,
 } from "./index.ts";
 
@@ -807,6 +808,12 @@ write("events.json", events);
 write("sync.json", sync);
 write("frames.json", frames);
 write("turns.json", [turn]);
+// session.turns with withLive: the page and the running turn together, or live null; without it the plain array.
+write("turns-with-live.json", {
+  running: TurnsWithLive.parse({ turns: [turn], live: steps.live }),
+  idle: TurnsWithLive.parse({ turns: [turn], live: null }),
+  plain: [turn],
+});
 write("turn-full.json", turnFull);
 write("steps.json", steps);
 // usage-left: a session with every part, one with only the context, and one the helper has nothing for.

@@ -351,6 +351,22 @@ export const Turn = z.object({
 });
 export type Turn = z.infer<typeof Turn>;
 
+/** The turn a session is working on: `session.live`'s result, and `live` in `session.turns` with `withLive`. */
+export const LiveTurn = z.object({
+  turnId: z.string(),
+  prompt: z.string(),
+  startedAt: z.number(),
+  step: TurnStep.optional(),
+  messages: z.array(TurnMessage).optional(),
+  actions: z.array(TurnStep).optional(),
+  attachments: z.array(AttachmentRef).optional(),
+});
+export type LiveTurn = z.infer<typeof LiveTurn>;
+
+/** `session.turns` with `withLive`: the page and the running turn (null when none), in one reply. */
+export const TurnsWithLive = z.object({ turns: z.array(Turn), live: LiveTurn.nullable() });
+export type TurnsWithLive = z.infer<typeof TurnsWithLive>;
+
 /** How session.interrupt reached Claude ("message": asked, not stopped yet); apps treat any other value as a stop. */
 export const InterruptVia = z.enum(["prompt", "pty", "tmux", "iterm", "inbox", "message", "headless"]);
 export type InterruptVia = z.infer<typeof InterruptVia>;
@@ -587,6 +603,8 @@ export const RpcSchemas = {
     sessionId: z.string(),
     limit: z.number().int().min(1).max(100).default(20),
     before: z.number().nonnegative().optional(),
+    /** Ask for `{turns, live}`: the running turn (as `session.live` answers) comes with the page. Without it the result is the array. */
+    withLive: z.boolean().optional(),
   }),
   /** Types a message, then its `attachments` as paths; a repeated `sendId` returns the first result with `repeat: true`. Result: SendResult. */
   "session.send": z.object({
