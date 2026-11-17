@@ -23,6 +23,8 @@ interface Stream {
 /** Keeps this Mac connected to its relay room and serves each phone stream over an encrypted channel. */
 /** How often the relay connection is pinged; a pong must be back by the next ping. */
 const KEEPALIVE_MS = Number(process.env.RELAY_KEEPALIVE_MS) || 5_000;
+/** A slow uplink's rate (about 2 Mbps): bytes sent are assumed to leave at this speed or better. */
+const SLOW_UPLINK_BYTES_PER_SEC = 250_000;
 /** Longest an attempt may take to open; a stalled upgrade (phone hotspots) would otherwise never retry. */
 const CONNECT_TIMEOUT_MS = 8_000;
 /** The watchdog ticks this often; a tick that comes more than WAKE_JUMP_MS late means the machine slept. */
@@ -96,6 +98,9 @@ export class RelayLink {
   /** Unanswered room control pings on this connection; the room must answer within two intervals. */
   private roomMissed = 0;
   private awaitingRoomPong = false;
+  /** Bytes handed to send() not yet assumed to have left, and when that was last updated. */
+  private backlog = 0;
+  private backlogAt = 0;
   private replacedInARow = 0;
   private readonly clock: LinkClock;
   private readonly random: () => number;
@@ -293,12 +298,15 @@ export class RelayLink {
     let awaitingPong = false;
     this.roomMissed = 0;
     this.awaitingRoomPong = false;
+    this.backlog = 0;
     ws.addEventListener("pong", () => {
       awaitingPong = false;
     });
     this.keepalive = this.clock.setInterval(() => {
       if (ws.readyState !== WebSocket.OPEN) return;
-      if (this.awaitingRoomPong) this.roomMissed++;
+      // The ping queues behind frames still going out on a slow uplink, so a missed pong then proves nothing.
+      // Bun reports bufferedAmount 0 while megabytes wait, so the bytes sent are counted instead.
+      if (this.awaitingRoomPong && !(ws.bufferedAmount > 0) && this.pendingBytes() <= 0) this.roomMissed++;
       // The edge answers protocol pings itself, so a late one proves nothing; only the room's pong is the verdict.
       if (this.roomMissed >= 2) {
         log.info("relay connection went quiet; reconnecting", { missedPong: awaitingPong, roomSilent: true });
@@ -334,7 +342,9 @@ export class RelayLink {
       if (reply) this.sendFrame(streamId, reply);
       for (const text of messages) {
         stream.session ??= new ClientSession(
-          (out) => this.sendFrame(streamId, stream.channel.seal(out)),
+          (out, pieces) => {
+            for (const frame of stream.channel.sealMessage(out, pieces)) this.sendFrame(streamId, frame);
+          },
           this.deps,
           () => this.closeStream(streamId, true),
         );
@@ -386,7 +396,17 @@ export class RelayLink {
     const frame = new Uint8Array(4 + payload.length);
     new DataView(frame.buffer).setUint32(0, streamId);
     frame.set(payload, 4);
+    this.backlog = this.pendingBytes() + frame.length;
     this.ws.send(frame);
+  }
+
+  /** Bytes sent that a slow uplink would still be sending. */
+  private pendingBytes(): number {
+    const now = this.clock.now();
+    const left = this.backlog - ((now - this.backlogAt) / 1000) * SLOW_UPLINK_BYTES_PER_SEC;
+    this.backlogAt = now;
+    this.backlog = Math.max(0, left);
+    return this.backlog;
   }
 
   private closeStream(streamId: number, tellRelay: boolean): void {

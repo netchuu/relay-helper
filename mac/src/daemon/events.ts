@@ -60,6 +60,8 @@ export class EventLog {
       /** Each event as it will be sent (a big prompt cut), measured and returned instead of the stored one. */
       fit?: (event: RelayEvent) => RelayEvent;
       dropped?: (event: RelayEvent, bytes: number) => void;
+      /** An event over `maxBytes` goes alone in its page instead of being left out. */
+      keepOversized?: boolean;
     },
   ): { events: RelayEvent[]; latestSeq: number; more: boolean } {
     const limit = opts.limit ?? 1000;
@@ -71,12 +73,12 @@ export class EventLog {
     let more = false;
     for (const event of rows) {
       const bytes = Buffer.byteLength(JSON.stringify(event)) + 1;
-      if (bytes > opts.maxBytes) {
+      if (bytes > opts.maxBytes && !opts.keepOversized) {
         opts.dropped?.(event, bytes);
         last = event.seq;
         continue;
       }
-      if (used + bytes > opts.maxBytes) {
+      if (used + bytes > opts.maxBytes && (events.length > 0 || !opts.keepOversized)) {
         more = true;
         break;
       }

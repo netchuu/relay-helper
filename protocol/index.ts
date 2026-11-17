@@ -652,7 +652,7 @@ export const RpcSchemas = {
   "prompts.open": z.object({}),
   /** Recently settled prompts, newest first: the Inbox history. */
   "prompts.recent": z.object({ limit: z.number().int().min(1).max(200).default(50) }),
-  /** A turn's full text in pieces under the relay's frame limit: `offset` (UTF-16 units, default 0) and the result's `more` / `nextOffset`. */
+  /** A turn's full text. A phone that said `pieces: true` in `hello` gets all of it from `offset` (UTF-16 units, default 0); any other gets pieces under the relay's frame limit, with the result's `more` / `nextOffset`. */
   "turn.full": z.object({ turnId: z.string(), offset: z.number().int().nonnegative().default(0) }),
   /** Liveness check; any reply proves the computer is there, an "unknown method" error from an older helper too. */
   ping: z.object({}),

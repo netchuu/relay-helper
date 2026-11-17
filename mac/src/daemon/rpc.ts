@@ -85,8 +85,11 @@ export const INLINE_PAUSE_WAIT = { inlineMs: 12_000, pollMs: 500 };
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
 
-/** `overRelay`: the reply goes in one relay frame, so long prompt texts in it are cut. Direct callers pass none. */
-export type RpcOpts = { overRelay?: boolean };
+/**
+ * `overRelay`: the reply goes in one relay frame, so long prompt texts in it are cut. Direct callers pass none.
+ * `pieces`: the phone reassembles pieces, so a reply of any size is sent whole and nothing is cut.
+ */
+export type RpcOpts = { overRelay?: boolean; pieces?: boolean };
 
 type Handler<M extends RpcMethod> = (
   params: z.infer<(typeof RpcSchemas)[M]>,
@@ -106,7 +109,8 @@ class RpcFailure extends Error {
 }
 
 /** Newest-first items, oldest dropped until the JSON fits one reply. */
-function fitReply<T>(items: T[]): T[] {
+function fitReply<T>(items: T[], opts: RpcOpts): T[] {
+  if (opts.pieces) return items;
   let size = 2;
   const kept: T[] = [];
   for (const item of items) {
@@ -210,9 +214,10 @@ export function createRpc(
         return {
           snapshot: {
             sessions,
-            prompts: opts.overRelay
-              ? fitPrompts(d.broker.listOpen(), Math.max(room, 0), "first")
-              : d.broker.listOpen(),
+            prompts:
+              opts.overRelay && !opts.pieces
+                ? fitPrompts(d.broker.listOpen(), Math.max(room, 0), "first")
+                : d.broker.listOpen(),
             presence,
           },
           events: [],
@@ -222,7 +227,8 @@ export function createRpc(
       // A replay cut by count or size says so, and its latestSeq is the last event sent, so the phone asks again.
       const page = d.events.syncPage(sinceSeq, {
         maxBytes: REPLY_DATA_BYTES,
-        fit: opts.overRelay ? fitEvent : undefined,
+        keepOversized: opts.pieces,
+        fit: opts.overRelay && !opts.pieces ? fitEvent : undefined,
         dropped: (event, bytes) =>
           log.warn("sync left out an event too big for one reply", {
             seq: event.seq,
@@ -293,7 +299,7 @@ export function createRpc(
       return await sent.track(sessionId, sendId, resuming);
     },
 
-    "session.turns": ({ sessionId, limit, before }) => {
+    "session.turns": ({ sessionId, limit, before }, _actor, opts) => {
       // Inclusive of `before`: a turn closed by the next prompt ends exactly when that one started.
       const rows = d.db
         .query(
@@ -304,11 +310,11 @@ export function createRpc(
         ...toTurn(r),
         ...attachmentFields(d.db, sessionId, r.prompt, r.id),
       }));
-      if (recorded.length >= limit) return fitReply(recorded);
+      if (recorded.length >= limit) return fitReply(recorded, opts);
       // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
       const session = d.registry.get(sessionId);
       const path = session ? transcriptPathFor(session) : null;
-      if (!session || !path) return fitReply(recorded);
+      if (!session || !path) return fitReply(recorded, opts);
       const oldest = recorded.length ? Math.min(...recorded.map((t) => t.startedAt ?? t.endedAt)) : before;
       const older = transcriptTurns(sessionId, path, {
         limit: limit - recorded.length,
@@ -323,13 +329,16 @@ export function createRpc(
           "SELECT summary, ended_at FROM turns WHERE session_id = ? AND started_at IS NULL AND ended_at IS NOT NULL",
         )
         .all(sessionId) as { summary: string | null; ended_at: number }[];
-      return fitReply([
-        ...recorded,
-        ...withoutRecordedCopies(older, startless).map((t) => ({
-          ...t,
-          ...attachmentFields(d.db, sessionId, t.prompt),
-        })),
-      ]);
+      return fitReply(
+        [
+          ...recorded,
+          ...withoutRecordedCopies(older, startless).map((t) => ({
+            ...t,
+            ...attachmentFields(d.db, sessionId, t.prompt),
+          })),
+        ],
+        opts,
+      );
     },
 
     "session.send": async ({ sessionId, text: message, attachments: ids, sendId }, actor) => {
@@ -496,25 +505,28 @@ export function createRpc(
     },
 
     "prompts.open": (_params, _actor, opts) =>
-      opts.overRelay ? fitPrompts(d.broker.listOpen(), REPLY_DATA_BYTES, "first") : d.broker.listOpen(),
+      opts.overRelay && !opts.pieces
+        ? fitPrompts(d.broker.listOpen(), REPLY_DATA_BYTES, "first")
+        : d.broker.listOpen(),
 
     "prompts.recent": ({ limit }, _actor, opts) =>
-      opts.overRelay ? fitPrompts(d.broker.listRecent(limit)) : d.broker.listRecent(limit),
+      opts.overRelay && !opts.pieces ? fitPrompts(d.broker.listRecent(limit)) : d.broker.listRecent(limit),
 
-    "turn.full": ({ turnId, offset }) => {
+    "turn.full": ({ turnId, offset }, _actor, opts) => {
+      const piece = (text: string) => (opts.pieces ? { text: text.slice(offset) } : textPiece(text, offset));
       if (turnId.startsWith(TRANSCRIPT_TURN_PREFIX)) {
         const [sessionId, uuid] = turnId.slice(TRANSCRIPT_TURN_PREFIX.length).split(":");
         const session = sessionId ? d.registry.get(sessionId) : null;
         const path = session ? transcriptPathFor(session) : null;
         const text = path && uuid ? transcriptTurnText(path, uuid) : null;
         if (text === null) throw new RpcFailure("not_found", "turn not found");
-        return textPiece(text, offset);
+        return piece(text);
       }
       const row = d.db.query("SELECT full_text FROM turns WHERE id = ?").get(turnId) as {
         full_text: string | null;
       } | null;
       if (!row) throw new RpcFailure("not_found", "turn not found");
-      return textPiece(row.full_text ?? "", offset);
+      return piece(row.full_text ?? "");
     },
 
     ping: () => ({ ok: true }),

@@ -16,6 +16,15 @@
       "frame": "A1N-JahFYDkbbnSopQ6--i9Iu7wEZ6joJGEV7jNeSQ"
     }
   ],
+  "pieces": {
+    "firstCounter": 2,
+    "text": "piece one → 📱 and the rest",
+    "frames": [
+      "BAAAAAAAAAACdbjm-KEt48HeqZNsbT-pVDRPv5X1k83Cv4RXuc0",
+      "BAAAAAAAAAAD7jD43LevSTqUeRZH2sXyyeBjbX2uv2CCaEkpLjk",
+      "BAAAAAAAAAAEvvlsdeJJ7hGJbW-UPReo2UUVQQqjiHh8"
+    ]
+  },
   "phoneFrame": {
     "counter": 0,
     "text": "{\"id\":1,\"method\":\"hello\",\"params\":{\"token\":\"t\"}}",

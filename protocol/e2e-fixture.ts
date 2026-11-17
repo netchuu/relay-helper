@@ -2,7 +2,7 @@
 import { createPublicKey, diffieHellman } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { b64url, deriveKeys, rawPublic, seal, x25519Private } from "../mac/src/daemon/e2e.ts";
+import { b64url, deriveKeys, rawPublic, seal, sealPieces, x25519Private } from "../mac/src/daemon/e2e.ts";
 
 const fixed = (byte: number) => new Uint8Array(32).fill(byte);
 const phoneEph = x25519Private(fixed(0x11));
@@ -17,6 +17,8 @@ const dhEph = new Uint8Array(diffieHellman({ privateKey: macEph, publicKey: crea
 const keys = deriveKeys(dhStatic, dhEph, pub(macStatic));
 
 const text = (s: string) => new TextEncoder().encode(s);
+// Longer than one piece, with a character that a piece boundary splits in the middle.
+const pieceText = "piece one → 📱 and the rest";
 const fixture = {
   phoneEphemeralPrivate: b64url(fixed(0x11)),
   macStaticPublic: b64url(pub(macStatic)),
@@ -32,6 +34,12 @@ const fixture = {
     },
     { counter: 1, text: "héllo · 📱", frame: b64url(seal(keys.macToPhone, 1n, text("héllo · 📱"))) },
   ],
+  // One message in piece frames (counters 2 to 4, 12 bytes of text each), after the two frames above.
+  pieces: {
+    firstCounter: 2,
+    text: pieceText,
+    frames: sealPieces(keys.macToPhone, 2n, text(pieceText), 12).map((f) => b64url(f)),
+  },
   // Phone → Mac, counter 0: what the phone must produce byte for byte.
   phoneFrame: {
     counter: 0,

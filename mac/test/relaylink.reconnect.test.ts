@@ -78,6 +78,7 @@ class FakeSocket {
   onerror: ((e: unknown) => void) | null = null;
   onmessage: ((e: { data: unknown }) => void) | null = null;
   pings = 0;
+  bufferedAmount = 0;
   sent: Uint8Array[] = [];
   terminated = false;
   closedWith: number | null = null;
@@ -257,6 +258,26 @@ test("a room that never answers its control ping is dropped within three interva
   // first ping at 5 s, dropped at 15 s: ping, one missed interval, second missed interval
   expect(s.terminated).toBe(true);
   expect(s.sent.length).toBe(2);
+});
+
+test("a room pong held up behind frames still going out does not drop the link", () => {
+  const { clock, sockets, link } = setup();
+  current = link;
+  link.start();
+  const s = sockets[0]!;
+  s.open();
+  s.bufferedAmount = 7_000_000;
+  for (let i = 0; i < 20; i++) {
+    clock.advance(1000);
+    if (s.pings > 0) s.pong();
+  }
+  expect(s.terminated).toBe(false);
+  s.bufferedAmount = 0;
+  for (let i = 0; i < 20; i++) {
+    clock.advance(1000);
+    if (s.pings > 0) s.pong();
+  }
+  expect(s.terminated).toBe(true);
 });
 
 test("a late protocol pong while the room still answers keeps the link", () => {

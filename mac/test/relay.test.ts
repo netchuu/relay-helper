@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -7,6 +8,7 @@ import {
   type AttachmentRef,
   type AttachmentUpload,
   HostInfo,
+  TurnFullResult,
 } from "../../protocol/index.ts";
 import {
   connectProof,
@@ -64,7 +66,8 @@ class TestPhone {
         this.channel.receiveHandshake(bytes);
         resolveHs();
       } else {
-        this.inbox.push(JSON.parse(this.channel.open(bytes)));
+        const text = this.channel.openMessage(bytes);
+        if (text !== null) this.inbox.push(JSON.parse(text));
       }
     };
     await new Promise((r, j) => {
@@ -190,6 +193,31 @@ describe("relay end to end", () => {
     for (let i = 0; i < 3; i++) await intruder.call("hello", { token: `guess-${i}-${"x".repeat(30)}` });
     await waitFor(async () => intruder.closed);
   }, 30_000);
+
+  test("a phone that announces pieces gets a 7 MB answer whole; one that doesn't gets the first piece", async () => {
+    const db = new Database(join(HOME, "relay.db"));
+    const text = `${"héllo 📱 ".repeat(600_000)}end`;
+    db.query(
+      "INSERT INTO turns (id, session_id, prompt, full_text, summary, started_at, ended_at) VALUES ('huge', 's', 'p', ?, 's', 1, 2)",
+    ).run(text);
+    db.close();
+    const identity = id();
+
+    const modern = await new TestPhone(identity.macId, identity.boxPublic).connect();
+    await modern.call("hello", { token, pieces: true });
+    const whole = TurnFullResult.parse((await modern.call("turn.full", { turnId: "huge" })).result);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(5_000_000);
+    expect(whole).toEqual({ text });
+    expect(modern.closed).toBeNull();
+    modern.ws.close();
+
+    const old = await new TestPhone(identity.macId, identity.boxPublic).connect();
+    await old.call("hello", { token });
+    const first = TurnFullResult.parse((await old.call("turn.full", { turnId: "huge" })).result);
+    expect(first.more).toBe(true);
+    expect(first.text.length).toBeLessThan(text.length);
+    old.ws.close();
+  }, 60_000);
 
   test("a 50 MB attachment uploads through the relay in full-size chunks and lands with its hash", async () => {
     // A session to send it to, registered by the real hook client.

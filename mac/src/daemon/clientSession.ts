@@ -31,13 +31,15 @@ export class ClientSession {
   private stopRevokeWatch: (() => void) | null = null;
   private failedAuth = 0;
   private closed = false;
+  /** The phone said in `hello` it reassembles pieces: nothing is cut or left out for size. */
+  private pieces = false;
 
   get isAuthenticated(): boolean {
     return this.device !== null;
   }
 
   constructor(
-    private readonly send: (text: string) => void,
+    private readonly send: (text: string, pieces: boolean) => void,
     private readonly deps: { rpc: Rpc; events: EventLog; db: DB; phones?: Phones },
     private readonly onFatal: () => void,
   ) {}
@@ -74,6 +76,7 @@ export class ClientSession {
       const token = typeof params.token === "string" ? params.token : "";
       const device = token ? authenticate(this.deps.db, `Bearer ${token}`) : null;
       if (!device) return this.authFailed(id, "this iPhone is no longer paired");
+      this.pieces = params.pieces === true;
       this.authenticated(device);
       return this.reply(id, { result: { ok: true, host: await hostInfo() } });
     }
@@ -82,7 +85,10 @@ export class ClientSession {
     if (!isDeviceActive(this.deps.db, this.device.id)) return this.fatal("device revoked");
     this.reply(
       id,
-      await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, { overRelay: true }),
+      await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, {
+        overRelay: true,
+        pieces: this.pieces,
+      }),
       req.method,
     );
   }
@@ -120,7 +126,7 @@ export class ClientSession {
   /** A result over the frame limit would make the relay close the whole link, so answer with an error. */
   private reply(id: string | number | null, outcome: RpcOutcome, method?: string): void {
     let text = JSON.stringify({ type: "rpc", id, ...outcome });
-    const bytes = Buffer.byteLength(text);
+    const bytes = this.pieces ? 0 : Buffer.byteLength(text);
     if (bytes > MAX_REPLY_BYTES) {
       log.warn("reply too big for the relay, sent an error instead", { method: method ?? "?", bytes });
       text = JSON.stringify({
@@ -129,17 +135,21 @@ export class ClientSession {
         error: { code: "unavailable", message: "the answer was too big to send" },
       });
     }
-    this.send(text);
+    this.send(text, this.pieces);
   }
 
   private sendEvent(event: RelayEvent): void {
+    if (this.pieces) {
+      this.send(JSON.stringify({ type: "event", event }), true);
+      return;
+    }
     const text = JSON.stringify({ type: "event", event: fitEvent(event) });
     const bytes = Buffer.byteLength(text);
     if (bytes > MAX_REPLY_BYTES) {
       log.warn("event too big for the relay, not sent", { type: event.type, seq: event.seq, bytes });
       return;
     }
-    this.send(text);
+    this.send(text, false);
   }
 
   private fatal(reason: string): void {
