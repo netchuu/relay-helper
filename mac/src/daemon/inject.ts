@@ -228,6 +228,8 @@ export async function deliver(
     const typed = await typeIntoTerminal(session, text, opts, ops);
     if (typed) {
       const submitted = await confirmSubmitted(session, text, typed.route, opts, ops);
+      if (submitted === false) leftUnsent.set(session.id, text);
+      else leftUnsent.delete(session.id);
       const unsent = submitted === false || (typed.partial && submitted !== true);
       return unsent ? { via: typed.route, submitted: false } : { via: typed.route };
     }
@@ -281,6 +283,20 @@ function holdsMessage(draft: string | null, text: string): boolean {
   const squash = (t: string) => t.replace(/\s+/g, " ").trim();
   const head = squash(text.split("\n").find((l) => l.trim()) ?? text).slice(0, 30);
   return head !== "" && squash(draft).includes(head);
+}
+
+/** Per session, the text the helper typed and could not get submitted. */
+const leftUnsent = new Map<string, string>();
+
+/** The prompt was submitted at the Mac, so no copy of ours is waiting any more. */
+export function clearLeftUnsent(sessionId: string): void {
+  leftUnsent.delete(sessionId);
+}
+
+/** Whether the prompt holds exactly this message and nothing else: a copy of it left unsent, not someone's draft. */
+function isThisMessage(draft: string, text: string): boolean {
+  const squash = (t: string) => t.replace(/\s+/g, " ").trim();
+  return squash(text) !== "" && squash(draft) === squash(text);
 }
 
 /** The prompt's text after typing, when the route can show it (tmux, iTerm2); undefined for `relay shell`. */
@@ -362,6 +378,16 @@ async function typeIntoTerminal(
             ...(route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {}),
           });
     if (!anyway && ready.front && active) throw new WaitForPause(route.kind, "typing", retryInMs);
+    // The same message sent again while its unsent copy sits there: press Enter for that copy, don't type another.
+    // On a plain-text tab only text we left counts: Enter doesn't submit Claude's suggestion.
+    const shown = route.plainText
+      ? ready.screen !== null && leftUnsent.get(session.id) === text
+        ? promptDraft(ready.screen)
+        : null
+      : draft;
+    if (shown && isThisMessage(shown, text) && (await ready.key("enter").catch(() => false))) {
+      return { route: route.kind };
+    }
     if (!anyway && draft) throw new WaitForPause(route.kind, "draft");
     const outcome = await ready.type(draft ? afterBreak(text) : text, anyway);
     if (outcome === "sent") return { route: route.kind };

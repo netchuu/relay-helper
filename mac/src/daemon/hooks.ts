@@ -10,7 +10,7 @@ import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
 import { type HeldReplies, notePermissionMode } from "./held.ts";
-import { splitAttachmentPaths } from "./inject.ts";
+import { clearLeftUnsent, splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import { modelFromTranscript, sessionModels } from "./model.ts";
 import type { PresenceMonitor } from "./presence.ts";
@@ -290,7 +290,10 @@ export class HookHandler {
         const raw = withoutIdeContext(str("prompt") ?? "");
         const system = isSystemMessage(raw);
         // Only a real submit empties the input box; a notice leaves the typed draft where it was.
-        if (!system) notePromptSubmitted(sessionId);
+        if (!system) {
+          notePromptSubmitted(sessionId);
+          clearLeftUnsent(sessionId);
+        }
         // A new turn: the suggestion shown for the last one is gone (the status change below publishes that).
         this.d.suggestions?.clear(sessionId);
         // A background task finished: Claude Code tells the session with a notification (background-work).
