@@ -10,7 +10,13 @@ import {
 } from "../integrations/claudeDesktop.ts";
 import { type IdeResult, isIdeSessionSync, sendToIde } from "../integrations/ideExtension.ts";
 import { log } from "../log.ts";
-import { claudeInFront } from "../platform/foreground.ts";
+import {
+  claudeInFront,
+  type Proc,
+  PS_SNAPSHOT_ARGS,
+  parseProcs,
+  snapshotProcs,
+} from "../platform/foreground.ts";
 import { platform } from "../platform/index.ts";
 import type { TabView, TypingRoute } from "../platform/types.ts";
 import type { TypeReply, TypeRequest } from "../shell/ptyShell.ts";
@@ -64,6 +70,8 @@ export class WaitForPause extends Error {
     /** The terminal it waits to be typed into; null when it waits for something else (an open prompt). */
     readonly route: TerminalRoute | null,
     readonly reason: "typing" | "draft" | "prompt",
+    /** When typing, how long until the keyboard has been still for PAUSE_SECONDS: no retry makes sense before. */
+    readonly retryInMs?: number,
   ) {
     super(`waiting to type into ${route ?? "the session"}: ${reason}`);
   }
@@ -116,26 +124,32 @@ export const SUBMIT_WAIT_MS = 4000;
 const lastEscape = new Map<string, number>();
 
 /** How `deliver` reaches terminals; tests swap them. */
+/** The processes of one delivery attempt: read once on first use, then shared by every check. */
+export type Procs = () => Promise<Proc[]>;
+
+/** The ttys tmux told while reading a pane's screen, by socket and pane, so asking for one costs nothing more. */
+export type PaneTtys = Map<string, string | null>;
+
 export interface TypeOps {
   pty(socketPath: string, token: string, pid: number, text: string, force: boolean): Promise<TypeReply>;
   /** The pane's visible text; null when the pane can't be read (it's gone). */
-  tmuxScreen(socket: string, pane: string): Promise<string | null>;
+  tmuxScreen(socket: string, pane: string, seen?: PaneTtys): Promise<string | null>;
   tmux(socket: string, pane: string, text: string): Promise<void>;
   /** The tty of the pane's own terminal; null when tmux can't tell. Absent: the pane isn't checked against the process. */
-  tmuxPaneTty?(socket: string, pane: string): Promise<string | null>;
+  tmuxPaneTty?(socket: string, pane: string, seen?: PaneTtys): Promise<string | null>;
   /** WezTerm panes and kitty windows (paneTerminals.ts): the pane's text, typing, Enter, and what it tells about itself. */
   paneScreen?(target: PaneTarget): Promise<string | null>;
   paneType?(target: PaneTarget, text: string): Promise<void>;
   paneEnter?(target: PaneTarget): Promise<void>;
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
-  ttyOf(pid: number | null): Promise<string | null>;
+  ttyOf(pid: number | null, procs?: Procs): Promise<string | null>;
   /** The tty of the tab showing a session that runs in a background host (`--bg-pty-host`); null when unknown. */
-  viewerTtyOf?(pid: number, cwd: string): Promise<string | null>;
+  viewerTtyOf?(pid: number, cwd: string, procs?: Procs): Promise<string | null>;
   peek(route: TypingRoute, tty: string): Promise<TabView | null>;
   type(route: TypingRoute, tty: string, text: string): Promise<boolean>;
   /** Whether process `pid` is in front in its terminal (`tty` null: tmux) or tab; otherwise keys would reach a shell. */
-  inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
+  inFront(pid: number, tty: string | null, others?: number[], procs?: Procs): Promise<boolean>;
   /** Enter alone, for a message that sat typed and unsent. Absent: no check is made. */
   enterPty?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmuxEnter?(socket: string, pane: string): Promise<void>;
@@ -179,8 +193,8 @@ export const defaultTypeOps: TypeOps = {
   paneEnter,
   paneInfo,
   routes: (t) => platform.typing.routes(t),
-  ttyOf: (pid) => ttyOf(pid),
-  viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
+  ttyOf,
+  viewerTtyOf: (pid, cwd, procs) => viewerTtyOf(pid, cwd, undefined, procs),
   peek: (route, tty) => platform.typing.peek(route, tty),
   type: (route, tty, text) => platform.typing.type(route, tty, text),
   inFront: claudeInFront,
@@ -334,6 +348,8 @@ async function typeIntoTerminal(
 ): Promise<{ route: TerminalRoute; partial?: true } | null> {
   const anyway = opts.typeAnyway === true;
   const active = opts.idleSeconds !== null && opts.idleSeconds < PAUSE_SECONDS;
+  const retryInMs =
+    opts.idleSeconds === null ? undefined : Math.ceil(Math.max(0, PAUSE_SECONDS - opts.idleSeconds) * 1000);
   for (const route of routesFor(session, typeWire(ops))) {
     const ready = await route.probe();
     if (!ready) continue;
@@ -345,8 +361,8 @@ async function typeIntoTerminal(
         : promptDraft(ready.screen, {
             ...(route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {}),
           });
-    if (!anyway && (draft || (ready.front && active)))
-      throw new WaitForPause(route.kind, draft ? "draft" : "typing");
+    if (!anyway && ready.front && active) throw new WaitForPause(route.kind, "typing", retryInMs);
+    if (!anyway && draft) throw new WaitForPause(route.kind, "draft");
     const outcome = await ready.type(draft ? afterBreak(text) : text, anyway);
     if (outcome === "sent") return { route: route.kind };
     if (outcome === "partial") return { route: route.kind, partial: true };
@@ -402,20 +418,25 @@ interface Wire {
   inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
 }
 
+/** One wire per delivery attempt: its checks share one `ps` snapshot and the tty tmux told with the screen. */
 function typeWire(ops: TypeOps): Wire {
+  let snapshot: Promise<Proc[]> | undefined;
+  const procs: Procs = () => (snapshot ??= snapshotProcs());
+  const seen: PaneTtys = new Map();
   return {
     ptyType: ops.pty,
     ptyKey: (socketPath, token, pid, key) =>
       key === "enter" && ops.enterPty
         ? ops.enterPty(socketPath, token, pid)
         : Promise.reject(new DeliveryError("no such key")),
-    tmuxScreen: ops.tmuxScreen,
+    tmuxScreen: (socket, pane) => ops.tmuxScreen(socket, pane, seen),
     tmuxType: ops.tmux,
     tmuxKey: async (socket, pane, key) => {
       if (key !== "enter" || !ops.tmuxEnter) throw new DeliveryError("no such key");
       await ops.tmuxEnter(socket, pane);
     },
-    tmuxPaneTty: ops.tmuxPaneTty,
+    tmuxPaneTty:
+      ops.tmuxPaneTty && ((socket, pane) => ops.tmuxPaneTty?.(socket, pane, seen) ?? Promise.resolve(null)),
     paneScreen: ops.paneScreen,
     paneType: ops.paneType,
     paneKey: async (target, key) => {
@@ -427,9 +448,10 @@ function typeWire(ops: TypeOps): Wire {
     tabPeek: ops.peek,
     tabType: ops.type,
     tabKey: async (route, tty, key) => (key === "enter" && ops.enter ? ops.enter(route, tty) : false),
-    ttyOf: ops.ttyOf,
-    viewerTtyOf: ops.viewerTtyOf,
-    inFront: ops.inFront,
+    ttyOf: (pid) => ops.ttyOf(pid, procs),
+    viewerTtyOf:
+      ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
+    inFront: (pid, tty, others) => ops.inFront(pid, tty, others, procs),
   };
 }
 
@@ -881,8 +903,9 @@ function requestPty(socketPath: string, req: TypeRequest, timeoutMs = 20_000): P
 }
 
 /** The controlling terminal of the Claude Code process, e.g. /dev/ttys003. */
-export async function ttyOf(pid: number | null): Promise<string | null> {
+export async function ttyOf(pid: number | null, procs?: Procs): Promise<string | null> {
   if (!pid) return null;
+  if (procs) return fullTty((await procs()).find((p) => p.pid === pid)?.tty ?? "");
   const proc = Bun.spawn(["ps", "-o", "tty=", "-p", String(pid)], {
     stdout: "pipe",
     stderr: "ignore",
@@ -916,13 +939,9 @@ export async function viewerTtyOf(
   cwd: string,
   /** Processes of other sessions Relay knows, which are not this session's viewer. */
   others: number[] = knownPids(),
+  snapshot?: Procs,
 ): Promise<string | null> {
-  const ps = await sh(["ps", "-ax", "-o", "pid=,ppid=,tty=,command="]);
-  const procs = ps
-    .split("\n")
-    .map((l) => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(l))
-    .filter((m): m is RegExpExecArray => m !== null)
-    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), tty: m[3] ?? "", command: m[4] ?? "" }));
+  const procs = snapshot ? await snapshot() : parseProcs(await sh(PS_SNAPSHOT_ARGS), true);
   const mine = procs.find((p) => p.pid === pid);
   const host = mine ? procs.find((p) => p.pid === mine.ppid) : undefined;
   if (!host?.command.includes("--bg-pty-host")) return null;
@@ -998,19 +1017,29 @@ export function postToInbox(
 }
 
 /** The pane's visible text with its escape codes (`capture-pane -p -e`: the dim attribute marks a suggestion), or null when tmux can't read it. */
-async function tmuxScreen(socket: string, pane: string): Promise<string | null> {
-  const proc = Bun.spawn(["tmux", "-S", socket, "capture-pane", "-p", "-e", "-t", pane], {
+async function tmuxScreen(socket: string, pane: string, seen?: PaneTtys): Promise<string | null> {
+  // With `seen`, the same tmux call prints the pane's tty on a first line (tmux turns control characters into "_" without a UTF-8 locale).
+  const args = ["tmux", "-S", socket];
+  if (seen) args.push("display-message", "-p", "-t", pane, "#{pane_tty}", ";");
+  args.push("capture-pane", "-p", "-e", "-t", pane);
+  const proc = Bun.spawn(args, {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",
     env: { PATH: CHILD_PATH },
   });
   const out = await new Response(proc.stdout).text();
-  return (await proc.exited) === 0 ? out : null;
+  if ((await proc.exited) !== 0) return null;
+  if (!seen) return out;
+  const nl = out.indexOf("\n");
+  seen.set(`${socket}\0${pane}`, out.slice(0, nl < 0 ? out.length : nl).trim() || null);
+  return nl < 0 ? "" : out.slice(nl + 1);
 }
 
 /** The tty of a pane's terminal (`#{pane_tty}`), or null when tmux can't tell. */
-async function tmuxPaneTty(socket: string, pane: string): Promise<string | null> {
+async function tmuxPaneTty(socket: string, pane: string, seen?: PaneTtys): Promise<string | null> {
+  const known = seen?.get(`${socket}\0${pane}`);
+  if (known !== undefined) return known;
   const proc = Bun.spawn(["tmux", "-S", socket, "display-message", "-p", "-t", pane, "#{pane_tty}"], {
     stdin: "ignore",
     stdout: "pipe",

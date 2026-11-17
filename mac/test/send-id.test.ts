@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DeliveryCheck, RelayEvent, RpcSchemas, SendResult } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { DeliveryError, type TypeOps } from "../src/daemon/inject.ts";
+import { DeliveryError, PAUSE_SECONDS, type TypeOps } from "../src/daemon/inject.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { deliverQueued, ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
@@ -110,7 +110,7 @@ describe("session.send with a sendId", () => {
 
   test("a repeat while the first still waits for a pause waits for it, and it's typed once", async () => {
     const { rpc, t } = helper({ pauseWait: { inlineMs: 2_000, pollMs: 20 } });
-    idle = 0;
+    idle = PAUSE_SECONDS - 0.1;
     t.state.tab = { front: true, screen: EMPTY_PROMPT };
     const first = rpc("session.send", send("After you", "id-1"), "phone");
     await Bun.sleep(60);
@@ -143,6 +143,7 @@ describe("session.send with a sendId", () => {
     await queue.drain(
       false,
       deliverQueued({ preferTyping: true, hasOpenPrompt: () => false, typeOps: t.ops }),
+      Date.now() + 60_000,
     );
     expect(t.typed).toEqual(["iterm:Later"]);
     // Typed by the queue meanwhile: a late Try Again still types nothing.

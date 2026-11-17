@@ -60,6 +60,8 @@ export class ReplyQueue {
   private draining = new Set<string>();
   /** Why each session's replies wait now; a change goes to the phones as `reply.waiting`. */
   private readonly reasons = new Map<string, WaitReason>();
+  /** When each session's next try may succeed, from the keyboard's idle time; absent when it can't be told. */
+  private readonly retryAt = new Map<string, number>();
 
   constructor(
     private readonly db: DB,
@@ -91,6 +93,11 @@ export class ReplyQueue {
     if (reason) this.reasons.set(sessionId, reason);
     else this.reasons.delete(sessionId);
     this.events.emit({ type: "reply.waiting", sessionId, reason });
+  }
+
+  /** Nothing is tried for this session until `ms` from `now`, the time its keyboard needs to be still. */
+  retryIn(sessionId: string, ms: number, now = Date.now()): void {
+    this.retryAt.set(sessionId, now + ms);
   }
 
   /** Waiting replies, oldest first; for one session when given. */
@@ -133,6 +140,15 @@ export class ReplyQueue {
     await Promise.all(
       [...bySession].map(async ([sessionId, replies]) => {
         if (this.draining.has(sessionId)) return;
+        // Typing at the Mac can't have stopped before this: nothing to try yet (typed anyway at TYPE_ANYWAY_MS).
+        const first = replies[0];
+        const retryAt = this.retryAt.get(sessionId);
+        if (
+          first?.waitsFor === "pause" &&
+          retryAt !== undefined &&
+          now < Math.min(retryAt, first.createdAt + TYPE_ANYWAY_MS)
+        )
+          return;
         this.draining.add(sessionId);
         try {
           await this.drainSession(replies, locked, deliver, now);
@@ -167,6 +183,7 @@ export class ReplyQueue {
         this.drop(reply, reason ?? "the session is gone");
         continue;
       }
+      this.retryAt.delete(reply.sessionId);
       try {
         await deliver(session, reply.text, reply);
         this.remove(reply.id);
@@ -177,6 +194,7 @@ export class ReplyQueue {
           const why = reasonOfPause(err);
           // An open question has no wording of its own, and a draft/typing reason from earlier no longer holds.
           this.setReason(reply.sessionId, why);
+          if (err.retryInMs !== undefined) this.retryAt.set(reply.sessionId, now + err.retryInMs);
           return;
         }
         log.warn("queued reply couldn't be delivered", {

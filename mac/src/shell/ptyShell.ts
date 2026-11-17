@@ -83,14 +83,17 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
   if (!force) {
     // Don't mix into what you're typing in this tab: wait for a quiet moment.
     const started = ctx.now();
+    let waited = false;
     while (ctx.now() - ctx.lastInput() < QUIET_MS) {
       if (ctx.now() - started > MAX_WAIT_MS) return { ok: false, reason: "typing" };
+      waited = true;
       await ctx.sleep(250);
     }
     // Nor into a draft you left in the prompt: the helper waits for it to be sent or cleared.
     if (ctx.hasDraft?.()) return { ok: false, reason: "draft" };
-    // The wait can be long: you may have quit the agent meanwhile, and the text would run in the shell.
-    if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "not_foreground" };
+    // After a wait you may have quit the agent, and the text would run in the shell.
+    if (waited && !(await ctx.isForeground(req.pid, ctx.shellPid)))
+      return { ok: false, reason: "not_foreground" };
   }
   const text = req.text as string;
   const { body, enter } = typedBytes(ctx.hasDraft?.() ? `\n\n${text}` : text, ctx.pasteOn());
@@ -321,16 +324,17 @@ async function runInPty(shell: string): Promise<number> {
 
 /** True when `pid`'s process group is the foreground group of the terminal the shell runs in. */
 export async function isForeground(pid: number, shellPid: number): Promise<boolean> {
-  const read = async (field: string, p: number) => {
-    const out = Bun.spawn(["ps", "-o", `${field}=`, "-p", String(p)], {
-      stdout: "pipe",
-      stderr: "ignore",
-      env: { PATH: CHILD_PATH },
-    });
-    const text = (await new Response(out.stdout).text()).trim();
-    await out.exited;
-    return text ? Number(text) : NaN;
-  };
-  const [fg, group] = await Promise.all([read("tpgid", shellPid), read("pgid", pid)]);
-  return Number.isFinite(fg) && fg > 0 && fg === group;
+  const out = Bun.spawn(["ps", "-o", "pid=,pgid=,tpgid=", "-p", `${shellPid},${pid}`], {
+    stdout: "pipe",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const text = await new Response(out.stdout).text();
+  await out.exited;
+  const rows = new Map<number, { group: number; fg: number }>();
+  for (const m of text.matchAll(/^\s*(\d+)\s+(\d+)\s+(-?\d+)\s*$/gm))
+    rows.set(Number(m[1]), { group: Number(m[2]), fg: Number(m[3]) });
+  const fg = rows.get(shellPid)?.fg;
+  const group = rows.get(pid)?.group;
+  return fg !== undefined && fg > 0 && fg === group;
 }

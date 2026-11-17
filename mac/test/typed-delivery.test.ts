@@ -241,6 +241,16 @@ describe("deliver: typed into the terminal, or waiting for a pause", () => {
     box.server.close();
   });
 
+  test("tab in front with a draft while you type: waits as typing, with the time left of the pause", async () => {
+    const s = setup(ITERM);
+    const t = fakeTerminals({ tab: { front: true, screen: DRAFT } });
+    await expect(deliver(s.session(), "x", opts(1), t.ops)).rejects.toMatchObject({
+      route: "iterm",
+      reason: "typing",
+      retryInMs: (PAUSE_SECONDS - 1) * 1000,
+    });
+  });
+
   test("another tab or app in front: typed at once, even while you type", async () => {
     const s = setup(ITERM);
     const t = fakeTerminals({ tab: { front: false, screen: EMPTY } });
@@ -392,10 +402,31 @@ describe("session.send: waits for a pause, in order", () => {
     } as unknown as RpcDeps);
   }
 
+  test("handed to the queue while you type: the queue's next tick tries nothing before the pause ends", async () => {
+    const s = setup(ITERM);
+    const t = fakeTerminals({ tab: { front: true, screen: EMPTY } });
+    idle = 0;
+    const res = await rpcFor(s, t.ops, { pauseWait: { inlineMs: 100, pollMs: 20 } })(
+      "session.send",
+      { sessionId: "s1", text: "x" },
+      "phone",
+    );
+    expect(res).toMatchObject({ result: { via: "queued" } });
+    let tries = 0;
+    const deliver = async () => {
+      tries++;
+    };
+    await s.queue.drain(false, deliver, Date.now() + 500);
+    expect(tries).toBe(0);
+    await s.queue.drain(false, deliver, Date.now() + PAUSE_SECONDS * 1000 + 500);
+    expect(tries).toBe(1);
+  });
+
   test("tab in front and the Mac in use: the reply waits for the pause, then is typed (not the inbox)", async () => {
     const box = await inbox();
     const s = setup({ ...ITERM, socket: box.path });
     const t = fakeTerminals({ tab: { front: true, screen: EMPTY } });
+    idle = PAUSE_SECONDS - 0.05;
     setTimeout(() => {
       idle = PAUSE_SECONDS + 0.5;
     }, 100);
@@ -423,8 +454,11 @@ describe("session.send: waits for a pause, in order", () => {
     const deliverIt = deliverQueued({ preferTyping: true, hasOpenPrompt: () => false, typeOps: t.ops });
     await s.queue.drain(false, deliverIt);
     expect(t.typed).toEqual([]);
+    // Not before the keyboard can have been still for PAUSE_SECONDS.
     idle = 5;
-    await s.queue.drain(false, deliverIt);
+    await s.queue.drain(false, deliverIt, Date.now() + 1_000);
+    expect(t.typed).toEqual([]);
+    await s.queue.drain(false, deliverIt, Date.now() + PAUSE_SECONDS * 1000 + 1_000);
     expect(t.typed).toEqual(["iterm:one"]);
     expect(s.queue.list()).toEqual([]);
     expect(box.got).toEqual([]);
@@ -465,6 +499,7 @@ describe("session.send: waits for a pause, in order", () => {
     await s.queue.drain(
       false,
       deliverQueued({ preferTyping: true, hasOpenPrompt: () => false, typeOps: t.ops }),
+      Date.now() + PAUSE_SECONDS * 1000 + 1_000,
     );
     expect(t.typed).toEqual(["iterm:first", "iterm:second", "iterm:third", "iterm:fourth"]);
   });
@@ -473,6 +508,7 @@ describe("session.send: waits for a pause, in order", () => {
     const s = setup(ITERM);
     const t = fakeTerminals({ tab: { front: true, screen: EMPTY } });
     const rpc = rpcFor(s, t.ops, { pauseWait: { inlineMs: 2_000, pollMs: 20 } });
+    idle = PAUSE_SECONDS - 0.1;
     const first = rpc("session.send", { sessionId: "s1", text: "first" }, "phone");
     await Bun.sleep(50);
     const second = rpc("session.send", { sessionId: "s1", text: "second" }, "phone");
@@ -607,7 +643,7 @@ describe("why a message waits", () => {
     await s.queue.drain(false, deliverIt);
     idle = 30;
     t.state.tab = { front: true, screen: DRAFT };
-    await s.queue.drain(false, deliverIt);
+    await s.queue.drain(false, deliverIt, Date.now() + PAUSE_SECONDS * 1000 + 1_000);
     expect(seen).toEqual(["typing", "draft"]);
     expect(t.typed).toEqual([]);
   });

@@ -786,18 +786,20 @@ export function createRpc(
         }
         if (!(err instanceof WaitForPause)) throw err;
         // `relay shell` already waited up to 15 s for you to stop typing in that tab: don't ask it again here.
+        const wait = Math.max(timing.pollMs, err.retryInMs ?? 0);
         const again =
           !(err.route === "pty" && err.reason === "typing") &&
-          Date.now() - arrived + timing.pollMs < timing.inlineMs &&
+          Date.now() - arrived + wait < timing.inlineMs &&
           !d.broker.hasOpen(sessionId);
         if (again || !d.replies) {
-          await Bun.sleep(timing.pollMs);
+          await Bun.sleep(wait);
           continue;
         }
         log.info("waiting to type", { sessionId, route: err.route, reason: err.reason });
         d.replies.add(sessionId, text, arrived, "pause", sendId);
         const why = reasonOfPause(err);
         if (why) d.replies.setReason(sessionId, why);
+        if (err.retryInMs !== undefined) d.replies.retryIn(sessionId, err.retryInMs);
         return queued(why ?? undefined);
       }
     }

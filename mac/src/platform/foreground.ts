@@ -4,6 +4,8 @@ import { run } from "./exec.ts";
 
 export interface Proc {
   pid: number;
+  /** Parent process; only in a snapshot (`PS_SNAPSHOT_ARGS`). */
+  ppid?: number;
   /** Process group. */
   pgid: number;
   /** The foreground process group of the process's terminal; 0 or -1 without a terminal. */
@@ -16,20 +18,34 @@ export interface Proc {
 /** The `ps` call `parseProcs` reads. */
 export const PS_ARGS = ["ps", "-A", "-o", "pid=,pgid=,tpgid=,tty=,command="];
 
-export function parseProcs(out: string): Proc[] {
+/** One `ps` that answers every question about a delivery's processes: terminal, parent and foreground group. */
+export const PS_SNAPSHOT_ARGS = ["ps", "-A", "-o", "pid=,ppid=,pgid=,tpgid=,tty=,command="];
+
+export function parseProcs(out: string, withParent = false): Proc[] {
   const procs: Proc[] = [];
-  for (const line of out.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s*(.*)$/.exec(line);
-    if (m)
-      procs.push({
-        pid: Number(m[1]),
-        pgid: Number(m[2]),
-        tpgid: Number(m[3]),
-        tty: m[4] ?? "",
-        command: m[5] ?? "",
-      });
+  const line = withParent
+    ? /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s*(.*)$/
+    : /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s*(.*)$/;
+  for (const text of out.split("\n")) {
+    const m = line.exec(text);
+    if (!m) continue;
+    const [pid, ppid, rest] = withParent ? [m[1], m[2], m.slice(3)] : [m[1], undefined, m.slice(2)];
+    procs.push({
+      pid: Number(pid),
+      ...(ppid === undefined ? {} : { ppid: Number(ppid) }),
+      pgid: Number(rest[0]),
+      tpgid: Number(rest[1]),
+      tty: rest[2] ?? "",
+      command: rest[3] ?? "",
+    });
   }
   return procs;
+}
+
+/** The processes now, with parents; empty when `ps` fails. */
+export async function snapshotProcs(): Promise<Proc[]> {
+  const res = await run(PS_SNAPSHOT_ARGS, { timeoutMs: 5000 });
+  return res.code === 0 ? parseProcs(res.out, true) : [];
 }
 
 /** How a `claude` program shows in `ps` (the same test viewerTtyOf uses for a session's viewer). */
@@ -50,12 +66,14 @@ export function inFront(procs: Proc[], pid: number, tty: string | null, others: 
   );
 }
 
-/** `inFront`, read from the system now. False when `ps` fails. */
+/** `inFront`, read from the system now (or from `procs`, a snapshot already taken). False when `ps` fails. */
 export async function claudeInFront(
   pid: number,
   tty: string | null,
   others: number[] = [],
+  procs?: () => Promise<Proc[]>,
 ): Promise<boolean> {
+  if (procs) return inFront(await procs(), pid, tty, others);
   const res = await run(PS_ARGS, { timeoutMs: 5000 });
   return res.code === 0 && inFront(parseProcs(res.out), pid, tty, others);
 }
