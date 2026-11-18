@@ -22,6 +22,7 @@ function run(name: string, xcrunBody: string) {
   stub("xcrun", `echo "$@" >> "${log}"\n${xcrunBody}`);
   stub("security", `echo '  1) FAKEFAKE "Developer ID Application: Stub (XXXXXXXXXX)"'`);
   stub("codesign", "exit 0");
+  stub("ditto", `for last; do :; done; echo stub > "$last"`);
   stub("bun", `while [ $# -gt 0 ]; do if [ "$1" = "--outfile" ]; then echo stub > "$2"; fi; shift; done`);
   const p = Bun.spawnSync(["/bin/bash", SCRIPT, "9.9.9", dist], {
     env: {
