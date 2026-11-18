@@ -12,8 +12,13 @@ case "$(uname -s)" in
   Darwin) OS=darwin ;;
   Linux)
     OS=linux
-    # Alpine and other musl systems need the musl build (and libstdc++, as Claude Code does).
-    if ls /lib/ld-musl-* >/dev/null 2>&1; then ARCH="$ARCH-musl"; fi
+    # Alpine and other musl systems need the musl build (and libstdc++, as Claude Code does). Ask the libc in
+    # use: /lib/ld-musl-* also exists on glibc systems that have the musl package installed.
+    if command -v ldd >/dev/null 2>&1; then
+      if ldd --version 2>&1 | grep -qi musl; then ARCH="$ARCH-musl"; fi
+    elif grep -qx 'ID=.\{0,1\}alpine.\{0,1\}' "${RELAY_OS_RELEASE:-/etc/os-release}" 2>/dev/null; then
+      ARCH="$ARCH-musl"
+    fi
     ;;
   *) echo "The Relay helper runs on macOS and Linux. On Windows, install it inside WSL." >&2; exit 1 ;;
 esac

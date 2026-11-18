@@ -97,3 +97,57 @@ test("daemon never started: install and pair fail, installer exits non-zero", as
   expect(r.code).not.toBe(0);
   expect(r.out).toContain("relay doctor");
 });
+
+// Which build the installer asks for on a Linux system, with uname, ldd and /etc/os-release stubbed.
+async function pickedBuild(opts: { ldd?: string; osRelease?: string; muslLoader?: boolean }) {
+  const root = mkdtempSync(join(tmpdir(), "install-sh-libc-"));
+  try {
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const stub = (name: string, body: string) => {
+      writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+      chmodSync(join(bin, name), 0o755);
+    };
+    stub("uname", 'if [ "$1" = -m ]; then echo x86_64; else echo Linux; fi');
+    stub("curl", "exit 22");
+    if (opts.ldd !== undefined) stub("ldd", opts.ldd);
+    const osRelease = join(root, "os-release");
+    writeFileSync(osRelease, opts.osRelease ?? "ID=debian\n");
+    // Bare PATH without ldd, so only the stub decides.
+    if (opts.muslLoader) stub("ls", "exit 0");
+    for (const tool of ["sh", "grep", "sed", "head", "mktemp", "rm", "cut", "awk", "ls", "dirname"]) {
+      if (tool === "ls" && opts.muslLoader) continue;
+      const found = await text(["sh", "-c", `command -v ${tool}`]);
+      if (found) await Bun.spawn(["ln", "-s", found, join(bin, tool)]).exited;
+    }
+    const p = Bun.spawn(["sh", INSTALL_SH], {
+      env: { PATH: bin, HOME: root, RELAY_VERSION: "0.0.0", RELAY_OS_RELEASE: osRelease },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await new Response(p.stdout).text();
+    await p.exited;
+    return /\(linux-([a-z0-9-]+)\)/.exec(out)?.[1];
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const GLIBC_LDD = 'echo "ldd (Debian GLIBC 2.36-9+deb12u7) 2.36"';
+const MUSL_LDD = 'echo "musl libc (x86_64)" >&2; echo "Version 1.2.5" >&2; exit 1';
+
+test("glibc with the musl package installed gets the glibc build", async () => {
+  expect(await pickedBuild({ ldd: GLIBC_LDD, muslLoader: true })).toBe("x64");
+});
+
+test("glibc alone gets the glibc build", async () => {
+  expect(await pickedBuild({ ldd: GLIBC_LDD })).toBe("x64");
+});
+
+test("Alpine (musl ldd) gets the musl build", async () => {
+  expect(await pickedBuild({ ldd: MUSL_LDD, osRelease: "ID=alpine\n" })).toBe("x64-musl");
+});
+
+test("Alpine without ldd gets the musl build from os-release", async () => {
+  expect(await pickedBuild({ osRelease: "ID=alpine\n" })).toBe("x64-musl");
+});
