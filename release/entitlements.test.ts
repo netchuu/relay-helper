@@ -39,7 +39,7 @@ describe("macOS entitlements", () => {
     expect([...body.matchAll(/<key>/g)].length).toBe(granted.length);
   });
 
-  test.skipIf(process.platform !== "darwin")("is a valid property list", () => {
+  test.skipIf(!Bun.which("plutil"))("is a valid property list", () => {
     const r = Bun.spawnSync(["plutil", "-lint", PLIST]);
     expect(r.exitCode).toBe(0);
   });

@@ -99,6 +99,7 @@ describe("SessionModels", () => {
 });
 
 describe("the session's model on the wire", () => {
+  beforeEach(() => sessionModels.forget("s1"));
   afterEach(() => sessionModels.forget("s1"));
 
   test("a known model is in the public session, never an effort; unknown leaves it out", () => {
