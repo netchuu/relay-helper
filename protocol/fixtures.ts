@@ -418,6 +418,41 @@ const agentProgress = {
   turn: Turn.parse({ ...turn, id: "t_agent", steps: [agentDone, workflowDone] }),
 };
 
+// edit-counts: the same file. An edit's lines put in and taken out; a written file has only the lines put in.
+const edited = TurnStep.parse({
+  kind: "edit",
+  label: "Edited src/cart.ts",
+  at: now - 16_000,
+  id: "toolu_01CountsEdit",
+  tool: "Edit",
+  detail: "src/cart.ts",
+  added: 48,
+  removed: 6,
+});
+const written = TurnStep.parse({
+  kind: "edit",
+  label: "Edited src/money.ts",
+  at: now - 14_000,
+  id: "toolu_01CountsWrite",
+  tool: "Write",
+  detail: "src/money.ts",
+  added: 12,
+});
+const editCounts = {
+  events: z.array(RelayEvent).parse([
+    { seq: 37, ts: now - 16_000, type: "turn.action", sessionId: session.id, turnId: "t_edit", step: edited },
+    {
+      seq: 38,
+      ts: now - 14_000,
+      type: "turn.action",
+      sessionId: session.id,
+      turnId: "t_edit",
+      step: written,
+    },
+  ]),
+  turn: Turn.parse({ ...turn, id: "t_edit", steps: [edited, written] }),
+};
+
 // background-work: in a file of its own too. A shell and an agent running, then nothing.
 const devServer = BackgroundTask.parse({
   id: "bonwwqtte",
@@ -827,7 +862,7 @@ write("usage.json", {
 });
 write("suggestion.json", { shown: sessionSuggestion, none: session });
 write("messages.json", messages);
-write("timeline.json", { ...timeline, agent: agentProgress });
+write("timeline.json", { ...timeline, agent: agentProgress, edit: editCounts });
 write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);

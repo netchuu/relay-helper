@@ -76,6 +76,10 @@ const TurnStepBase = z.object({
     .optional(),
   /** How long a thinking line took, or an agent ran (ms). */
   durationMs: z.number().nonnegative().optional(),
+  /** Lines an edit put in, counted from what Claude asked for; only on `edit` steps. Never the text. */
+  added: z.number().int().nonnegative().optional(),
+  /** Lines an edit took out; absent for a written file, whose old content the helper doesn't know. */
+  removed: z.number().int().nonnegative().optional(),
   // agent-progress: an agent's or workflow's step. Older phones ignore these.
   /** The agent is still running: its label is in the live form ("Running an agent: …"), not "Ran …". */
   running: z.boolean().optional(),
