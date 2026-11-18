@@ -48,10 +48,11 @@ describe("what an action shows", () => {
     expect(actionFields("Read", { file_path: `${CWD}/src/cart.ts` }, CWD).detail).toBe("src/cart.ts");
     expect(
       actionFields("Edit", { file_path: `${homedir()}/.zshrc`, old_string: "a", new_string: "b" }, CWD),
-    ).toEqual({ tool: "Edit", detail: "~/.zshrc" });
+    ).toEqual({ tool: "Edit", detail: "~/.zshrc", added: 1, removed: 1 });
     expect(actionFields("Write", { file_path: "/etc/hosts", content: "SECRET CONTENT" }, CWD)).toEqual({
       tool: "Write",
       detail: "/etc/hosts",
+      added: 1,
     });
     expect(actionFields("NotebookEdit", { notebook_path: `${CWD}/a/../b.ipynb` }, CWD).detail).toBe(
       "b.ipynb",

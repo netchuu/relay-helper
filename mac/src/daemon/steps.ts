@@ -483,10 +483,14 @@ export class StepTracker {
     if (id && state.ended.has(id)) return;
     const late = id ? state.dropped.has(id) : false;
     const started = id ? state.running.get(id) : undefined;
+    const { added, removed, ...fields } = actionFields(call.toolName, call.input, call.cwd);
     const doneStep: TurnStep = {
       ...stepFor(call.toolName, call.input, call.cwd, "done"),
       ...(call.toolUseId ? { id: call.toolUseId } : {}),
-      ...actionFields(call.toolName, call.input, call.cwd),
+      ...fields,
+      // A failed edit changed nothing.
+      ...(!failed && added !== undefined ? { added } : {}),
+      ...(!failed && removed !== undefined ? { removed } : {}),
       at: started?.at ?? Date.now(),
       ...(failed ? { failed: true } : {}),
     };

@@ -51,14 +51,66 @@ export function cutDetail(text: string): string {
   return `${kept.join("").trimEnd()}…`;
 }
 
-/** The fields an action adds to its step: the tool, its own title, and the detail the phone may show. */
+/** An empty text has no lines; a line break at the very end doesn't start one. */
+export function lineCount(text: string): number {
+  if (!text) return 0;
+  let lines = 1;
+  for (let i = text.indexOf("\n"); i !== -1 && i < text.length - 1; i = text.indexOf("\n", i + 1)) lines++;
+  return lines;
+}
+
+export interface EditCounts {
+  added?: number;
+  removed?: number;
+}
+
+/**
+ * How many lines an edit puts in and takes out, from what Claude asked for (the file is never read). With
+ * `replace_all` it is one occurrence's lines. A written file or notebook cell has no `removed`.
+ */
+export function editCounts(toolName: string, input: Record<string, unknown> | undefined): EditCounts {
+  const i = input ?? {};
+  const pair = (edit: unknown): [number, number] | null => {
+    const e = edit as { old_string?: unknown; new_string?: unknown } | null;
+    return e && typeof e.old_string === "string" && typeof e.new_string === "string"
+      ? [lineCount(e.new_string), lineCount(e.old_string)]
+      : null;
+  };
+  if (toolName === "Edit") {
+    const one = pair(i);
+    return one ? { added: one[0], removed: one[1] } : {};
+  }
+  if (toolName === "MultiEdit") {
+    if (!Array.isArray(i.edits) || !i.edits.length) return {};
+    let added = 0;
+    let removed = 0;
+    for (const edit of i.edits) {
+      const one = pair(edit);
+      if (!one) return {};
+      added += one[0];
+      removed += one[1];
+    }
+    return { added, removed };
+  }
+  if (toolName === "Write") return typeof i.content === "string" ? { added: lineCount(i.content) } : {};
+  if (toolName === "NotebookEdit")
+    return typeof i.new_source === "string" && i.edit_mode !== "delete"
+      ? { added: lineCount(i.new_source) }
+      : {};
+  return {};
+}
+
+/** The fields an action adds to its step: the tool, its own title, the detail the phone may show, an edit's counts. */
 export function actionFields(
   toolName: string,
   input: Record<string, unknown> | undefined,
   cwd: string | null,
-): { tool: string; title?: string; detail?: string } {
+): { tool: string; title?: string; detail?: string } & EditCounts {
   const i = input ?? {};
-  const out: { tool: string; title?: string; detail?: string } = { tool: toolShown(toolName || "Tool") };
+  const out: { tool: string; title?: string; detail?: string } & EditCounts = {
+    tool: toolShown(toolName || "Tool"),
+    ...editCounts(toolName, input),
+  };
   const description = str(i.description);
   if (description && (toolName === "Bash" || toolName === "Task" || toolName === "Agent"))
     out.title = fitLabel(oneLine(redact(description)));
@@ -209,6 +261,9 @@ export class TimelineReader {
           let touched = false;
           if (block.is_error && !step.failed) {
             step.failed = true;
+            // A failed edit changed nothing.
+            delete step.added;
+            delete step.removed;
             touched = true;
           }
           if (this.agents.result(block.tool_use_id, textOf(block.content), ts)) touched = true;
