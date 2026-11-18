@@ -1,14 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { generateKeyPairSync, verify } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Prompt, RelayEvent } from "../../protocol/index.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { alertFor, apnsPayload, Category, Notifier } from "../src/daemon/notifier.ts";
-import { Apns, isDeadToken, loadApnsConfig } from "../src/daemon/push.ts";
+import { isDeadToken } from "../src/daemon/push.ts";
 import { openSealed, TEST_PUSH_KEY as PUSH_KEY } from "./support/sealed.ts";
 import { waitFor } from "./support/wait.ts";
 
@@ -120,43 +116,10 @@ describe("notification content", () => {
   });
 });
 
-describe("APNs client", () => {
-  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-  const dir = mkdtempSync(join(tmpdir(), "relay-apns-"));
-  const keyPath = join(dir, "AuthKey_TEST000001.p8");
-  writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }));
-  const apns = new Apns({
-    keyId: "TEST000001",
-    teamId: "TEAM000001",
-    keyPath,
-    bundleId: "com.example.relay",
-  });
-
-  test("signs an ES256 provider token Apple can verify, and reuses it", () => {
-    const token = apns.bearer(1_000_000);
-    const [h, p, s] = token.split(".");
-    expect(JSON.parse(Buffer.from(h!, "base64url").toString())).toEqual({ alg: "ES256", kid: "TEST000001" });
-    expect(JSON.parse(Buffer.from(p!, "base64url").toString())).toEqual({ iss: "TEAM000001", iat: 1000 });
-    const ok = verify(
-      "sha256",
-      Buffer.from(`${h}.${p}`),
-      { key: publicKey, dsaEncoding: "ieee-p1363" },
-      Buffer.from(s!, "base64url"),
-    );
-    expect(ok).toBe(true);
-    expect(apns.bearer(1_000_000 + 10 * 60_000)).toBe(token);
-    expect(apns.bearer(1_000_000 + 45 * 60_000)).not.toBe(token);
-  });
-
-  test("rejects malformed device tokens without calling Apple", async () => {
-    expect(await apns.send("not-a-token", "sandbox", {})).toEqual({ status: 400, reason: "BadDeviceToken" });
-  });
-
-  test("dead tokens are recognised", () => {
-    expect(isDeadToken({ status: 410, reason: "Unregistered" })).toBe(true);
-    expect(isDeadToken({ status: 400, reason: "BadDeviceToken" })).toBe(true);
-    expect(isDeadToken({ status: 429, reason: "TooManyRequests" })).toBe(false);
-  });
+test("dead APNs tokens are recognised", () => {
+  expect(isDeadToken({ status: 410, reason: "Unregistered" })).toBe(true);
+  expect(isDeadToken({ status: 400, reason: "BadDeviceToken" })).toBe(true);
+  expect(isDeadToken({ status: 429, reason: "TooManyRequests" })).toBe(false);
 });
 
 describe("phones without a push key", () => {
@@ -303,31 +266,6 @@ describe("waiting reminders", () => {
     await setPresent(true);
     await setPresent(false);
     expect(sent).toHaveLength(1);
-  });
-});
-
-describe("loadApnsConfig", () => {
-  const homeWith = (content?: string) => {
-    const home = mkdtempSync(join(tmpdir(), "apns-cfg-"));
-    if (content !== undefined) {
-      mkdirSync(join(home, "apns"));
-      writeFileSync(join(home, "apns", "apns.json"), content);
-    }
-    return home;
-  };
-  const valid = { keyPath: "/k.p8", keyId: "ABC1234567", teamId: "TEAM123456", bundleId: "app.relay" };
-
-  test("a truncated, empty or commented file gives no config instead of throwing", () => {
-    for (const bad of ['{"keyPath": "/k.p', "", '// my key\n{"keyPath":"/k.p8"}', "null", "[]"]) {
-      expect(loadApnsConfig(homeWith(bad))).toBeNull();
-    }
-  });
-  test("a missing file gives no config", () => {
-    expect(loadApnsConfig(homeWith())).toBeNull();
-  });
-  test("a valid file is read as before", () => {
-    const config = loadApnsConfig(homeWith(JSON.stringify(valid)));
-    expect(config?.keyId).toBe("ABC1234567");
   });
 });
 

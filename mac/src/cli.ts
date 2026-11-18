@@ -17,12 +17,10 @@ import { loadConfig, paths, resolveClaudeBin, saveConfig, VERSION } from "./conf
 import { openDb } from "./daemon/db.ts";
 import { b64url, loadOrCreateIdentity } from "./daemon/e2e.ts";
 import { EventLog } from "./daemon/events.ts";
-import { checkFcmConfig } from "./daemon/fcm.ts";
 import { typingRouteFor } from "./daemon/inject.ts";
 import { runDaemon } from "./daemon/main.ts";
 import { kittyDoctorNote } from "./daemon/paneTerminals.ts";
 import { liveTmuxSockets } from "./daemon/presence.ts";
-import { iosPushStatus, loadApnsConfig } from "./daemon/push.ts";
 import { appRouteOf, pinnedFirst, Registry } from "./daemon/registry.ts";
 import {
   BIN_DIR,
@@ -478,35 +476,11 @@ async function doctor(): Promise<void> {
       "tmux: not installed. On Linux, replies from the phone are typed only into tmux; elsewhere they arrive as a message from another session",
     );
 
-  const push = iosPushStatus(config.relayUrl, loadApnsConfig());
-  if (push.state === "relay") ok("iOS push: through the relay (no APNs key needed on this computer)");
-  else if (push.state === "local") ok(`iOS push: on (${push.bundleId})`);
+  if (config.relayUrl) ok("Push: through the relay (iPhone and Android, no keys needed on this computer)");
   else
     warn(
-      `iOS push: off — there's no APNs key in ${join(paths.home, "apns")}. Prompts still reach the app while it's open, but the phone won't get notifications from this computer yet`,
+      "Push: off — this computer isn't paired with a relay. Prompts still reach the app while it's open, but the phone won't get notifications from this computer yet",
     );
-
-  // Never print key material: only the project and the service account's address.
-  const fcm = checkFcmConfig();
-  switch (fcm.state) {
-    case "ok":
-      ok(`FCM (Android push): project ${fcm.config.project_id} as ${fcm.config.client_email}`);
-      break;
-    case "missing":
-      config.relayUrl
-        ? ok("Android push: through the relay (no Firebase key needed on this computer)")
-        : warn(`FCM (Android push): off — no ${fcm.path} (optional)`);
-      break;
-    case "bad_mode":
-      bad(`FCM (Android push): ${fcm.path} is mode ${fcm.mode.toString(8)} — \`chmod 600 ${fcm.path}\``);
-      break;
-    case "bad_json":
-      bad(`FCM (Android push): ${fcm.path} is not valid JSON`);
-      break;
-    case "invalid":
-      bad(`FCM (Android push): ${fcm.path}: ${fcm.problem}`);
-      break;
-  }
 
   if (await daemonAlive()) {
     const devices = (await fetch("http://relay/admin/devices", { unix: paths.hookSock }).then((r) =>

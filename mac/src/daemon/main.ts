@@ -13,7 +13,6 @@ import { Broker } from "./broker.ts";
 import { getSetting, openDb, setSetting } from "./db.ts";
 import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
-import { Fcm, loadFcmConfig } from "./fcm.ts";
 import { HeadlessSessions } from "./headless.ts";
 import { HeldReplies } from "./held.ts";
 import { HookHandler } from "./hooks.ts";
@@ -22,7 +21,6 @@ import { MessageTracker } from "./messages.ts";
 import { Notifier } from "./notifier.ts";
 import { Phones } from "./phones.ts";
 import { PresenceMonitor } from "./presence.ts";
-import { Apns, loadApnsConfig } from "./push.ts";
 import { Registry } from "./registry.ts";
 import { RelayLink } from "./relayLink.ts";
 import { RelayApns, RelayFcm } from "./relayPush.ts";
@@ -53,31 +51,13 @@ export async function runDaemon(): Promise<void> {
   const presence = new PresenceMonitor(db, events, config.idleAwaySeconds, () =>
     replies.list().some((r) => r.waitsFor === "unlock"),
   );
-  const apnsConfig = loadApnsConfig();
-  let apns: Pick<Apns, "send"> | null = null;
+  // The hosted relay holds the push keys; this Mac only signs its requests.
+  let apns: Pick<RelayApns, "send"> | null = null;
+  let fcm: Pick<RelayFcm, "send"> | null = null;
   if (config.relayUrl) {
-    // The hosted relay holds the app's APNs key; this Mac only signs its requests.
-    apns = new RelayApns(config.relayUrl, loadOrCreateIdentity(paths.identity));
-  } else if (apnsConfig) {
-    try {
-      apns = new Apns(apnsConfig);
-    } catch (err) {
-      log.warn("iOS push disabled: could not load the APNs key", { err: errMessage(err) });
-    }
-  }
-  const fcmConfig = loadFcmConfig();
-  let fcm: Pick<Fcm, "send"> | null = null;
-  if (config.relayUrl) {
-    // The hosted relay holds the Firebase key too; Android pushes go there, sealed for each phone.
-    fcm = new RelayFcm(config.relayUrl, loadOrCreateIdentity(paths.identity));
-  } else if (fcmConfig.problem) {
-    log.warn("Android push disabled", { problem: fcmConfig.problem });
-  } else if (fcmConfig.config) {
-    try {
-      fcm = new Fcm(fcmConfig.config);
-    } catch (err) {
-      log.warn("Android push disabled: could not load the FCM key", { err: errMessage(err) });
-    }
+    const identity = loadOrCreateIdentity(paths.identity);
+    apns = new RelayApns(config.relayUrl, identity);
+    fcm = new RelayFcm(config.relayUrl, identity);
   }
   const notifier = apns || fcm ? new Notifier(db, events, presence, registry, broker, { apns, fcm }) : null;
   const baseDeps = { db, events, registry, broker, presence, config, notifier, claudeBin };
@@ -243,8 +223,7 @@ export async function runDaemon(): Promise<void> {
     hookSock: paths.hookSock,
     app: `http://127.0.0.1:${config.port}`,
     claudeBin,
-    push: apns ? apnsConfig?.bundleId : "off",
-    fcm: !fcm ? "off" : config.relayUrl ? "relay" : fcmConfig.config?.project_id,
+    push: apns ? "relay" : "off",
     relay: config.relayUrl ?? "off",
   });
 

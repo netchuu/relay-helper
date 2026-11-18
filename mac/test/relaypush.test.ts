@@ -4,8 +4,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parsePushRequest, resetFcmCache, sendToFcm } from "../../cloud/src/push.ts";
+import { openDb } from "../src/daemon/db.ts";
 import { loadOrCreateIdentity } from "../src/daemon/e2e.ts";
-import { Category, sealedApnsPayload, sealedFcmMessage } from "../src/daemon/notifier.ts";
+import { Category, Notifier, sealedApnsPayload, sealedFcmMessage } from "../src/daemon/notifier.ts";
 import { RelayApns, RelayFcm, sealForPhone } from "../src/daemon/relayPush.ts";
 
 const key = Buffer.alloc(32, 9).toString("base64");
@@ -188,4 +189,68 @@ describe("Android push through the relay", () => {
     await expect(bad).rejects.toThrow("FCM service account is not valid JSON");
     await bad.catch((e: Error) => expect(e.message).not.toContain("SECRET"));
   });
+});
+
+describe("Android pushes the Notifier sends through the relay", () => {
+  const androidToken = "fcm-token:APA91b_abcdefghijklmnop";
+  const alert = {
+    title: "secret-project asks",
+    body: "Deploy to prod-db-7?",
+    category: Category.permission,
+    threadId: "s1",
+    collapseId: "p1",
+    data: { promptId: "p1", sessionId: "s1", kind: "question" },
+  };
+
+  const setup = (relayAnswers: (n: number) => number) => {
+    const db = openDb(":memory:");
+    const add = (id: string, token: string, pushKey: string | null) =>
+      db
+        .query(
+          "INSERT INTO devices (id, name, token_hash, created_at, apns_token, apns_env, push_platform, push_key) VALUES (?, ?, ?, 0, ?, 'production', 'fcm', ?)",
+        )
+        .run(id, id, `h-${id}`, token, pushKey);
+    const posted: { platform: string; data: Record<string, string> }[] = [];
+    const fakeFetch = (async (_url: string, init: RequestInit) => {
+      const sent = JSON.parse(String(init.body));
+      posted.push({ platform: sent.platform, data: sent.payload.data });
+      return Response.json({ status: relayAnswers(posted.length) });
+    }) as unknown as typeof fetch;
+    const identity = loadOrCreateIdentity(join(mkdtempSync(join(tmpdir(), "relay-id-")), "identity.json"));
+    const fcm = new RelayFcm("wss://relay.example.workers.dev", identity, fakeFetch);
+    const notifier = new Notifier(db, {} as never, {} as never, {} as never, {} as never, { fcm });
+    return { add, posted, notifier };
+  };
+
+  test("a phone without a push key gets the content-free alert", async () => {
+    const { add, posted, notifier } = setup(() => 200);
+    add("android-old", androidToken, null);
+    expect(await notifier.pushAll(alert)).toBe(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.platform).toBe("fcm");
+    expect(posted[0]?.data).toEqual({
+      title: "Relay",
+      body: "New activity on your Mac",
+      category: Category.notice,
+      threadId: "relay",
+    });
+  });
+
+  for (const refused of [400, 413]) {
+    test(`a sealed push the relay refuses with ${refused} is sent again without content`, async () => {
+      const { add, posted, notifier } = setup((n) => (n === 1 ? refused : 200));
+      add("android", androidToken, key);
+      expect(await notifier.pushAll(alert)).toBe(1);
+      expect(posted).toHaveLength(2);
+      expect(Object.keys(posted[0]?.data ?? {})).toContain("enc");
+      expect(posted[1]?.platform).toBe("fcm");
+      expect(posted[1]?.data).toEqual({
+        title: "Relay",
+        body: "New activity on your Mac",
+        category: Category.notice,
+        threadId: "relay",
+      });
+      expect(JSON.stringify(posted[1])).not.toContain("prod-db-7");
+    });
+  }
 });

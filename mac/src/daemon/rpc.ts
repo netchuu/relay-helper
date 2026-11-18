@@ -595,10 +595,7 @@ export function createRpc(
 
     "push.test": async () => {
       if (!d.notifier)
-        throw new RpcFailure(
-          "unavailable",
-          "push is not configured (~/.relay/apns/apns.json or ~/.relay/fcm/service-account.json)",
-        );
+        throw new RpcFailure("unavailable", "push is not configured: pair this computer with a relay");
       const sent = await d.notifier.pushAll({
         title: "Relay works",
         body: "Notifications from your Mac reach this phone.",

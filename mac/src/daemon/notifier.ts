@@ -5,12 +5,12 @@ import type { Broker } from "./broker.ts";
 import type { DB } from "./db.ts";
 import { hasShortenedCd } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
-import { type Fcm, type FcmMessage, isDeadFcmToken } from "./fcm.ts";
+import { type FcmMessage, isDeadFcmToken } from "./fcm.ts";
 import type { PresenceMonitor } from "./presence.ts";
-import { type Apns, type ApnsEnvironment, isDeadToken } from "./push.ts";
+import { type ApnsEnvironment, isDeadToken } from "./push.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
-import { sealForPhone } from "./relayPush.ts";
+import { type RelayApns, type RelayFcm, sealForPhone } from "./relayPush.ts";
 import { firstLine } from "./render.ts";
 import { head } from "./text.ts";
 
@@ -38,8 +38,8 @@ interface PushTarget {
 
 /** The parts of the senders the notifier uses, so tests can stand in for Apple and Google. */
 export interface PushSenders {
-  apns?: Pick<Apns, "send"> | null;
-  fcm?: Pick<Fcm, "send"> | null;
+  apns?: Pick<RelayApns, "send"> | null;
+  fcm?: Pick<RelayFcm, "send"> | null;
 }
 
 export interface Alert {
