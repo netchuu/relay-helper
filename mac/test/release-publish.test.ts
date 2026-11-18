@@ -33,7 +33,8 @@ function run(failCommit: boolean, dropFormula = false) {
   const gitconfig = join(tmp, "gitconfig");
   writeFileSync(
     gitconfig,
-    `[init]\n\tdefaultBranch = main\n` + (failCommit ? `[core]\n\thooksPath = ${hooks}\n` : ""),
+    `[init]\n\tdefaultBranch = main\n[safe]\n\tdirectory = *\n` +
+      (failCommit ? `[core]\n\thooksPath = ${hooks}\n` : ""),
   );
   writeFileSync(join(hooks, "pre-commit"), "#!/bin/sh\necho 'hook refuses' >&2\nexit 1\n");
   chmodSync(join(hooks, "pre-commit"), 0o755);
@@ -46,10 +47,14 @@ function run(failCommit: boolean, dropFormula = false) {
   const sh = (cmd: string) =>
     Bun.spawnSync(["bash", "-c", cmd], { cwd: tmp, env, stdout: "pipe", stderr: "pipe" });
   const tap = join(tmp, "tap.git");
+  // No clone of an empty repository: the seed is built in place and pushed by absolute path.
   const seed = sh(
-    `git init -q --bare tap.git && git clone -q tap.git seed 2>/dev/null && mkdir seed/Formula && echo 'version "0.0.1"' > seed/Formula/relay.rb && git -C seed add -A && git -C seed -c user.name=Seed -c user.email=seed@example.invalid -c core.hooksPath=/dev/null commit -qm old && git -C seed push -q origin HEAD:main`,
+    `git init -q --initial-branch=main --bare '${tap}' && git init -q seed && mkdir seed/Formula && echo 'version "0.0.1"' > seed/Formula/relay.rb && git -C seed add -A && git -C seed -c user.name=Seed -c user.email=seed@example.invalid -c core.hooksPath=/dev/null commit -qm old && git -C seed push -q '${tap}' HEAD:refs/heads/main`,
   );
-  expect(seed.exitCode).toBe(0);
+  expect({ code: seed.exitCode, stderr: seed.exitCode ? seed.stderr.toString() : "" }).toEqual({
+    code: 0,
+    stderr: "",
+  });
   writeFileSync(
     join(bin, "gh"),
     `#!/bin/sh\nif [ "$1 $2" = "repo clone" ]; then exec git clone -q "${tap}" "$4"; fi\nexit 0\n`,
