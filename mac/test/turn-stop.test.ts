@@ -41,6 +41,7 @@ interface Opts {
   dbPath?: string;
   repeatMs?: number;
   markerMs?: number;
+  inboxMs?: number;
   config?: Partial<RelayConfig>;
 }
 
@@ -110,7 +111,7 @@ function setup(opts: Opts = {}) {
     timing: {
       graceMs: 5,
       markerMs: opts.markerMs ?? 400,
-      inboxMs: 250,
+      inboxMs: opts.inboxMs ?? 250,
       pollMs: 20,
       repeatMs: opts.repeatMs ?? 2000,
     },
@@ -873,7 +874,7 @@ describe("turns that start right after a stop", () => {
 
   test("the inbox stop's own turn, stopped again after the double-tap window: its own text, and the first turn isn't announced twice", async () => {
     // Inside the 2 s window a second tap is a double tap and gets conflict (the next test file block covers it).
-    const s = setup({ repeatMs: 100 });
+    const s = setup({ repeatMs: 100, inboxMs: 5000 });
     await s.working("s1", INBOX, "Rewrite the checkout");
     const t0 = Date.now();
     s.tx(
