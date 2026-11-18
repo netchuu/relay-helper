@@ -31,7 +31,16 @@ import type { EventLog } from "./events.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import type { HeldReplies } from "./held.ts";
 import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } from "./hooks.ts";
-import { DeliveryError, deliver, PHONE_PREFIX, type TypeOps, WaitForPause, WaitForUnlock } from "./inject.ts";
+import {
+  confirmModelSwitch,
+  DeliveryError,
+  deliver,
+  modelResultsOnScreen,
+  PHONE_PREFIX,
+  type TypeOps,
+  WaitForPause,
+  WaitForUnlock,
+} from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
@@ -491,7 +500,8 @@ export function createRpc(
           tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
         });
         try {
-          return await deliver(
+          const resultsBefore = model !== undefined ? await modelResultsOnScreen(session, d.typeOps) : 0;
+          const delivered = await deliver(
             session,
             command,
             {
@@ -503,6 +513,13 @@ export function createRpc(
             },
             d.typeOps,
           );
+          // Answered before the next queued message is typed, which would land in the question.
+          if (model !== undefined) {
+            const answer = await confirmModelSwitch(session, delivered.via, model, d.typeOps, resultsBefore);
+            if (answer === "other")
+              throw new RpcFailure("conflict", "The computer is asking something else. Answer it there.");
+          }
+          return delivered;
         } catch (err) {
           if (err instanceof WaitForPause)
             throw new RpcFailure(

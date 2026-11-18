@@ -355,6 +355,76 @@ async function confirmSubmitted(
   return null;
 }
 
+/** What a `/model` left on the screen: nothing to answer, the cache question answered, or some other question. */
+export type ModelSwitchAnswer = "none" | "confirmed" | "other";
+
+const MODEL_QUESTION = /^\s*Switch model\?\s*$/m;
+const MODEL_QUESTION_YES = /^\s*(?:❯\s*)?1\.\s+Yes, switch to (.+?)\s*$/m;
+const MODEL_DONE = /^\s*⎿\s+(?:Set|Kept) model/m;
+/** Any list Claude Code asks to be answered with Enter: a picker, a trust or permission question. */
+const ASKING = /Enter to (?:confirm|save|select)|Esc to cancel/;
+
+/** Whether the question's model (`Sonnet 5.5`) is the one asked for (`sonnet`, `claude-sonnet-5-5`, `sonnet[1m]`). */
+function sameModel(asked: string, shown: string): boolean {
+  const wanted = asked.trim().toLowerCase();
+  if (wanted === "default") return /\(default\)\s*$/i.test(shown);
+  const family = shown.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return family !== "" && wanted.includes(family);
+}
+
+function countModelResults(screen: string): number {
+  return [...screen.matchAll(new RegExp(MODEL_DONE.source, "gm"))].length;
+}
+
+/** How many `Set model` / `Kept model` lines the session's screen shows now; read before `/model` is typed. */
+export async function modelResultsOnScreen(
+  session: SessionRecord,
+  ops: TypeOps = defaultTypeOps,
+): Promise<number> {
+  for (const route of routesFor(session, typeWire(ops))) {
+    const screen = (await route.read().catch(() => null))?.screen;
+    if (screen != null) return countModelResults(screen);
+  }
+  return 0;
+}
+
+/** Accepts Claude Code's "Switch model?" for the very model asked; any other question is left ("other"). */
+export async function confirmModelSwitch(
+  session: SessionRecord,
+  route: DeliveryRoute,
+  model: string,
+  ops: TypeOps = defaultTypeOps,
+  resultsBefore = 0,
+  waitMs = MODEL_QUESTION_WAIT_MS,
+): Promise<ModelSwitchAnswer> {
+  const sleep = ops.sleep;
+  if (!sleep) return "none";
+  const found = routesFor(session, typeWire(ops)).find((r) => r.kind === route);
+  if (!found) return "none";
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const screen = (await found.read())?.screen;
+    if (screen == null) return "none";
+    // Only the bottom of the screen: the history may hold an answered question.
+    const tail = screen.trimEnd().split("\n").slice(-14).join("\n");
+    if (MODEL_QUESTION.test(tail)) {
+      const yes = MODEL_QUESTION_YES.exec(tail);
+      if (!yes?.[1] || !sameModel(model, yes[1])) return "other";
+      const ready = await found.probe();
+      if (!ready || !(await ready.key("enter").catch(() => false))) return "other";
+      return "confirmed";
+    }
+    if (ASKING.test(tail)) return "other";
+    // Earlier switches stay in the history: only a result that wasn't on the screen before typing counts.
+    if (countModelResults(screen) > resultsBefore || Date.now() >= until) return "none";
+    await sleep(MODEL_QUESTION_POLL_MS);
+  }
+}
+
+/** How long `/model` is watched for its question, and how often the screen is read meanwhile. */
+const MODEL_QUESTION_WAIT_MS = 3000;
+const MODEL_QUESTION_POLL_MS = 250;
+
 /** Types into the session's own terminal; null when none is reachable. Throws WaitForPause rather than mix into typing. */
 async function typeIntoTerminal(
   session: SessionRecord,

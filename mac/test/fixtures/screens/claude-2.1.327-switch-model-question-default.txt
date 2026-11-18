@@ -1,0 +1,14 @@
+❯ say ok
+⏺ ok
+✻ Cooked for 3s
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Switch model?
+  Your next response will be slower and use more tokens
+
+  This conversation is cached for the current model. Switching to Opus 5.5 means the full history gets
+  re-read.
+
+  ❯ 1. Yes, switch to Opus 5.5 (default)
+    2. No, go back
+
+  Enter to confirm · Esc to cancel
