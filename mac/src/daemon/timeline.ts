@@ -163,13 +163,15 @@ export function shownOutput(raw: string): CommandOutput {
 /**
  * A shell command's output as its result's transcript entry has it. A command that ended: the entry's
  * `toolUseResult` (`stdout`, then `stderr`). One that failed: the result's text after its "Exit code N" line.
- * Null when the entry has neither: a refused call, an image, or an output Claude Code kept only the start of.
+ * Null when the entry has neither: a refused call, an image, a command still running in the background, or an
+ * output Claude Code kept only the start of.
  */
 function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): string | null {
   if (block.is_error) {
     const text = textOf(block.content);
     const exit = /^Exit code \d+(?:\n|$)/.exec(text);
-    return exit ? text.slice(exit[0].length) : null;
+    if (!exit || text.includes("<persisted-output>")) return null;
+    return text.slice(exit[0].length).replace(FOLDER_NOTE, "");
   }
   const r = entry.toolUseResult;
   if (!alone || !r || typeof r !== "object" || Array.isArray(r)) return null;
@@ -178,14 +180,17 @@ function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): str
     stderr?: unknown;
     isImage?: unknown;
     persistedOutputPath?: unknown;
+    backgroundTaskId?: unknown;
   };
-  if (result.isImage === true || result.persistedOutputPath !== undefined) return null;
+  if (result.isImage === true) return null;
+  if (result.persistedOutputPath !== undefined || result.backgroundTaskId !== undefined) return null;
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
-  // Claude Code's own note about the folder, not the command's.
-  const stderr =
-    typeof result.stderr === "string" ? result.stderr.replace(/^Shell cwd was reset to .*$/gm, "") : "";
+  const stderr = typeof result.stderr === "string" ? result.stderr.replace(FOLDER_NOTE, "") : "";
   return [stdout.trimEnd(), stderr].filter((part) => part.trim()).join("\n");
 }
+
+/** Claude Code's own line about the folder, not the command's. */
+const FOLDER_NOTE = /^Shell cwd was reset to .*$/gm;
 
 /** The step as a phone that doesn't reassemble pieces gets it: a turn's outputs could pass one relay frame. */
 export function withoutOutput<S extends { output?: string; outputCut?: boolean }>(step: S): S {

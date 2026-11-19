@@ -268,6 +268,15 @@ describe("the timeline reader", () => {
     expect(r.actions.map(outputOf)).toEqual([{}, {}]);
   });
 
+  test("a command moved to the background is still running: what it printed so far is not sent", () => {
+    const r = new TimelineReader(CWD, 0);
+    r.add(bash("bg", 10, "bun run dev"));
+    expect(
+      r.add(ended("bg", 20, `${MARKER}\n`, "", { backgroundTaskId: "bx1", timedOutAfterMs: 120_000 })),
+    ).toEqual([]);
+    expect(JSON.stringify(r.actions)).not.toContain(MARKER);
+  });
+
   test("a failed command keeps its output, without the exit code line", () => {
     const r = new TimelineReader(CWD, 0);
     r.add(bash("f", 10));
@@ -278,6 +287,21 @@ describe("the timeline reader", () => {
     const [silent] = r.add(failed("silent", 40, "Exit code 2"));
     expect(silent).toMatchObject({ id: "silent", failed: true });
     expect(outputOf(silent)).toEqual({});
+  });
+
+  test("a failed command's output ends with the command's last line, not with Claude Code's own", () => {
+    const r = new TimelineReader(CWD, 0);
+    r.add(bash("note", 10));
+    const [noted] = r.add(
+      failed("note", 20, `Exit code 1\nerror: no such file\n\nShell cwd was reset to ${CWD}`),
+    );
+    expect(outputOf(noted)).toEqual({ output: "error: no such file" });
+    r.add(bash("long", 30));
+    const [long] = r.add(
+      failed("long", 40, `Exit code 1\n<persisted-output>\nOutput too large. ${MARKER}\n</persisted-output>`),
+    );
+    expect(long).toMatchObject({ id: "long", failed: true });
+    expect(JSON.stringify(r.actions)).not.toContain(MARKER);
   });
 
   test("a call that never ran has no output: what Claude Code says about it is not sent", () => {
