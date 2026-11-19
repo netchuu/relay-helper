@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto"
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-  ATTACHMENT_MAX_BYTES,
+  ATTACHMENT_CHUNK_BYTES,
   type AttachmentRef,
   type AttachmentUpload,
   HostInfo,
@@ -219,7 +219,7 @@ describe("relay end to end", () => {
     old.ws.close();
   }, 60_000);
 
-  test("a 50 MB attachment uploads through the relay in full-size chunks and lands with its hash", async () => {
+  test("a multi-chunk attachment uploads through the relay in full-size chunks and lands with its hash", async () => {
     // A session to send it to, registered by the real hook client.
     const sessionId = "relay-attach-sess";
     const hook = Bun.spawn(["bun", join(REPO, "mac/src/hook/client.ts")], {
@@ -238,7 +238,7 @@ describe("relay end to end", () => {
     const identity = id();
     const phone = await new TestPhone(identity.macId, identity.boxPublic).connect();
     expect(((await phone.call("hello", { token })).result as { ok: boolean }).ok).toBe(true);
-    const bytes = randomBytes(ATTACHMENT_MAX_BYTES);
+    const bytes = randomBytes(40 * ATTACHMENT_CHUNK_BYTES + 1000);
     const sha256 = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
     const begin = await phone.call("attachment.begin", {
       sessionId,
@@ -248,7 +248,8 @@ describe("relay end to end", () => {
       sha256,
     });
     const up = begin.result as AttachmentUpload;
-    expect(up.chunks).toBe(400);
+    expect(up.chunkSize).toBe(ATTACHMENT_CHUNK_BYTES);
+    expect(up.chunks).toBe(41);
     const chunk = (index: number) => ({
       method: "attachment.chunk",
       params: {
@@ -268,7 +269,7 @@ describe("relay end to end", () => {
     const ended = (await phone.call("attachment.end", { id: up.id })).result as AttachmentRef;
     expect(ended.path.startsWith(join(HOME, "attachments", sessionId, ""))).toBe(true);
     expect(statSync(ended.path).mode & 0o777).toBe(0o600);
-    expect(statSync(ended.path).size).toBe(ATTACHMENT_MAX_BYTES);
+    expect(statSync(ended.path).size).toBe(bytes.length);
     expect(new Bun.CryptoHasher("sha256").update(readFileSync(ended.path)).digest("hex")).toBe(sha256);
     // A retried end answers the same, and the stream is still open.
     expect((await phone.call("attachment.end", { id: up.id })).result).toEqual(ended);
