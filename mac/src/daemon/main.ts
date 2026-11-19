@@ -30,12 +30,14 @@ import { anySessionWorking, brewCandidates, SelfUpdater, underServiceManager } f
 import { StepTracker } from "./steps.ts";
 import { TurnStopper } from "./stop.ts";
 import { SuggestionWatcher } from "./suggestion.ts";
+import { bindSuggestionSeen } from "./suggestionSeen.ts";
 
 export async function runDaemon(): Promise<void> {
   ensureHome();
   const config = loadConfig();
   const claudeBin = resolveClaudeBin(config);
   const db = openDb(paths.db);
+  bindSuggestionSeen(db);
   const events = new EventLog(db);
   const registry = new Registry(db, events);
   setKnownPids(() => registry.list().flatMap((s) => (s.pid ? [s.pid] : [])));

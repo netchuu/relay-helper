@@ -373,6 +373,7 @@ export class HookHandler {
       case "PreToolUse": {
         const call = toolCall(p, session.cwd);
         this.steps.toolStarted(sessionId, call);
+        this.d.suggestions?.duringTurn(sessionId);
         this.messages.poll(sessionId);
         // A denied tool has no end hook, so the next tool starting is the first sign Claude went on.
         if (!call.agentId && session.status === "waiting" && !this.d.broker.hasOpen(sessionId))
@@ -394,6 +395,7 @@ export class HookHandler {
         });
         const ended = toolCall(p, session.cwd);
         this.steps.toolEnded(sessionId, ended, event !== "PostToolUse");
+        this.d.suggestions?.duringTurn(sessionId);
         // A background agent's finished tool call is its activity too, until its next one (background-work).
         if (ended.agentId)
           this.background.agentTool(
@@ -431,6 +433,8 @@ export class HookHandler {
           // can start the next turn meanwhile, and that one isn't finished by this Stop.
           const picked = this.openTurn(sessionId);
           const transcript = session.transcript ?? str("transcript_path") ?? null;
+          // Text typed since the last tool hook is a draft; the suggestion is drawn only once the turn is over.
+          await this.d.suggestions?.beforeStop(sessionId);
           // The transcript is flushed asynchronously; give it a moment before reading stats.
           await Bun.sleep(400);
           const ending = this.stopOwner(sessionId, picked, text, transcript, session.cwd);

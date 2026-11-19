@@ -3,7 +3,7 @@ import { Phones } from "../src/daemon/phones.ts";
 import type { SessionRecord } from "../src/daemon/registry.ts";
 import { SuggestionWatcher, suggestionOf } from "../src/daemon/suggestion.ts";
 
-// Nothing is read off a terminal while no phone is connected; one that connects gets the suggestion at once.
+// With no phone connected only the first looks after a Stop are read; one that connects gets the suggestion at once.
 const session = { id: "p1", status: "idle", canReceive: true } as SessionRecord;
 
 function setup(phones: Phones) {
@@ -26,12 +26,14 @@ function setup(phones: Phones) {
 
 const settle = () => Bun.sleep(80);
 
-test("a turn that ends with no phone connected reads nothing", async () => {
+test("a turn that ends with no phone connected takes the first looks and publishes nothing", async () => {
   const t = setup(new Phones());
   t.watcher.turnEnded("p1");
   await settle();
-  expect(t.reads()).toBe(0);
+  expect(t.reads()).toBe(5);
   expect(suggestionOf("p1")).toBeUndefined();
+  await settle();
+  expect(t.reads()).toBe(5);
 });
 
 test("a phone that connects gets the suggestion of an idle session", async () => {

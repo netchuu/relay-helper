@@ -32,8 +32,17 @@ import {
   paneTargetOf,
   paneType,
 } from "./paneTerminals.ts";
-import { afterBreak, noKeySincePrompt, promptDraft, promptSuggestionRead } from "./promptLine.ts";
+import {
+  afterBreak,
+  noKeySincePrompt,
+  type PromptOptions,
+  promptDraft,
+  promptHoldsText,
+  promptSuggestionRead,
+  promptTextRead,
+} from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
+import { noteSuggestionSeen, suggestionSeenOf, untypedStopAt } from "./suggestionSeen.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
 export type DeliveryRoute =
@@ -157,6 +166,8 @@ export interface TypeOps {
   sleep?(ms: number): Promise<void>;
   /** Whether no key was pressed at this Mac since the session's prompt was last submitted. Absent: false. */
   noKeySincePrompt?(sessionId: string): boolean;
+  /** The clock, in ms. Absent: `Date.now`. */
+  now?(): number;
   /** The desktop app and editor routes. Absent: the real ones. */
   gui?: GuiOps;
 }
@@ -355,6 +366,19 @@ async function confirmSubmitted(
   return null;
 }
 
+/**
+ * A tab's text has no attributes, so the grey suggestion is told from typing by what the prompt showed when the
+ * session went idle, or by no key pressed at this Mac since the prompt was submitted.
+ */
+function plainOpts(sessionId: string, route: { plainText?: boolean }, ops: TypeOps): PromptOptions {
+  if (!route.plainText) return {};
+  const seen = suggestionSeenOf(sessionId);
+  return {
+    noKeySincePrompt: ops.noKeySincePrompt?.(sessionId) === true,
+    ...(seen === undefined ? {} : { seen }),
+  };
+}
+
 /** What a `/model` left on the screen: nothing to answer, the cache question answered, or some other question. */
 export type ModelSwitchAnswer = "none" | "confirmed" | "other";
 
@@ -439,14 +463,7 @@ async function typeIntoTerminal(
   for (const route of routesFor(session, typeWire(ops))) {
     const ready = await route.probe();
     if (!ready) continue;
-    // A tab's text has no attributes: with no key pressed here since the prompt was submitted, what it shows in
-    // the prompt is Claude Code's grey suggestion, not typing.
-    const draft =
-      ready.screen === null
-        ? null
-        : promptDraft(ready.screen, {
-            ...(route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {}),
-          });
+    const draft = ready.screen === null ? null : promptDraft(ready.screen, plainOpts(session.id, route, ops));
     if (!anyway && ready.front && active) throw new WaitForPause(route.kind, "typing", retryInMs);
     // The same message sent again while its unsent copy sits there: press Enter for that copy, don't type another.
     // On a plain-text tab only text we left counts: Enter doesn't submit Claude's suggestion.
@@ -882,6 +899,9 @@ export async function typingRouteFor(
   return null;
 }
 
+/** How long after the Stop a look can still be taken as what the prompt showed when the session went idle. */
+const SEEN_WITHIN_MS = 15_000;
+
 /** Claude Code's suggested next message on screen: null when none, undefined when the screen can't be read. Quiet. */
 export async function readSuggestion(
   session: SessionRecord,
@@ -892,12 +912,37 @@ export async function readSuggestion(
       const read = await route.read();
       if (!read) continue;
       if (read.screen === null) return undefined;
-      // A tab's text has no attributes: with no key pressed here since the prompt was submitted, what the prompt
-      // shows is the suggestion, not typing.
-      return promptSuggestionRead(
-        read.screen,
-        route.plainText ? { noKeySincePrompt: ops.noKeySincePrompt?.(session.id) === true } : {},
-      );
+      if (route.plainText) {
+        const text = promptTextRead(read.screen);
+        // Only a look soon after the Stop, in a turn whose prompt never held text, can be the suggestion; typing
+        // within those few seconds can't be told from it.
+        const stoppedAt = untypedStopAt(session.id);
+        if (
+          text !== undefined &&
+          stoppedAt !== undefined &&
+          (ops.now ?? Date.now)() - stoppedAt <= SEEN_WITHIN_MS
+        )
+          noteSuggestionSeen(session.id, text, (ops.now ?? Date.now)());
+      }
+      return promptSuggestionRead(read.screen, plainOpts(session.id, route, ops));
+    }
+  } catch {
+    // the screen can't be read right now
+  }
+  return undefined;
+}
+
+/** Whether the session's prompt line holds text right now (a tab only); undefined when it can't be read. Quiet. */
+export async function readPromptHoldsText(
+  session: SessionRecord,
+  ops: TypeOps = defaultTypeOps,
+): Promise<boolean | undefined> {
+  try {
+    for (const route of routesFor(session, typeWire(ops))) {
+      if (!route.plainText) return undefined;
+      const read = await route.read();
+      if (!read) continue;
+      return read.screen === null ? undefined : promptHoldsText(read.screen);
     }
   } catch {
     // the screen can't be read right now

@@ -16,7 +16,9 @@
  *  - a screen with its escape codes (tmux `capture-pane -e`) shows the dim attribute: a prompt whose text is all dim
  *    is a suggestion;
  *  - a terminal that gives no attributes (iTerm2) can say that no key was pressed at this Mac since the prompt was
- *    last submitted (`noKeySincePrompt`): nobody could have typed the text, so it is a suggestion.
+ *    last submitted (`noKeySincePrompt`): nobody could have typed the text, so it is a suggestion;
+ *  - or the prompt showed this same text when the session went idle (`seen`, kept by suggestionSeen.ts): typing
+ *    after that changes it.
  */
 
 /** A line made only of a horizontal rule, or the top or bottom edge of the older box. */
@@ -85,6 +87,22 @@ export function styledLine(raw: string): StyledLine {
 export interface PromptOptions {
   /** No key was pressed at this Mac since the prompt was last submitted: text in the prompt is a suggestion. */
   noKeySincePrompt?: boolean;
+  /** What the prompt showed when the session went idle (see suggestionSeen.ts): the same text is the suggestion. */
+  seen?: string;
+}
+
+const squash = (t: string) => t.replace(/\s+/g, " ").trim();
+
+/** The prompt's text with whitespace squeezed ("" when empty), or undefined when there's no prompt line to read. */
+export function promptTextRead(screen: string): string | undefined {
+  const read = readPrompt(screen, {});
+  return read ? squash(read.text) : undefined;
+}
+
+/** Whether the prompt line holds text (not the empty box or the placeholder); undefined when there's no prompt to read. */
+export function promptHoldsText(screen: string): boolean | undefined {
+  const read = readPrompt(screen, {});
+  return read ? !read.placeholder && squash(read.text) !== "" : undefined;
 }
 
 /**
@@ -154,7 +172,10 @@ function readPrompt(screen: string, opts: PromptOptions): PromptRead | null {
   // An empty prompt box is a prompt that holds nothing (neither draft nor suggestion), not a screen we can't read.
   if (!text) return { text, suggestion: true, placeholder: true };
   if (PLACEHOLDER.test(text)) return { text, suggestion: true, placeholder: true };
-  const suggestion = opts.noKeySincePrompt === true || allDim(styled.slice(top + 1, bottom));
+  const suggestion =
+    opts.noKeySincePrompt === true ||
+    (opts.seen !== undefined && opts.seen !== "" && squash(text) === opts.seen) ||
+    allDim(styled.slice(top + 1, bottom));
   return { text, suggestion, placeholder: false };
 }
 
@@ -194,6 +215,11 @@ export function notePromptSubmitted(sessionId: string, at = Date.now()): void {
   promptSubmitted.set(sessionId, at);
 }
 
+/** Whether the keyboard's idle time reaches back past `at`: no key was pressed at this Mac since. False when unknown. */
+export function noKeySince(at: number, keyIdleSeconds: number | null, now = Date.now()): boolean {
+  return keyIdleSeconds !== null && keyIdleSeconds * 1000 >= now - at;
+}
+
 /**
  * Whether no key was pressed at this Mac since the session's prompt was last submitted: the keyboard's idle time
  * reaches back past that moment (the Enter that submitted it is the last key, if a person did). False when either
@@ -205,5 +231,5 @@ export function noKeySincePrompt(
   now = Date.now(),
 ): boolean {
   const at = promptSubmitted.get(sessionId);
-  return at !== undefined && keyIdleSeconds !== null && keyIdleSeconds * 1000 >= now - at;
+  return at !== undefined && noKeySince(at, keyIdleSeconds, now);
 }
