@@ -216,6 +216,16 @@ describe("decisions", () => {
     expect(reject.interrupt).toBe(true);
   });
 
+  test("plan revise without feedback asks Claude to revise the plan", () => {
+    for (const feedback of [undefined, "", "   \n"]) {
+      const revise = decision(hookOutputFor("plan", {}, null, { kind: "plan", action: "revise", feedback }));
+      expect(revise.behavior).toBe("deny");
+      expect(revise.message).toBe(
+        "The user asked for changes to the plan (sent from their phone): Please revise the plan.",
+      );
+    }
+  });
+
   test("always-allow applies the suggestions Claude Code offered", () => {
     const suggestions = [
       {
