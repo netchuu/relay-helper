@@ -54,6 +54,9 @@ export function lockedWrangler(cloudDir: string): string {
   return bin;
 }
 
+/** Runs the server in its own process group and ends the group when this process dies, even by SIGKILL. */
+const GUARD = join(import.meta.dir, "worker-guard.ts");
+
 const PORT_TAKEN = /address already in use|EADDRINUSE/i;
 
 function lastLines(text: string, n = 60): string {
@@ -75,7 +78,9 @@ async function stopProcess(proc: Subprocess): Promise<void> {
   proc.kill();
   const exited = await Promise.race([proc.exited.then(() => true), Bun.sleep(5000).then(() => false)]);
   if (!exited) {
-    proc.kill("SIGKILL");
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {}
     await proc.exited;
   }
 }
@@ -110,7 +115,8 @@ export async function startLocalWorker(opts: StartOptions): Promise<LocalWorker>
     while (inspectorPort === port) inspectorPort = freePort();
     const argv = command({ port, inspectorPort });
     const out = { text: "" };
-    const proc = Bun.spawn(argv, {
+    const proc = Bun.spawn(["bun", GUARD, String(process.pid), ...argv], {
+      detached: true,
       cwd: opts.cloudDir,
       env: {
         ...(opts.env ?? process.env),
