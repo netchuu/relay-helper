@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Prompt, RELAY_FRAME_BYTES, RpcSchemas, SyncResult } from "../../protocol/index.ts";
-import { createPairingCode } from "../src/daemon/auth.ts";
+import { createPairingCode, resetPairingAttempts } from "../src/daemon/auth.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { ClientSession } from "../src/daemon/clientSession.ts";
 import { openDb } from "../src/daemon/db.ts";
@@ -33,6 +33,7 @@ async function call(s: ReturnType<typeof setup>, method: string, params: unknown
       { rpc: s.rpc, events: s.events, db: s.db },
       () => {},
     );
+    resetPairingAttempts(); // the limit is shared by the whole test process
     const { code } = createPairingCode(s.db);
     await session.handle(JSON.stringify({ id: 1, method: "pair", params: { code, deviceName: "P" } }));
     p = { session, sent, next: 2 };

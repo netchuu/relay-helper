@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPairingCode, redeemPairingCode, revokeDevice } from "../src/daemon/auth.ts";
+import {
+  createPairingCode,
+  redeemPairingCode,
+  resetPairingAttempts,
+  revokeDevice,
+} from "../src/daemon/auth.ts";
 import { Broker, macAnswers, stableJson } from "../src/daemon/broker.ts";
 import { ClientSession } from "../src/daemon/clientSession.ts";
 import { openDb } from "../src/daemon/db.ts";
@@ -605,6 +610,7 @@ describe("device revocation and pairing", () => {
         fatal++;
       },
     );
+    resetPairingAttempts();
     const { code } = createPairingCode(db);
     await session.handle(JSON.stringify({ id: 1, method: "pair", params: { code, deviceName: "Phone" } }));
     const paired = JSON.parse(sent[0] ?? "{}") as { result?: { deviceId: string } };

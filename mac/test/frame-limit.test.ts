@@ -8,7 +8,7 @@ import {
   SyncResult,
   TurnFullResult,
 } from "../../protocol/index.ts";
-import { createPairingCode } from "../src/daemon/auth.ts";
+import { createPairingCode, resetPairingAttempts } from "../src/daemon/auth.ts";
 import { ClientSession } from "../src/daemon/clientSession.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
@@ -49,6 +49,7 @@ async function openSession(
     { rpc, events, db },
     () => {},
   );
+  resetPairingAttempts(); // the limit is shared by the whole test process
   const { code } = createPairingCode(db);
   await session.handle(JSON.stringify({ id: 1, method: "pair", params: { code, deviceName: "P" } }));
   sent.length = 0;

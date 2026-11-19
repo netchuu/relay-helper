@@ -5,6 +5,7 @@
 !bunfig.toml
 !tsconfig.json
 !protocol/
+!release/
 !mac/src/
 !mac/test/
 !cloud/package.json
