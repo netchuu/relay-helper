@@ -4,6 +4,9 @@ import {
   graphemes,
   TURN_STEP_DETAIL_MAX,
   TURN_STEP_DETAIL_UNITS,
+  TURN_STEP_OUTPUT_LINES,
+  TURN_STEP_OUTPUT_MAX,
+  TURN_STEP_OUTPUT_UNITS,
   type TurnStep,
 } from "../../../protocol/index.ts";
 import { AgentRuns, isAgentTool, textOf } from "./agents.ts";
@@ -13,8 +16,9 @@ import { fitLabel, oneLine, stepFor, withoutBidiControls } from "./steps.ts";
 /**
  * Turn timeline: each action with its tool, title and detail, and each thinking
  * line, built from transcript entries the same way live and in a finished turn. Only short, redacted text leaves
- * the Mac: the command, a path, a pattern, a site, an agent's description. Never file contents, edit text, tool
- * output, web search queries, agent prompts or thinking text.
+ * the Mac: the command, a path, a pattern, a site, an agent's description, and the end of what a shell command
+ * printed. Never file contents, edit text, another tool's output, web search queries, agent prompts or thinking
+ * text.
  */
 
 const EDIT_OR_READ = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
@@ -100,6 +104,96 @@ export function editCounts(toolName: string, input: Record<string, unknown> | un
   return {};
 }
 
+export interface CommandOutput {
+  output?: string;
+  outputCut?: true;
+}
+
+const ESCAPE_SEQUENCES =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences are what this removes
+  /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b\n]*(?:\x07|\x1b\\)?|[PX^_][^\x1b\n]*(?:\x1b\\)?|[ -/]*[0-~])?/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes
+const CONTROLS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+
+/** Without escape sequences and control characters; a line a carriage return rewrote keeps its last text. */
+function plainText(text: string): string {
+  const plain = withoutBidiControls(text.replace(ESCAPE_SEQUENCES, "").replace(CONTROLS, ""));
+  if (!plain.includes("\r")) return plain;
+  return plain
+    .split("\n")
+    .map((line) => {
+      let end = line.length;
+      while (end > 0 && line.charCodeAt(end - 1) === 13) end--;
+      return line.slice(end > 0 ? line.lastIndexOf("\r", end - 1) + 1 : 0, end);
+    })
+    .join("\n");
+}
+
+/**
+ * What a command printed, as the phone may show it: redacted whole, then without control codes, then its last
+ * TURN_STEP_OUTPUT_LINES lines and TURN_STEP_OUTPUT_MAX characters. Nothing for a command that printed nothing.
+ */
+export function shownOutput(raw: string): CommandOutput {
+  const redacted = redact(raw);
+  const plain = plainText(redacted);
+  // An escape sequence inside a secret hides it from the first pass.
+  const text = (plain === redacted ? plain : redact(plain)).trimEnd();
+  if (!text.trim()) return {};
+  const lines = text.split("\n");
+  const last = lines.length > TURN_STEP_OUTPUT_LINES ? lines.slice(-TURN_STEP_OUTPUT_LINES).join("\n") : text;
+  // Characters are counted on a piece twice the size kept, so one cut at the piece's start is never kept.
+  const g = graphemes(last.slice(-2 * TURN_STEP_OUTPUT_UNITS));
+  let from = g.length;
+  let units = 0;
+  while (from > 0 && g.length - from < TURN_STEP_OUTPUT_MAX) {
+    units += (g[from - 1] as string).length;
+    if (units > TURN_STEP_OUTPUT_UNITS) break;
+    from--;
+  }
+  let kept = g.slice(from).join("");
+  if (!kept.trim()) return {};
+  if (kept.length < last.length && last[last.length - kept.length - 1] !== "\n") {
+    // The cut fell inside a line: start at the next whole one, when there is one.
+    const next = kept.indexOf("\n");
+    if (next !== -1) kept = kept.slice(next + 1);
+  }
+  return kept.length < text.length ? { output: kept, outputCut: true } : { output: kept };
+}
+
+/**
+ * A shell command's output as its result's transcript entry has it. A command that ended: the entry's
+ * `toolUseResult` (`stdout`, then `stderr`). One that failed: the result's text after its "Exit code N" line.
+ * Null when the entry has neither: a refused call, an image, or an output Claude Code kept only the start of.
+ */
+function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): string | null {
+  if (block.is_error) {
+    const text = textOf(block.content);
+    const exit = /^Exit code \d+(?:\n|$)/.exec(text);
+    return exit ? text.slice(exit[0].length) : null;
+  }
+  const r = entry.toolUseResult;
+  if (!alone || !r || typeof r !== "object" || Array.isArray(r)) return null;
+  const result = r as {
+    stdout?: unknown;
+    stderr?: unknown;
+    isImage?: unknown;
+    persistedOutputPath?: unknown;
+  };
+  if (result.isImage === true || result.persistedOutputPath !== undefined) return null;
+  const stdout = typeof result.stdout === "string" ? result.stdout : "";
+  // Claude Code's own note about the folder, not the command's.
+  const stderr =
+    typeof result.stderr === "string" ? result.stderr.replace(/^Shell cwd was reset to .*$/gm, "") : "";
+  return [stdout.trimEnd(), stderr].filter((part) => part.trim()).join("\n");
+}
+
+/** The step as a phone that doesn't reassemble pieces gets it: a turn's outputs could pass one relay frame. */
+export function withoutOutput<S extends { output?: string; outputCut?: boolean }>(step: S): S {
+  if (step.output === undefined && step.outputCut === undefined) return step;
+  const { output: _o, outputCut: _c, ...rest } = step;
+  return rest as S;
+}
+
 /** The fields an action adds to its step: the tool, its own title, the detail the phone may show, an edit's counts. */
 export function actionFields(
   toolName: string,
@@ -163,6 +257,7 @@ export interface TimelineEntry {
   parentUuid?: string | null;
   agentId?: string;
   message?: { content?: unknown };
+  toolUseResult?: unknown;
 }
 
 /**
@@ -265,6 +360,15 @@ export class TimelineReader {
             delete step.added;
             delete step.removed;
             touched = true;
+          }
+          if (step.kind === "run" && !this.sidechain && step.output === undefined) {
+            const alone = content.filter((b) => (b as Block | null)?.type === "tool_result").length === 1;
+            const recorded = recordedOutput(entry, block, alone);
+            const shown = recorded ? shownOutput(recorded) : {};
+            if (shown.output !== undefined) {
+              Object.assign(step, shown);
+              touched = true;
+            }
           }
           if (this.agents.result(block.tool_use_id, textOf(block.content), ts)) touched = true;
           if (touched) changed.push(step);

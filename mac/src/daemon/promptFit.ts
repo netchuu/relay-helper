@@ -1,4 +1,5 @@
-import { type Prompt, REPLY_DATA_BYTES } from "../../../protocol/index.ts";
+import { type Prompt, REPLY_DATA_BYTES, type Turn, type TurnStep } from "../../../protocol/index.ts";
+import { withoutOutput } from "./timeline.ts";
 
 const bytes = (v: unknown) => Buffer.byteLength(JSON.stringify(v));
 
@@ -61,8 +62,21 @@ export function fitPrompts(
 /** What one `prompt.opened` event may take over the relay, so a big prompt still fits a frame and a sync page. */
 export const PROMPT_EVENT_BYTES = 128 * 1024;
 
-/** `event` as the phone gets it over the relay: a `prompt.opened` with long texts is cut and says `truncated`. */
+/**
+ * `event` as a phone that doesn't reassemble pieces gets it over the relay: a `prompt.opened` with long texts is
+ * cut and says `truncated`, and steps come without their command output.
+ */
 export function fitEvent<E extends { type: string }>(event: E): E {
+  if (event.type === "turn.action") {
+    const e = event as unknown as { step: TurnStep };
+    const step = withoutOutput(e.step);
+    return step === e.step ? event : ({ ...event, step } as E);
+  }
+  if (event.type === "turn.done") {
+    const e = event as unknown as { turn: Turn };
+    if (!e.turn.steps?.some((s) => s.output !== undefined)) return event;
+    return { ...event, turn: { ...e.turn, steps: e.turn.steps.map(withoutOutput) } } as E;
+  }
   if (event.type !== "prompt.opened") return event;
   const e = event as unknown as { prompt: Prompt };
   const [prompt] = fitPrompts([e.prompt], PROMPT_EVENT_BYTES);

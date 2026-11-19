@@ -54,6 +54,9 @@ bun run build          # mac/bin/relay and mac/bin/relay-hook
 
 - Everything between your computer and your phone is end-to-end encrypted. The private keys are made on the
   two devices when you pair them, and they never leave them.
+- Your phone gets what Claude Code does in a session: its messages, the commands it runs, and what each command
+  printed (only the end of it, at most 20 lines). The helper first removes the keys, tokens and passwords it
+  recognises, on your computer, and sends all of it end-to-end encrypted to your paired phones only.
 - The relay (the Cloudflare Worker in `cloud/`) only passes encrypted messages along. It doesn't store them and
   can't read them. All it keeps is a short list of recent push times per phone, under a hash of its push token,
   to limit how many notifications a phone can get, and whether a computer has connected to its room.

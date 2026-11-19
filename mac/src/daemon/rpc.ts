@@ -13,6 +13,7 @@ import {
   type Turn,
   type TurnFullResult,
   type TurnStats,
+  type TurnStep,
 } from "../../../protocol/index.ts";
 import type { RelayConfig } from "../config.ts";
 import { errMessage, log } from "../log.ts";
@@ -52,6 +53,7 @@ import { SentMessages } from "./sentMessages.ts";
 import { StartError, sessionDirectories, startSession } from "./startSession.ts";
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
+import { withoutOutput } from "./timeline.ts";
 import {
   TRANSCRIPT_TURN_PREFIX,
   transcriptPathFor,
@@ -122,7 +124,7 @@ function fitReply<T>(items: T[], opts: RpcOpts, reserve = 0): T[] {
   if (opts.pieces) return items;
   let size = 2 + reserve;
   const kept: T[] = [];
-  for (const item of items) {
+  for (const item of opts.overRelay ? items.map(withoutStepOutputs) : items) {
     const bytes = Buffer.byteLength(JSON.stringify(item)) + 1;
     if (kept.length === 0 && size + bytes > REPLY_DATA_BYTES) {
       // One turn alone is too big (a huge prompt): its prompt becomes a preview so the page always fits.
@@ -139,6 +141,12 @@ function fitReply<T>(items: T[], opts: RpcOpts, reserve = 0): T[] {
     kept.push(item);
   }
   return kept;
+}
+
+/** A turn for a phone that doesn't reassemble pieces: its steps without their command output. */
+function withoutStepOutputs<T>(item: T): T {
+  const steps = (item as { steps?: TurnStep[] }).steps;
+  return steps?.some((s) => s.output !== undefined) ? { ...item, steps: steps.map(withoutOutput) } : item;
 }
 
 /** A copy of a turn-like item with its `prompt` cut (never splitting a character) until its JSON fits one reply. */
@@ -212,7 +220,8 @@ export function createRpc(
   }
 
   /** The turn a session is working on right now, or null. */
-  const liveTurn = (sessionId: string) => {
+  const liveTurn = (sessionId: string, opts: RpcOpts) => {
+    const shown = opts.overRelay && !opts.pieces ? withoutOutput<TurnStep> : (a: TurnStep) => ({ ...a });
     const row = d.db
       .query(
         "SELECT id, prompt, started_at FROM turns WHERE session_id = ? AND ended_at IS NULL AND started_at IS NOT NULL ORDER BY started_at DESC LIMIT 1",
@@ -230,7 +239,7 @@ export function createRpc(
       ...files,
       ...(step ? { step } : {}),
       ...(messages.length ? { messages } : {}),
-      ...(actions.length ? { actions: actions.map((a) => ({ ...a })) } : {}),
+      ...(actions.length ? { actions: actions.map(shown) } : {}),
     };
   };
 
@@ -377,7 +386,7 @@ export function createRpc(
       };
       if (!withLive) return page(0);
       // A phone that asked for it gets the running turn in the same reply, so opening a chat is one round trip.
-      const live = liveTurn(sessionId);
+      const live = liveTurn(sessionId, opts);
       return { turns: page(Buffer.byteLength(JSON.stringify(live)) + 32), live };
     },
 
@@ -602,7 +611,7 @@ export function createRpc(
       return { ok: revokeDevice(d.db, deviceId, actor) };
     },
 
-    "session.live": ({ sessionId }) => liveTurn(sessionId),
+    "session.live": ({ sessionId }, _actor, opts) => liveTurn(sessionId, opts),
 
     "push.key": (_params, actor) => {
       const deviceId = actor.startsWith("device:") ? actor.slice("device:".length) : null;
