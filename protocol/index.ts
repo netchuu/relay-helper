@@ -38,6 +38,12 @@ export const TURN_STEPS_MAX = 100;
 export const TURN_STEP_DETAIL_MAX = 2000;
 /** Storage guard in UTF-16 units for a detail. */
 export const TURN_STEP_DETAIL_UNITS = 40_000;
+/** A command's output keeps at most its last this many lines. */
+export const TURN_STEP_OUTPUT_LINES = 20;
+/** At most this many characters in a command's output (its end is kept). */
+export const TURN_STEP_OUTPUT_MAX = 2000;
+/** Storage guard in UTF-16 units for an output. */
+export const TURN_STEP_OUTPUT_UNITS = 8000;
 /** A finished turn keeps at most this many thinking lines (`Turn.thoughts`). */
 export const TURN_THOUGHTS_MAX = 100;
 /** At most this many `turn.action` items (actions and thinking lines) are sent live per turn. */
@@ -80,6 +86,20 @@ const TurnStepBase = z.object({
   added: z.number().int().nonnegative().optional(),
   /** Lines an edit took out; absent for a written file, whose old content the helper doesn't know. */
   removed: z.number().int().nonnegative().optional(),
+  /**
+   * What a shell command printed, once it has ended: redacted, without control codes, its last lines. Only on
+   * `run` steps, and only for phones that say `pieces` in `hello`.
+   */
+  output: z
+    .string()
+    .max(TURN_STEP_OUTPUT_UNITS)
+    .refine(
+      (t) => graphemes(t).length <= TURN_STEP_OUTPUT_MAX && t.split("\n").length <= TURN_STEP_OUTPUT_LINES,
+      `at most ${TURN_STEP_OUTPUT_MAX} characters in ${TURN_STEP_OUTPUT_LINES} lines`,
+    )
+    .optional(),
+  /** Lines before `output` were left out. Sent only when true. */
+  outputCut: z.boolean().optional(),
   // agent-progress: an agent's or workflow's step. Older phones ignore these.
   /** The agent is still running: its label is in the live form ("Running an agent: …"), not "Ran …". */
   running: z.boolean().optional(),

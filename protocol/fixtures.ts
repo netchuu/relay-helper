@@ -453,6 +453,55 @@ const editCounts = {
   turn: Turn.parse({ ...turn, id: "t_edit", steps: [edited, written] }),
 };
 
+// command-output: the same file. A command's step is sent again with what it printed once it has ended.
+const running = TurnStep.parse({
+  kind: "run",
+  label: "Ran bun test",
+  at: now - 12_000,
+  id: "toolu_01OutputTests",
+  tool: "Bash",
+  title: "Run the cart tests",
+  detail: "bun test src/cart.test.ts",
+});
+const ran = TurnStep.parse({
+  ...running,
+  output:
+    "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail",
+});
+const ranFailed = TurnStep.parse({
+  kind: "run",
+  label: "Ran bun run build",
+  at: now - 9_000,
+  id: "toolu_01OutputBuild",
+  tool: "Bash",
+  detail: "bun run build",
+  failed: true,
+  output: 'src/money.ts:14:3 error: Type "string" is not assignable to type "number".\nFound 1 error.',
+  outputCut: true,
+});
+const commandOutput = {
+  events: z.array(RelayEvent).parse([
+    {
+      seq: 39,
+      ts: now - 12_000,
+      type: "turn.action",
+      sessionId: session.id,
+      turnId: "t_output",
+      step: running,
+    },
+    { seq: 40, ts: now - 10_000, type: "turn.action", sessionId: session.id, turnId: "t_output", step: ran },
+    {
+      seq: 41,
+      ts: now - 8_000,
+      type: "turn.action",
+      sessionId: session.id,
+      turnId: "t_output",
+      step: ranFailed,
+    },
+  ]),
+  turn: Turn.parse({ ...turn, id: "t_output", steps: [ran, ranFailed] }),
+};
+
 // background-work: in a file of its own too. A shell and an agent running, then nothing.
 const devServer = BackgroundTask.parse({
   id: "bonwwqtte",
@@ -862,7 +911,7 @@ write("usage.json", {
 });
 write("suggestion.json", { shown: sessionSuggestion, none: session });
 write("messages.json", messages);
-write("timeline.json", { ...timeline, agent: agentProgress, edit: editCounts });
+write("timeline.json", { ...timeline, agent: agentProgress, edit: editCounts, output: commandOutput });
 write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);

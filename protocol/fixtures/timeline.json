@@ -372,5 +372,102 @@
         }
       ]
     }
+  },
+  "output": {
+    "events": [
+      {
+        "seq": 39,
+        "ts": 1793619988000,
+        "type": "turn.action",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "turnId": "t_output",
+        "step": {
+          "kind": "run",
+          "label": "Ran bun test",
+          "at": 1793619988000,
+          "id": "toolu_01OutputTests",
+          "tool": "Bash",
+          "title": "Run the cart tests",
+          "detail": "bun test src/cart.test.ts"
+        }
+      },
+      {
+        "seq": 40,
+        "ts": 1793619990000,
+        "type": "turn.action",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "turnId": "t_output",
+        "step": {
+          "kind": "run",
+          "label": "Ran bun test",
+          "at": 1793619988000,
+          "id": "toolu_01OutputTests",
+          "tool": "Bash",
+          "title": "Run the cart tests",
+          "detail": "bun test src/cart.test.ts",
+          "output": "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail"
+        }
+      },
+      {
+        "seq": 41,
+        "ts": 1793619992000,
+        "type": "turn.action",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "turnId": "t_output",
+        "step": {
+          "kind": "run",
+          "label": "Ran bun run build",
+          "at": 1793619991000,
+          "failed": true,
+          "id": "toolu_01OutputBuild",
+          "tool": "Bash",
+          "detail": "bun run build",
+          "output": "src/money.ts:14:3 error: Type \"string\" is not assignable to type \"number\".\nFound 1 error.",
+          "outputCut": true
+        }
+      }
+    ],
+    "turn": {
+      "id": "t_output",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "prompt": "Fix the cart total",
+      "summary": "Fixed the rounding. …",
+      "fullLength": 1840,
+      "truncated": true,
+      "stats": {
+        "durationMs": 241000,
+        "toolCalls": 14,
+        "filesEdited": [
+          "/src/cart.ts",
+          "/src/money.ts"
+        ]
+      },
+      "failed": false,
+      "startedAt": 1793619759000,
+      "endedAt": 1793620000000,
+      "steps": [
+        {
+          "kind": "run",
+          "label": "Ran bun test",
+          "at": 1793619988000,
+          "id": "toolu_01OutputTests",
+          "tool": "Bash",
+          "title": "Run the cart tests",
+          "detail": "bun test src/cart.test.ts",
+          "output": "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail"
+        },
+        {
+          "kind": "run",
+          "label": "Ran bun run build",
+          "at": 1793619991000,
+          "failed": true,
+          "id": "toolu_01OutputBuild",
+          "tool": "Bash",
+          "detail": "bun run build",
+          "output": "src/money.ts:14:3 error: Type \"string\" is not assignable to type \"number\".\nFound 1 error.",
+          "outputCut": true
+        }
+      ]
+    }
   }
 }
