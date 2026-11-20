@@ -269,6 +269,8 @@ export type UsageLimit = z.infer<typeof UsageLimit>;
 export const Usage = z.object({
   /** Share of this session's context window still free, 0 to 100. */
   contextLeftPercent: z.number().optional(),
+  /** True while Claude Code refuses prompts because the context is full, until it is compacted or cleared. */
+  contextFull: z.literal(true).optional(),
   /** The plan's 5-hour limit. */
   fiveHour: UsageLimit.optional(),
   /** The plan's weekly limit. */

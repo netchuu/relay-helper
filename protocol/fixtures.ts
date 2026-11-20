@@ -907,6 +907,7 @@ write("steps.json", steps);
 write("usage.json", {
   full: sessionUsage,
   contextOnly: Session.parse({ ...session, usage: { contextLeftPercent: 8 } }),
+  contextFull: Session.parse({ ...session, usage: { contextLeftPercent: 0, contextFull: true } }),
   none: session,
 });
 write("suggestion.json", { shown: sessionSuggestion, none: session });

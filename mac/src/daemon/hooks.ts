@@ -23,7 +23,7 @@ import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
 import { head } from "./text.ts";
 import { answerOwner, interruptedTurn, isSystemMessage, transcriptPathFor } from "./transcript.ts";
-import { forgetUsage, noteUsageAll, parseUsage } from "./usage.ts";
+import { forgetUsage, isContextFullError, noteContextFull, noteUsageAll, parseUsage } from "./usage.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
 export interface HookEnvelope {
@@ -212,6 +212,10 @@ export function phoneTypePending(sessionId: string, text: string): boolean {
 
 /** A notice during a running turn belongs to it; a Stop within this time means it was the next turn (hooks raced). */
 const HELD_NOTICE_MS = 2000;
+/** What a turn that didn't fit the context says, in place of Claude Code's "Prompt is too long". */
+export const CONTEXT_FULL = "This chat's context is full. Compact or clear it to continue.";
+/** What the turn of a `/compact` says once it is done. */
+export const COMPACTED = "Conversation compacted.";
 
 export class HookHandler {
   private readonly steps: StepTracker;
@@ -219,6 +223,8 @@ export class HookHandler {
   private readonly background: BackgroundTracker;
   /** Sessions whose Stop is being handled (its transcript wait), by when it arrived. */
   private readonly stopping = new Map<string, number>();
+  /** The turn a `/compact` started, by session, until Claude Code says the session was compacted. */
+  private readonly compacting = new Map<string, string>();
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
   private readonly heldNotice = new Map<string, number>();
   /**
@@ -275,10 +281,49 @@ export class HookHandler {
       sessionModels.setModel(sessionId, modelFromTranscript(session.transcript ?? str("transcript_path")));
 
     switch (event) {
-      case "SessionStart":
+      case "SessionStart": {
         sessionModels.setModel(sessionId, p.model);
+        // Compacted or cleared: the context has room again.
+        const source = str("source");
+        if (source === "compact" || source === "clear") noteContextFull(sessionId, false);
+        // The turn a `/compact` started ends here: compacting writes no answer and fires no Stop.
+        let compacting = source === "compact" ? this.compacting.get(sessionId) : undefined;
+        this.compacting.delete(sessionId);
+        // Settings from before the PreCompact hook: the phone's `/compact` still gets its turn, at the end.
+        const typed =
+          source === "compact" && !compacting && !this.openTurn(sessionId)
+            ? (phoneTyped.get(sessionId) ?? []).findLast((e) => /^\/compact(\s|$)/.test(e.text))
+            : undefined;
+        if (typed) {
+          removeTyped(sessionId, typed);
+          compacting = this.beginTurn(sessionId, typed.text, null, session.cwd, [], typed.sendId);
+        }
+        const open = compacting ? this.openTurn(sessionId) : null;
+        if (open && open.id === compacting) {
+          const turn = this.finishTurn(sessionId, open, COMPACTED, false, null, session.cwd);
+          this.d.registry.setStatus(sessionId, "idle", { lastSummary: turn.summary });
+          return NO_OUTPUT;
+        }
         this.d.registry.publish(sessionId);
         return NO_OUTPUT;
+      }
+
+      // `/compact`, from the phone or at the Mac: a slash command submits no prompt, so its turn starts here and
+      // the phone's message counts as started. Compacting by itself in the middle of a turn is part of that turn.
+      case "PreCompact": {
+        if (str("trigger") !== "manual" || this.openTurn(sessionId)) return NO_OUTPUT;
+        const instructions = (str("custom_instructions") ?? "").trim();
+        const prompt = instructions ? `/compact ${instructions}` : "/compact";
+        const typed = (phoneTyped.get(sessionId) ?? []).findLast((e) => matchesPhoneTyped(e, prompt));
+        if (typed) removeTyped(sessionId, typed);
+        else if (!this.d.registry.ownedByHelper(sessionId)) this.d.presence.noteLocalActivity();
+        this.d.suggestions?.clear(sessionId);
+        this.d.held?.seen(sessionId, prompt);
+        const turnId = this.beginTurn(sessionId, prompt, null, session.cwd, [], typed?.sendId);
+        this.compacting.set(sessionId, turnId);
+        this.d.registry.setStatus(sessionId, "working");
+        return NO_OUTPUT;
+      }
 
       // The model changed (from the phone's `/model` or at the Mac): the new one is the one Claude Code reports.
       case "PostModelSwitch":
@@ -428,7 +473,16 @@ export class HookHandler {
         this.stopping.set(sessionId, stopAt);
         try {
           const failed = event === "StopFailure";
-          const text = str("last_assistant_message") ?? "";
+          const said = str("last_assistant_message") ?? "";
+          // The turn didn't fit the context: say that, and what helps, in place of Claude Code's error text. Any
+          // turn that ends well afterwards means there is room again.
+          const contextFull = isContextFullError(
+            failed ? (str("error") ?? "unknown") : undefined,
+            said,
+            str("error_details") ?? "",
+          );
+          const text = contextFull ? CONTEXT_FULL : said;
+          if (contextFull || !failed) noteContextFull(sessionId, contextFull);
           // The turn this Stop ends, taken before the wait: hooks are async, so a prompt queued at the computer
           // can start the next turn meanwhile, and that one isn't finished by this Stop.
           const picked = this.openTurn(sessionId);
@@ -447,7 +501,7 @@ export class HookHandler {
             lastSummary: turn.summary,
           });
           if (!(next && next.id !== turn.id)) this.d.suggestions?.turnEnded(sessionId);
-          if (failed)
+          if (failed && !contextFull)
             this.d.events.emit({
               type: "session.notice",
               sessionId,

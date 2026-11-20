@@ -61,6 +61,8 @@ export function relayHooks(hookBin: string): HooksConfig {
     PermissionDenied: asyncHook(),
     Stop: asyncHook(),
     StopFailure: asyncHook(),
+    // A `/compact` submits no prompt: this is where its turn starts.
+    PreCompact: asyncHook(),
     Notification: asyncHook(),
     SessionEnd: [{ hooks: [{ type: "command", command: hookBin, timeout: 5 }] }],
   };

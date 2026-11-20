@@ -9,6 +9,31 @@ import type { Usage, UsageLimit } from "../../../protocol/index.ts";
 
 const perSession = new Map<string, Usage>();
 const lastLimits = new Map<string, Pick<Usage, "fiveHour" | "sevenDay">>();
+/** Sessions whose context is full: Claude Code refuses their prompts until they are compacted or cleared. */
+const full = new Set<string>();
+
+/**
+ * Claude Code's error for a turn that didn't fit the context window. It comes as an `invalid_request`, a type
+ * other errors share, so the text decides: the whole message, so an answer that merely starts with these words
+ * isn't taken for it. `error` is absent when the turn wasn't reported as failed.
+ */
+export function isContextFullError(error: string | undefined, message: string, details = ""): boolean {
+  if (error !== undefined && error !== "invalid_request") return false;
+  if (/^\s*prompt is too long\.?\s*$/i.test(message)) return true;
+  return error !== undefined && /\bprompt is too long\b/i.test(details);
+}
+
+/** Marks a session's context as full, or as usable again. True when that changed what the session shows. */
+export function noteContextFull(sessionId: string, isFull: boolean): boolean {
+  if (full.has(sessionId) === isFull) return false;
+  if (isFull) full.add(sessionId);
+  else full.delete(sessionId);
+  return true;
+}
+
+export function contextIsFull(sessionId: string): boolean {
+  return full.has(sessionId);
+}
 /** The plan's limits belong to the account, not a session: the newest ones seen, for a session that has none yet. */
 let accountLimits: Pick<Usage, "fiveHour" | "sevenDay"> = {};
 /** The session whose reading is kept for each window: a reading without a reset time is only as good as it is. */
@@ -107,13 +132,20 @@ export function noteUsage(sessionId: string, usage: Usage | null): boolean {
 /** The session's usage for `publicSession`: its context, with the account's newest limits that still apply. */
 export function usageOf(sessionId: string, now = Date.now()): Usage | undefined {
   const own = perSession.get(sessionId);
-  if (!own) return undefined;
+  // A full context is known from the failed turn, with or without a status line reading. The reading can lag
+  // behind or be missing, so a full context says 0 left itself.
+  const isFull = full.has(sessionId);
+  if (!own && !isFull) return undefined;
   const live = (l: UsageLimit | undefined) =>
     l && (l.resetsAt === undefined || l.resetsAt > now) ? l : undefined;
   const fiveHour = live(accountLimits.fiveHour);
   const sevenDay = live(accountLimits.sevenDay);
   const out: Usage = {
-    ...(own.contextLeftPercent !== undefined ? { contextLeftPercent: own.contextLeftPercent } : {}),
+    ...(isFull
+      ? { contextLeftPercent: 0, contextFull: true as const }
+      : own?.contextLeftPercent !== undefined
+        ? { contextLeftPercent: own.contextLeftPercent }
+        : {}),
     ...(fiveHour ? { fiveHour } : {}),
     ...(sevenDay ? { sevenDay } : {}),
   };
@@ -124,6 +156,7 @@ export function usageOf(sessionId: string, now = Date.now()): Usage | undefined 
 export function forgetUsage(sessionId: string): void {
   perSession.delete(sessionId);
   lastLimits.delete(sessionId);
+  full.delete(sessionId);
   // A kept reading without a reset time has no live session behind it any more: a new session's reading replaces it.
   for (const w of ["fiveHour", "sevenDay"] as const) {
     if (keptFrom[w] === sessionId && accountLimits[w]?.resetsAt === undefined) {
@@ -137,6 +170,7 @@ export function forgetUsage(sessionId: string): void {
 export function resetUsage(): void {
   perSession.clear();
   lastLimits.clear();
+  full.clear();
   accountLimits = {};
   delete keptFrom.fiveHour;
   delete keptFrom.sevenDay;
