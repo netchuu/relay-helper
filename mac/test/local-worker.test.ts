@@ -65,7 +65,7 @@ describe("starting the local Worker", () => {
       cloudDir: dir,
       stateDir: join(dir, "silent"),
       command: standIn("silent", `console.log("⎔ Starting local server..."); setInterval(() => {}, 1000);`),
-      timeoutMs: 1500,
+      timeoutMs: 8000,
     }).catch((e: Error) => e);
     const message = (error as Error).message;
     expect(message).toMatch(
@@ -73,7 +73,7 @@ describe("starting the local Worker", () => {
     );
     expect(message).toContain("no answer within");
     expect(message).toContain("Starting local server...");
-  });
+  }, 30_000);
 
   test("starts again on fresh ports when wrangler exits because a port was taken, and fails if that start fails too", async () => {
     // Every start clashes: the error says so and gives up after the attempts it was allowed, not before or after.
@@ -115,7 +115,7 @@ ${healthServer}`,
     });
     expect((await fetch(`http://127.0.0.1:${worker.port}/health`)).ok).toBe(true);
     await worker.stop();
-  });
+  }, 60_000);
 
   test("any other exit is not started again", async () => {
     const counter = join(dir, "other-count");

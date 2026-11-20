@@ -24,7 +24,7 @@ fi
 
 rm -rf "$DIST" && mkdir -p "$DIST"
 cd "$ROOT"
-bun test >/dev/null || { echo "Tests failed; not releasing." >&2; exit 1; }
+bun run test >/dev/null || { echo "Tests failed; not releasing." >&2; exit 1; }
 
 for OS in $PLATFORMS; do "$ROOT/release/build-$OS.sh" "$VERSION" "$DIST"; done
 
