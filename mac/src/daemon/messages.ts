@@ -152,6 +152,8 @@ interface Following {
   timeline: TimelineReader;
   actions: TurnStep[];
   actionIds: Set<string>;
+  /** Settles when the long outputs met so far have been read from their files (command-output). */
+  outputs: Promise<void>;
 }
 
 /** The running turn's messages, actions and thinking lines so far, per session, for `session.live`. */
@@ -212,6 +214,7 @@ export class MessageTracker {
       timeline: new TimelineReader(cwd, startedAt, { transcriptPath: path }),
       actions: [],
       actionIds: new Set(),
+      outputs: Promise.resolve(),
     };
     this.turns.set(sessionId, state);
     live.set(sessionId, { turnId, messages: state.sent, actions: state.actions });
@@ -222,6 +225,14 @@ export class MessageTracker {
   poll(sessionId: string): void {
     const state = this.turns.get(sessionId);
     if (state) this.read(sessionId, state);
+  }
+
+  /** Before a turn is finished: its long outputs are read, so the finished steps say what the live ones did. */
+  async outputsRead(sessionId: string): Promise<void> {
+    const state = this.turns.get(sessionId);
+    if (!state) return;
+    this.read(sessionId, state);
+    await state.outputs;
   }
 
   /** The turn finished (or was stopped): stop following it. Returns what was sent live. */
@@ -282,7 +293,21 @@ export class MessageTracker {
   private read(sessionId: string, state: Following): void {
     if (!state.path || this.turns.get(sessionId) !== state) return;
     this.readMain(sessionId, state);
+    this.readOutputs(sessionId, state);
     if (this.turns.get(sessionId) === state) this.readAgents(sessionId, state);
+  }
+
+  /** A long output's step is sent again once its end has been read from the file Claude Code saved. */
+  private readOutputs(sessionId: string, state: Following): void {
+    if (!state.timeline.hasUnreadOutputs) return;
+    state.outputs = state.outputs
+      .then(() => state.timeline.readSavedOutputs())
+      .then((steps) => {
+        if (this.turns.get(sessionId) !== state) return;
+        for (const step of steps) this.sendAction(sessionId, state, step);
+      })
+      // Nothing waits for this but the next read.
+      .catch(() => {});
   }
 
   private readMain(sessionId: string, state: Following): void {

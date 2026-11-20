@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import {
   graphemes,
   TURN_STEP_DETAIL_MAX,
@@ -11,14 +11,15 @@ import {
 } from "../../../protocol/index.ts";
 import { AgentRuns, isAgentTool, textOf } from "./agents.ts";
 import { redact } from "./redact.ts";
+import { savedOutputEnd } from "./savedOutput.ts";
 import { fitLabel, oneLine, stepFor, withoutBidiControls } from "./steps.ts";
 
 /**
  * Turn timeline: each action with its tool, title and detail, and each thinking
  * line, built from transcript entries the same way live and in a finished turn. Only short, redacted text leaves
  * the Mac: the command, a path, a pattern, a site, an agent's description, and the end of what a shell command
- * printed. Never file contents, edit text, another tool's output, web search queries, agent prompts or thinking
- * text.
+ * printed (for a very long output, read from the file Claude Code saved it in). Never file contents, edit text,
+ * another tool's output, web search queries, agent prompts or thinking text.
  */
 
 const EDIT_OR_READ = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
@@ -164,7 +165,7 @@ export function shownOutput(raw: string): CommandOutput {
  * A shell command's output as its result's transcript entry has it. A command that ended: the entry's
  * `toolUseResult` (`stdout`, then `stderr`). One that failed: the result's text after its "Exit code N" line.
  * Null when the entry has neither: a refused call, an image, a command still running in the background, or an
- * output Claude Code kept only the start of.
+ * output Claude Code kept only the start of (`savedOutputFile`).
  */
 function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): string | null {
   if (block.is_error) {
@@ -187,6 +188,26 @@ function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): str
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
   const stderr = typeof result.stderr === "string" ? result.stderr.replace(FOLDER_NOTE, "") : "";
   return [stdout.trimEnd(), stderr].filter((part) => part.trim()).join("\n");
+}
+
+/** The file Claude Code saved a long output in, from the entry's own record, never from text the command printed. */
+function savedOutputFile(entry: TimelineEntry, block: Block, alone: boolean): string | null {
+  const r = entry.toolUseResult;
+  if (block.is_error || !alone || !r || typeof r !== "object" || Array.isArray(r)) return null;
+  const result = r as { isImage?: unknown; persistedOutputPath?: unknown; backgroundTaskId?: unknown };
+  if (result.isImage === true || result.backgroundTaskId !== undefined) return null;
+  return typeof result.persistedOutputPath === "string" ? result.persistedOutputPath : null;
+}
+
+const SAVED_OUTPUTS_KEPT = 512;
+
+/** What was read from saved outputs, so a turn built again later says the same, whatever became of the file. */
+const savedOutputs = new Map<string, CommandOutput>();
+
+function keepSavedOutput(key: string, shown: CommandOutput): void {
+  if (savedOutputs.size >= SAVED_OUTPUTS_KEPT)
+    savedOutputs.delete(savedOutputs.keys().next().value as string);
+  savedOutputs.set(key, shown);
 }
 
 /** Claude Code's own line about the folder, not the command's. */
@@ -277,6 +298,8 @@ export class TimelineReader {
   private readonly liveLabels = new Map<string, string>();
   private readonly agents: AgentRuns;
   private readonly sidechain: boolean;
+  private readonly transcriptPath: string | null;
+  private readonly unread = new Map<string, { step: TurnStep; file: string }>();
   private lastAt: number | null;
 
   /**
@@ -290,7 +313,48 @@ export class TimelineReader {
   ) {
     this.lastAt = startedAt;
     this.sidechain = opts.sidechain === true;
-    this.agents = new AgentRuns(cwd, opts.transcriptPath ?? null);
+    this.transcriptPath = opts.transcriptPath ?? null;
+    this.agents = new AgentRuns(cwd, this.transcriptPath);
+  }
+
+  /** A step's saved output as it was read before; else nothing yet, and the file waits for `readSavedOutputs`. */
+  private savedOutput(step: TurnStep, file: string): CommandOutput {
+    if (!this.transcriptPath || !step.id) return {};
+    const known = savedOutputs.get(this.savedKey(step.id, file));
+    if (!known) this.unread.set(step.id, { step, file });
+    return known ?? {};
+  }
+
+  private savedKey(id: string, file: string): string {
+    return [basename(this.transcriptPath ?? "", ".jsonl"), file, id].join("\0");
+  }
+
+  /** Whether a long output's file was met and not read yet. */
+  get hasUnreadOutputs(): boolean {
+    return this.unread.size > 0;
+  }
+
+  /** Reads the end of each saved output met since the last call: the steps that got one, always as a cut output. */
+  async readSavedOutputs(): Promise<TurnStep[]> {
+    const unread = [...this.unread.values()];
+    this.unread.clear();
+    const changed: TurnStep[] = [];
+    for (const { step, file } of unread) {
+      if (!this.transcriptPath || !step.id) continue;
+      const key = this.savedKey(step.id, file);
+      let shown = savedOutputs.get(key);
+      if (!shown) {
+        const end = await savedOutputEnd(this.transcriptPath, file);
+        const { output } = end === null ? {} : shownOutput(end);
+        shown = output === undefined ? {} : { output, outputCut: true };
+        keepSavedOutput(key, shown);
+      }
+      if (shown.output !== undefined && step.output === undefined) {
+        Object.assign(step, shown);
+        changed.push(step);
+      }
+    }
+    return changed;
   }
 
   /** When the last entry was written (ms), if any had a time. */
@@ -368,8 +432,10 @@ export class TimelineReader {
           }
           if (step.kind === "run" && !this.sidechain && step.output === undefined) {
             const alone = content.filter((b) => (b as Block | null)?.type === "tool_result").length === 1;
-            const recorded = recordedOutput(entry, block, alone);
-            const shown = recorded ? shownOutput(recorded) : {};
+            const saved = savedOutputFile(entry, block, alone);
+            const recorded = saved === null ? recordedOutput(entry, block, alone) : null;
+            const shown =
+              saved !== null ? this.savedOutput(step, saved) : recorded ? shownOutput(recorded) : {};
             if (shown.output !== undefined) {
               Object.assign(step, shown);
               touched = true;

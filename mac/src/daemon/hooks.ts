@@ -437,6 +437,7 @@ export class HookHandler {
           await this.d.suggestions?.beforeStop(sessionId);
           // The transcript is flushed asynchronously; give it a moment before reading stats.
           await Bun.sleep(400);
+          await this.messages.outputsRead(sessionId);
           const ending = this.stopOwner(sessionId, picked, text, transcript, session.cwd);
           const turn = this.finishTurn(sessionId, ending, text, failed, transcript, session.cwd);
           // Idle even with background shells still running (a dev server): the prompt waits for you. One finishing

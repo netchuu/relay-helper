@@ -33,7 +33,8 @@ encrypted part to the app, which opens it on the phone and shows the real text.
 ## What each service can see
 
 - **Your paired phone:** what Claude Code asks and does in your sessions, including the commands it runs and the
-  end of what each command printed (at most 20 lines). The helper removes the keys, tokens and passwords it
+  end of what each command printed (at most 20 lines; for a very long output the helper reads that end from the
+  file Claude Code saved on your computer). The helper removes the keys, tokens and passwords it
   recognises before anything leaves your computer, and all of it is inside the encryption.
 - **The relay (Cloudflare):** which rooms connect and when, IP addresses and message sizes. Never what you or
   Claude wrote: prompts, answers and pairing codes are inside the encryption. It stores no messages.
