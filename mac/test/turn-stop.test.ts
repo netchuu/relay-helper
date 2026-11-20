@@ -13,6 +13,7 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { type HookEnvelope, HookHandler } from "../src/daemon/hooks.ts";
+import { CONTEXT_FULL, resetUsage, usageOf } from "../src/daemon/usage.ts";
 import { type KeyOps, PHONE_PREFIX, STOP_MESSAGE } from "../src/daemon/inject.ts";
 import { alertFor } from "../src/daemon/notifier.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
@@ -567,6 +568,44 @@ describe("state", () => {
     expect(s.db.query("SELECT COUNT(*) AS n FROM audit WHERE action = 'session.interrupt'").get()).toEqual({
       n: 0,
     });
+  });
+
+  test("a prompt that didn't fit the context and got no Stop: a sweep ends the turn saying the context is full", async () => {
+    const s = setup();
+    await s.working("s1", TMUX);
+    const tooLong = (at: number) => ({
+      type: "assistant",
+      timestamp: new Date(at).toISOString(),
+      isApiErrorMessage: true,
+      error: "invalid_request",
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Prompt is too long" }] },
+    });
+    s.tx(tooLong(Date.now()));
+    s.registry.setStatus("s1", "idle");
+    s.stopper.sweep();
+    s.stopper.sweep();
+    const done = s.turnsDone();
+    expect(done).toHaveLength(1);
+    expect(done[0]?.summary).toBe(CONTEXT_FULL);
+    expect(done[0]?.stopped).toBeUndefined();
+    expect(usageOf("s1")).toEqual({ contextLeftPercent: 0, contextFull: true });
+    resetUsage();
+  });
+
+  test("an API error that isn't about the context ends no turn in a sweep", async () => {
+    const s = setup();
+    await s.working("s1", TMUX);
+    s.tx({
+      type: "assistant",
+      timestamp: new Date().toISOString(),
+      isApiErrorMessage: true,
+      error: "server_error",
+      message: { model: "<synthetic>", content: [{ type: "text", text: "API Error: 500" }] },
+    });
+    s.registry.setStatus("s1", "idle");
+    s.stopper.sweep();
+    expect(s.turnsDone()).toHaveLength(0);
+    expect(usageOf("s1")).toBeUndefined();
   });
 
   test("Esc at the computer: a sweep ignores a marker from an earlier turn", async () => {

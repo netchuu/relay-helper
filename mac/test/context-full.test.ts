@@ -6,10 +6,10 @@ import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { COMPACTED, CONTEXT_FULL, HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
+import { COMPACT_FAILED, COMPACTED, HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
-import { isContextFullError, resetUsage, usageOf } from "../src/daemon/usage.ts";
+import { CONTEXT_FULL, isContextFullError, resetUsage, usageOf } from "../src/daemon/usage.ts";
 import { relayHooks } from "../src/install.ts";
 
 afterEach(() => resetUsage());
@@ -198,6 +198,41 @@ test("a session that ends is no longer full", async () => {
   await t.tooLong();
   await t.hook("SessionEnd");
   expect(usageOf("s1")).toBeUndefined();
+});
+
+test("Claude Code reports it as an ordinary Stop too: the turn still says the context is full", async () => {
+  const t = setup();
+  await t.hook("SessionStart");
+  await t.hook("UserPromptSubmit", { prompt: "carry on" });
+  await t.hook("Stop", { last_assistant_message: "Prompt is too long" });
+  expect(t.finished().at(-1)?.summary).toBe(CONTEXT_FULL);
+  expect(t.session().usage).toEqual({ contextLeftPercent: 0, contextFull: true });
+});
+
+test("a /compact that never finishes is given up as failed, and the chat is still full", async () => {
+  const t = setup();
+  t.hooks.compactGiveUpMs = 30;
+  await t.hook("SessionStart");
+  await t.hook("UserPromptSubmit", { prompt: "carry on" });
+  await t.tooLong();
+  await t.hook("PreCompact", { trigger: "manual" });
+  expect(t.session().status).toBe("working");
+  await Bun.sleep(80);
+  const turn = t.finished().at(-1);
+  expect(turn?.summary).toBe(COMPACT_FAILED);
+  expect(turn?.failed).toBe(true);
+  expect(t.session().status).toBe("idle");
+  expect(t.session().usage?.contextFull).toBe(true);
+});
+
+test("a /compact that finishes in time is not given up afterwards", async () => {
+  const t = setup();
+  t.hooks.compactGiveUpMs = 30;
+  await t.hook("SessionStart");
+  await t.hook("PreCompact", { trigger: "manual" });
+  await t.hook("SessionStart", { source: "compact" });
+  await Bun.sleep(80);
+  expect(t.finished().map((turn) => turn.summary)).toEqual([COMPACTED]);
 });
 
 test("install wires the hook a /compact fires", () => {

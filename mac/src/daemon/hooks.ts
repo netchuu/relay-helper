@@ -23,7 +23,14 @@ import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
 import { head } from "./text.ts";
 import { answerOwner, interruptedTurn, isSystemMessage, transcriptPathFor } from "./transcript.ts";
-import { forgetUsage, isContextFullError, noteContextFull, noteUsageAll, parseUsage } from "./usage.ts";
+import {
+  CONTEXT_FULL,
+  forgetUsage,
+  isContextFullError,
+  noteContextFull,
+  noteUsageAll,
+  parseUsage,
+} from "./usage.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
 export interface HookEnvelope {
@@ -212,10 +219,12 @@ export function phoneTypePending(sessionId: string, text: string): boolean {
 
 /** A notice during a running turn belongs to it; a Stop within this time means it was the next turn (hooks raced). */
 const HELD_NOTICE_MS = 2000;
-/** What a turn that didn't fit the context says, in place of Claude Code's "Prompt is too long". */
-export const CONTEXT_FULL = "This chat's context is full. Compact or clear it to continue.";
 /** What the turn of a `/compact` says once it is done. */
 export const COMPACTED = "Conversation compacted.";
+/** What it says when nothing reported the end of a `/compact`. */
+export const COMPACT_FAILED = "Compacting didn't finish. Try it again, or clear the chat.";
+/** How long a `/compact` may take before its turn is given up as failed (a long chat took 80 s). */
+const COMPACT_GIVE_UP_MS = 10 * 60_000;
 
 export class HookHandler {
   private readonly steps: StepTracker;
@@ -225,6 +234,8 @@ export class HookHandler {
   private readonly stopping = new Map<string, number>();
   /** The turn a `/compact` started, by session, until Claude Code says the session was compacted. */
   private readonly compacting = new Map<string, string>();
+  /** Tests shorten it. */
+  compactGiveUpMs = COMPACT_GIVE_UP_MS;
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
   private readonly heldNotice = new Map<string, number>();
   /**
@@ -322,6 +333,16 @@ export class HookHandler {
         const turnId = this.beginTurn(sessionId, prompt, null, session.cwd, [], typed?.sendId);
         this.compacting.set(sessionId, turnId);
         this.d.registry.setStatus(sessionId, "working");
+        // Compacting can fail (it needs room itself) and nothing says so: the turn isn't left running for ever.
+        const giveUp = setTimeout(() => {
+          if (this.compacting.get(sessionId) !== turnId) return;
+          this.compacting.delete(sessionId);
+          const open = this.openTurn(sessionId);
+          if (open?.id !== turnId) return;
+          const turn = this.finishTurn(sessionId, open, COMPACT_FAILED, true, null, session.cwd);
+          this.d.registry.setStatus(sessionId, "idle", { lastSummary: turn.summary });
+        }, this.compactGiveUpMs);
+        giveUp.unref?.();
         return NO_OUTPUT;
       }
 

@@ -12,6 +12,9 @@ const lastLimits = new Map<string, Pick<Usage, "fiveHour" | "sevenDay">>();
 /** Sessions whose context is full: Claude Code refuses their prompts until they are compacted or cleared. */
 const full = new Set<string>();
 
+/** What a turn that didn't fit the context says, in place of Claude Code's "Prompt is too long". */
+export const CONTEXT_FULL = "This chat's context is full. Compact or clear it to continue.";
+
 /**
  * Claude Code's error for a turn that didn't fit the context window. It comes as an `invalid_request`, a type
  * other errors share, so the text decides: the whole message, so an answer that merely starts with these words

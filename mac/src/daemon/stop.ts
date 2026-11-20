@@ -28,7 +28,22 @@ import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import { compact } from "./render.ts";
 import { type StepTracker, stepsJsonOf, timelineFields } from "./steps.ts";
-import { interruptedTurn, transcriptPathFor } from "./transcript.ts";
+import { endedContextFull, interruptedTurn, transcriptPathFor } from "./transcript.ts";
+import { CONTEXT_FULL, noteContextFull } from "./usage.ts";
+
+/** A turn the transcript says nothing about. */
+const NO_TURN_INFO: NonNullable<ReturnType<typeof interruptedTurn>> = {
+  interrupted: false,
+  text: "",
+  toolCalls: 0,
+  files: [],
+  endedAt: null,
+  steps: [],
+  thoughts: [],
+  messages: [],
+  finished: false,
+  lastAt: null,
+};
 
 /** The phone's Stop: interrupts the turn like Esc and ends it as stopped, since Claude Code runs no hook after one. */
 
@@ -277,6 +292,12 @@ export class TurnStopper {
       const stamp = this.transcriptStamp(r.session_id);
       if (stamp !== null && this.swept.get(r.id) === stamp) continue;
       const info = this.transcriptInfo(r.session_id, r.started_at, undefined, r.prompt);
+      // The prompt didn't fit the context and Claude Code fired no Stop: the turn ends saying so.
+      if (this.contextFullSince(r.session_id, r.started_at)) {
+        noteContextFull(r.session_id, true);
+        this.endStopped(r.id, { ...(info ?? NO_TURN_INFO), text: CONTEXT_FULL }, false);
+        continue;
+      }
       if (info?.interrupted) this.endStopped(r.id, info);
       else if (info?.finished && info.lastAt !== null && Date.now() - info.lastAt >= this.t.quietMs) {
         // A Stop hook was missed (the helper was down): Claude finished, and nothing came after the answer.
@@ -398,6 +419,12 @@ export class TurnStopper {
     } catch {
       return null;
     }
+  }
+
+  private contextFullSince(sessionId: string, since: number): boolean {
+    const session = this.d.registry.get(sessionId);
+    const path = session ? (this.d.transcriptPath ?? transcriptPathFor)(session) : null;
+    return path !== null && endedContextFull(path, since);
   }
 
   private transcriptInfo(

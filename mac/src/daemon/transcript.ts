@@ -7,6 +7,7 @@ import { finishedMessages, messageFrom, type RawMessage, turnMessageFields } fro
 import { redact } from "./redact.ts";
 import { compact, withoutIdeContext } from "./render.ts";
 import { TranscriptSteps, timelineFields } from "./steps.ts";
+import { isContextFullError } from "./usage.ts";
 
 /** Past turns read (redacted, read-only) from Claude Code's transcript, for sessions Relay didn't record. */
 
@@ -119,6 +120,37 @@ function entryText(entry: Entry): string | null {
     if (parts.length) return parts.join("\n");
   }
   return null;
+}
+
+/**
+ * True when the last thing said in the main conversation since `since` is Claude Code's error that the prompt
+ * didn't fit the context. Claude Code can end such a turn without a Stop hook, so the transcript is the only sign.
+ */
+export function endedContextFull(path: string, since: number): boolean {
+  let lines: string[];
+  try {
+    lines = readTail(path).split("\n");
+  } catch {
+    return false;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const entry = lines[i] ? (parseEntry(lines[i] as string) as (Entry & ApiError) | null) : null;
+    if (!entry || entry.isSidechain || (entry.type !== "assistant" && entry.type !== "user")) continue;
+    const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+    if (Number.isNaN(ts) || ts < since - 10_000) return false;
+    if (entry.type === "user" && entry.isMeta) continue;
+    return (
+      entry.type === "assistant" &&
+      entry.isApiErrorMessage === true &&
+      isContextFullError(entry.error ?? "unknown", entryText(entry) ?? "")
+    );
+  }
+  return false;
+}
+
+interface ApiError {
+  isApiErrorMessage?: boolean;
+  error?: string;
 }
 
 /** The last entries a turn writes: Claude's messages, the interrupt marker, Claude Code's turn bookkeeping. */
