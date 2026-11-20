@@ -733,10 +733,15 @@ const sends = {
   },
 };
 
-// Starting a session from the phone: the folders of past chats, then a first message in one of them.
+// Starting a session from the phone: the folders of past chats, then a first message, or none, in one of them.
 const start = {
   // `hello` and `pair` say the helper can start sessions; an older helper leaves the field out.
-  host: HostInfo.parse({ os: "macos", name: "Ana's MacBook Pro", canStartSessions: true }),
+  host: HostInfo.parse({
+    os: "macos",
+    name: "Ana's MacBook Pro",
+    canStartSessions: true,
+    canStartEmpty: true,
+  }),
   hostOlder: HostInfo.parse({ os: "macos", name: "Ana's MacBook Pro" }),
   directoriesParams: RpcSchemas["sessions.directories"].parse({}),
   // One entry per folder, most recently used first.
@@ -748,6 +753,12 @@ const start = {
     directory: "/Users/me/Projects/web-shop",
     text: "Fix the cart total when a coupon is applied",
   }),
+  // No first message and the phone's name for the chat: the session starts empty (HostInfo.canStartEmpty).
+  paramsEmpty: RpcSchemas["session.start"].parse({
+    directory: "/Users/me/Projects/web-shop",
+    name: "Coupon fix",
+  }),
+  paramsEmptyUnnamed: RpcSchemas["session.start"].parse({ directory: "/Users/me/Projects/web-shop" }),
   result: SessionStarted.parse({ sessionId: "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff" }),
   // Plain sentences the phone can show.
   errors: [

@@ -516,6 +516,8 @@ export const HostInfo = z.object({
   name: z.string(),
   /** True only when the helper can find `claude` and so start a session from the phone (`session.start`). */
   canStartSessions: z.boolean().optional(),
+  /** True when `session.start` may leave out `text` and start an empty session. Older helpers lack it. */
+  canStartEmpty: z.boolean().optional(),
 });
 export type HostInfo = z.infer<typeof HostInfo>;
 
@@ -615,6 +617,16 @@ export type EventBody = z.infer<typeof EventBody>;
 export const RelayEvent = z.object({ seq: z.number(), ts: z.number() }).and(EventBody);
 export type RelayEvent = { seq: number; ts: number } & EventBody;
 
+/** A session name as a phone sends it; one that shows nothing becomes null. */
+const SessionNameInput = z
+  .string()
+  .trim()
+  .max(SESSION_NAME_MAX_UNITS)
+  .refine((n) => !LINE_BREAK.test(n), "one line only")
+  .refine((n) => sessionNameLength(n) <= SESSION_NAME_MAX, `at most ${SESSION_NAME_MAX} characters`)
+  // Nothing visible: the same as clearing it.
+  .transform((n) => (INVISIBLE.test(n) ? null : n));
+
 // RPC (client -> server). WebSocket: {id, method, params} -> {id, result} | {id, error}; HTTPS: POST /rpc.
 
 export const RpcSchemas = {
@@ -622,10 +634,15 @@ export const RpcSchemas = {
   "sessions.list": z.object({ includeEnded: z.boolean().default(false) }),
   /** The folders past sessions ran in, most recent first, without ones that no longer exist. Older helpers: "unknown method". */
   "sessions.directories": z.object({}),
-  /** Starts a background session in a `sessions.directories` folder with `text` as its first message. Result: SessionStarted. */
+  /**
+   * Starts a background session in a `sessions.directories` folder. With `text` it is the first message; without,
+   * the session starts empty (HostInfo.canStartEmpty). `name` is the phone's name for it, as `session.rename` sets.
+   * Result: SessionStarted.
+   */
   "session.start": z.object({
     directory: z.string().min(1).max(4096),
-    text: z.string().max(20_000),
+    text: z.string().max(20_000).optional(),
+    name: SessionNameInput.nullable().optional(),
   }),
   /** Continues a session with no live process (`claude --resume`); `conflict` if one runs. Result: SessionResumed. */
   "session.resume": z.object({
@@ -681,15 +698,7 @@ export const RpcSchemas = {
   /** A name of the phone's own for the session; null or empty clears it. Only in Relay, never in Claude Code. */
   "session.rename": z.object({
     sessionId: z.string(),
-    name: z
-      .string()
-      .trim()
-      .max(SESSION_NAME_MAX_UNITS)
-      .refine((n) => !LINE_BREAK.test(n), "one line only")
-      .refine((n) => sessionNameLength(n) <= SESSION_NAME_MAX, `at most ${SESSION_NAME_MAX} characters`)
-      // Nothing visible: the same as clearing it.
-      .transform((n) => (INVISIBLE.test(n) ? null : n))
-      .nullable(),
+    name: SessionNameInput.nullable(),
   }),
   /** Pin the session to the top of the Sessions list, or unpin it. Pinning a pinned session keeps its time. */
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),

@@ -9,7 +9,7 @@ import { head } from "./text.ts";
 
 /**
  * Starting a Claude Code session from the phone: `sessions.directories` lists the folders past sessions ran in,
- * `session.start` runs `claude --bg` in one of them with a first message.
+ * `session.start` runs `claude --bg` in one of them, with a first message or empty.
  */
 
 export class StartError extends Error {
@@ -57,8 +57,8 @@ export function sessionDirectories(
 }
 
 /** The command that starts the session: no permission flag of any kind, and the message after `--` as one argument. */
-export function startCommand(claudeBin: string, text: string): string[] {
-  return [claudeBin, "--bg", "--", text];
+export function startCommand(claudeBin: string, text?: string): string[] {
+  return text === undefined ? [claudeBin, "--bg"] : [claudeBin, "--bg", "--", text];
 }
 
 /**
@@ -131,9 +131,13 @@ export async function startSession(opts: {
   registry: Registry;
   claudeBin: string | null | undefined;
   directory: string;
-  text: string;
+  /** Left out: the session starts empty. */
+  text?: string;
+  /** The phone's name for the session. */
+  name?: string | null;
 }): Promise<{ sessionId: string; name: string | null }> {
-  if (!opts.text.trim()) throw new StartError("bad_request", "Write a first message to start a session.");
+  if (opts.text !== undefined && !opts.text.trim())
+    throw new StartError("bad_request", "Write a first message to start a session.");
   if (!opts.claudeBin) throw new StartError("unavailable", "Claude Code wasn't found on this computer.");
   // Only a folder the helper would list itself, never an arbitrary path.
   const known = sessionDirectories(opts.db, { existing: false }).find((d) => d.path === opts.directory);
@@ -142,17 +146,17 @@ export async function startSession(opts: {
     throw new StartError("not_found", "That folder no longer exists on this computer.");
 
   // The first message is the phone's, not typing at the Mac: its hook may come before the session id is known.
-  const launch = notePhoneLaunch(known.path, opts.text);
+  const launch = opts.text === undefined ? null : notePhoneLaunch(known.path, opts.text);
   let res: Awaited<ReturnType<typeof runClaude>>;
   try {
     res = await runClaude(startCommand(opts.claudeBin, opts.text), known.path);
   } catch (err) {
-    launch.abort();
+    launch?.abort();
     log.warn("session.start: launch failed", { err: errMessage(err) });
     throw new StartError("unavailable", "Claude Code couldn't be started.");
   }
   if (res.code !== 0) {
-    launch.abort();
+    launch?.abort();
     const why = firstLine(res.err) || firstLine(res.out);
     log.warn("session.start: claude exited", { code: res.code, why });
     throw new StartError(
@@ -164,17 +168,18 @@ export async function startSession(opts: {
   const found = printed ? await findSession(opts.claudeBin, known.path, printed) : null;
   if (!found) {
     // Claude Code did start it: the session's first message is still the phone's, not typing at the Mac.
-    launch.keep();
+    launch?.keep();
     throw new StartError("unavailable", "Claude Code started, but the new session wasn't found.", {
       ...(printed ? { shortId: printed } : {}),
     });
   }
-  launch.done(found.sessionId);
+  launch?.done(found.sessionId);
   const { created } = opts.registry.touch(found.sessionId, {
     cwd: known.path,
     name: found.name,
     kind: "background",
   });
   if (created) opts.registry.publish(found.sessionId);
+  if (opts.name) opts.registry.rename(found.sessionId, opts.name);
   return found;
 }

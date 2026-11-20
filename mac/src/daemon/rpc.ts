@@ -287,17 +287,18 @@ export function createRpc(
 
     "sessions.directories": () => sessionDirectories(d.db),
 
-    "session.start": async ({ directory, text }, actor) => {
+    "session.start": async ({ directory, text, name }, actor) => {
       try {
         const { sessionId } = await startSession({
           db: d.db,
           registry: d.registry,
           claudeBin: d.claudeBin,
           directory,
-          text,
+          ...(text === undefined ? {} : { text }),
+          ...(name ? { name } : {}),
         });
         // The directory and the length, never the message.
-        audit(d.db, actor, "session.start", { sessionId, directory, chars: text.length });
+        audit(d.db, actor, "session.start", { sessionId, directory, chars: text?.length ?? 0 });
         return { sessionId } satisfies SessionStarted;
       } catch (err) {
         if (err instanceof StartError) {
@@ -306,7 +307,7 @@ export function createRpc(
             audit(d.db, actor, "session.start", {
               ...(err.launched.shortId ? { sessionId: err.launched.shortId } : {}),
               directory,
-              chars: text.length,
+              chars: text?.length ?? 0,
             });
           throw new RpcFailure(err.code, err.message);
         }

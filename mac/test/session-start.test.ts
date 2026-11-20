@@ -235,7 +235,7 @@ describe("session.start", () => {
       expect(res.error.code).toBe("bad_request");
     }
     expect(Bun.file(join(tools, "argv.txt")).size).toBe(0);
-    expect(RpcSchemas["session.start"].safeParse({ directory: a }).success).toBe(false);
+    expect(RpcSchemas["session.start"].safeParse({ directory: a }).success).toBe(true);
   });
 
   test("Claude Code refusing to start gives a plain error and no session", async () => {
