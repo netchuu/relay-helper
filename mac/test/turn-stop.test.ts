@@ -13,7 +13,6 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { type HookEnvelope, HookHandler } from "../src/daemon/hooks.ts";
-import { CONTEXT_FULL, resetUsage, usageOf } from "../src/daemon/usage.ts";
 import { type KeyOps, PHONE_PREFIX, STOP_MESSAGE } from "../src/daemon/inject.ts";
 import { alertFor } from "../src/daemon/notifier.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
@@ -22,6 +21,7 @@ import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { liveStep, resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
 import { TurnStopper } from "../src/daemon/stop.ts";
 import { transcriptTurns } from "../src/daemon/transcript.ts";
+import { CONTEXT_FULL, resetUsage, usageOf } from "../src/daemon/usage.ts";
 
 /** The phone's Stop case by case, with fakes for tmux, relay shell, iTerm2 and the inbox; nothing reaches a real terminal. */
 
