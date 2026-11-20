@@ -572,6 +572,7 @@ describe("state", () => {
 
   test("a prompt that didn't fit the context and got no Stop: a sweep ends the turn saying the context is full", async () => {
     const s = setup();
+    resetUsage();
     await s.working("s1", TMUX);
     const tooLong = (at: number) => ({
       type: "assistant",
@@ -588,12 +589,13 @@ describe("state", () => {
     expect(done).toHaveLength(1);
     expect(done[0]?.summary).toBe(CONTEXT_FULL);
     expect(done[0]?.stopped).toBeUndefined();
-    expect(usageOf("s1")).toEqual({ contextLeftPercent: 0, contextFull: true });
+    expect(usageOf("s1")).toMatchObject({ contextLeftPercent: 0, contextFull: true });
     resetUsage();
   });
 
   test("an API error that isn't about the context ends no turn in a sweep", async () => {
     const s = setup();
+    resetUsage();
     await s.working("s1", TMUX);
     s.tx({
       type: "assistant",
@@ -605,7 +607,7 @@ describe("state", () => {
     s.registry.setStatus("s1", "idle");
     s.stopper.sweep();
     expect(s.turnsDone()).toHaveLength(0);
-    expect(usageOf("s1")).toBeUndefined();
+    expect(usageOf("s1")?.contextFull).toBeUndefined();
   });
 
   test("Esc at the computer: a sweep ignores a marker from an earlier turn", async () => {

@@ -22,7 +22,13 @@ import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps
 import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
 import { head } from "./text.ts";
-import { answerOwner, interruptedTurn, isSystemMessage, transcriptPathFor } from "./transcript.ts";
+import {
+  answerOwner,
+  endedContextFull,
+  interruptedTurn,
+  isSystemMessage,
+  transcriptPathFor,
+} from "./transcript.ts";
 import {
   CONTEXT_FULL,
   forgetUsage,
@@ -322,7 +328,19 @@ export class HookHandler {
       // `/compact`, from the phone or at the Mac: a slash command submits no prompt, so its turn starts here and
       // the phone's message counts as started. Compacting by itself in the middle of a turn is part of that turn.
       case "PreCompact": {
-        if (str("trigger") !== "manual" || this.openTurn(sessionId)) return NO_OUTPUT;
+        if (str("trigger") !== "manual") return NO_OUTPUT;
+        // A Stop still being recorded ends its turn first.
+        for (let i = 0; i < 30 && this.stopping.has(sessionId); i++) await Bun.sleep(100);
+        const running = this.openTurn(sessionId);
+        if (running) {
+          // Claude Code fires no Stop for a prompt that didn't fit the context, so its turn is still open when the
+          // person compacts: it ends here, saying why. Any other open turn is left alone.
+          const transcript = session.transcript ?? str("transcript_path") ?? null;
+          if (!transcript || !running.started_at || !endedContextFull(transcript, running.started_at))
+            return NO_OUTPUT;
+          noteContextFull(sessionId, true);
+          this.finishTurn(sessionId, running, CONTEXT_FULL, true, transcript, session.cwd);
+        }
         const instructions = (str("custom_instructions") ?? "").trim();
         const prompt = instructions ? `/compact ${instructions}` : "/compact";
         const typed = (phoneTyped.get(sessionId) ?? []).findLast((e) => matchesPhoneTyped(e, prompt));

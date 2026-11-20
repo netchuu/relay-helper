@@ -134,11 +134,17 @@ export function endedContextFull(path: string, since: number): boolean {
     return false;
   }
   for (let i = lines.length - 1; i >= 0; i--) {
-    const entry = lines[i] ? (parseEntry(lines[i] as string) as (Entry & ApiError) | null) : null;
-    if (!entry || entry.isSidechain || (entry.type !== "assistant" && entry.type !== "user")) continue;
+    const entry = lines[i]
+      ? (parseEntry(lines[i] as string) as (Entry & ApiError & { subtype?: string }) | null)
+      : null;
+    if (!entry || entry.isSidechain) continue;
+    // Compacted since: whatever came before no longer counts.
+    if (entry.type === "system" && entry.subtype === "compact_boundary") return false;
+    if (entry.type !== "assistant" && entry.type !== "user") continue;
     const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
     if (Number.isNaN(ts) || ts < since - 10_000) return false;
-    if (entry.type === "user" && entry.isMeta) continue;
+    // Claude Code's own entries (a command's echo, a notice) say nothing about the turn.
+    if (entry.type === "user" && (entry.isMeta || isSystemMessage(entryText(entry) ?? ""))) continue;
     return (
       entry.type === "assistant" &&
       entry.isApiErrorMessage === true &&

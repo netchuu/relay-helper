@@ -1,6 +1,9 @@
 // A full context: the failed turn says so, the session shows 0% left until it is compacted or cleared, and
 // `/compact` is a turn of its own.
 import { afterEach, expect, test } from "bun:test";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type RelayEvent, Session, type Turn } from "../../protocol/index.ts";
 import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
@@ -9,10 +12,15 @@ import { EventLog } from "../src/daemon/events.ts";
 import { COMPACT_FAILED, COMPACTED, HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
+import { endedContextFull } from "../src/daemon/transcript.ts";
 import { CONTEXT_FULL, isContextFullError, resetUsage, usageOf } from "../src/daemon/usage.ts";
 import { relayHooks } from "../src/install.ts";
 
-afterEach(() => resetUsage());
+const dirs: string[] = [];
+afterEach(() => {
+  resetUsage();
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
 
 function setup() {
   const db = openDb(":memory:");
@@ -233,6 +241,82 @@ test("a /compact that finishes in time is not given up afterwards", async () => 
   await t.hook("SessionStart", { source: "compact" });
   await Bun.sleep(80);
   expect(t.finished().map((turn) => turn.summary)).toEqual([COMPACTED]);
+});
+
+// What Claude Code writes when a prompt doesn't fit: an error entry in the transcript, and no Stop hook.
+function transcriptWithError(prompt: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "relay-context-full-"));
+  dirs.push(dir);
+  const path = join(dir, "t.jsonl");
+  const at = new Date().toISOString();
+  const lines = [
+    { type: "user", uuid: "u1", timestamp: at, message: { role: "user", content: prompt } },
+    {
+      type: "assistant",
+      uuid: "a1",
+      timestamp: at,
+      isApiErrorMessage: true,
+      error: "invalid_request",
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Prompt is too long" }] },
+    },
+  ];
+  writeFileSync(path, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+  return path;
+}
+
+test("no Stop came for the prompt that didn't fit: the phone's /compact still ends that turn and starts its own", async () => {
+  const t = setup();
+  const transcript_path = transcriptWithError("what does it mean");
+  await t.hook("SessionStart", { transcript_path });
+  await t.hook("UserPromptSubmit", { prompt: "what does it mean", transcript_path });
+  // Claude Code is back at its prompt, but nothing said so: the turn is still open.
+  expect(t.finished()).toEqual([]);
+  notePhoneTyped("s1", "/compact", false, "send-3");
+  await t.hook("PreCompact", { trigger: "manual", custom_instructions: "", transcript_path });
+  expect(t.finished().map((turn) => [turn.prompt, turn.summary, turn.failed])).toEqual([
+    ["what does it mean", CONTEXT_FULL, true],
+  ]);
+  expect(t.started().at(-1)).toMatchObject({ prompt: "/compact", sendId: "send-3" });
+  expect(t.session().status).toBe("working");
+  await t.hook("SessionStart", { source: "compact", transcript_path });
+  expect(t.finished().at(-1)?.summary).toBe(COMPACTED);
+  expect(t.session().status).toBe("idle");
+  expect(t.session().usage).toBeUndefined();
+});
+
+test("a /compact while a turn that is not full still runs starts no turn and ends none", async () => {
+  const t = setup();
+  const dir = mkdtempSync(join(tmpdir(), "relay-context-full-"));
+  dirs.push(dir);
+  const transcript_path = join(dir, "t.jsonl");
+  writeFileSync(
+    transcript_path,
+    `${JSON.stringify({ type: "assistant", uuid: "a1", timestamp: new Date().toISOString(), message: { content: [{ type: "text", text: "Working on it." }] } })}\n`,
+  );
+  await t.hook("SessionStart", { transcript_path });
+  await t.hook("UserPromptSubmit", { prompt: "a long job", transcript_path });
+  await t.hook("PreCompact", { trigger: "manual", transcript_path });
+  expect(t.started().length).toBe(1);
+  expect(t.finished()).toEqual([]);
+});
+
+test("the error only counts while it is the last thing said, and not once the chat was compacted", () => {
+  const path = transcriptWithError("carry on");
+  const since = Date.now() - 1000;
+  expect(endedContextFull(path, since)).toBe(true);
+  const at = new Date().toISOString();
+  const add = (entry: object) => appendFileSync(path, `${JSON.stringify(entry)}\n`);
+  // A command's echo is Claude Code's own entry: the error is still the last thing said.
+  add({ type: "user", timestamp: at, message: { content: "<command-name>/compact</command-name>" } });
+  expect(endedContextFull(path, since)).toBe(true);
+  add({ type: "system", subtype: "compact_boundary", timestamp: at, content: "Conversation compacted" });
+  expect(endedContextFull(path, since)).toBe(false);
+  expect(endedContextFull(join(path, "missing"), since)).toBe(false);
+});
+
+test("an older error, from before this turn, says nothing about it", () => {
+  const path = transcriptWithError("carry on");
+  expect(endedContextFull(path, Date.now() + 60_000)).toBe(false);
 });
 
 test("install wires the hook a /compact fires", () => {
