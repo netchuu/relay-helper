@@ -610,6 +610,46 @@ describe("state", () => {
     expect(usageOf("s1")?.contextFull).toBeUndefined();
   });
 
+  test("a process that dies mid-turn: a sweep ends the turn as failed, once, with the answer so far", async () => {
+    const s = setup();
+    await s.working("s1", TMUX);
+    s.tx(text("Half an answer."));
+    s.registry.setStatus("s1", "ended"); // what reconcile does when the process is gone
+    s.stopper.sweep();
+    s.stopper.sweep();
+    const done = s.turnsDone();
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ failed: true });
+    expect(done[0]?.stopped).toBeUndefined();
+    expect(done[0]?.died).toBe(true);
+    for (const e of s.seen) expect(alertFor(e, () => "Mac")).toBeNull();
+    expect(done[0]?.summary).toContain("Half an answer.");
+    expect(done[0]?.summary).toContain("Claude Code stopped before it finished.");
+    expect(s.openTurn("s1")).toBeNull();
+    expect(s.registry.get("s1")?.status).toBe("ended");
+  });
+
+  test("a process that dies before writing anything: the failed turn says only that it stopped", async () => {
+    const s = setup();
+    await s.working("s1", TMUX);
+    s.registry.setStatus("s1", "ended");
+    s.stopper.sweep();
+    expect(s.turnsDone()[0]).toMatchObject({
+      failed: true,
+      summary: "Claude Code stopped before it finished.",
+    });
+  });
+
+  test("a session that ended after its turn finished has nothing to fail", async () => {
+    const s = setup();
+    await s.working("s1", TMUX);
+    await s.hook("Stop", "s1", { last_assistant_message: "All done." }, TMUX);
+    await s.hook("SessionEnd", "s1", {}, TMUX);
+    s.stopper.sweep();
+    expect(s.turnsDone()).toHaveLength(1);
+    expect(s.turnsDone()[0]).toMatchObject({ failed: false, summary: "All done." });
+  });
+
   test("Esc at the computer: a sweep ignores a marker from an earlier turn", async () => {
     const s = setup();
     s.tx(marker(Date.now() - 60_000));

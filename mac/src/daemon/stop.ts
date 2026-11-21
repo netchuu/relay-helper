@@ -101,6 +101,10 @@ const TIMING: Timing = {
 };
 /** A stop message held at the terminal (bypass mode) still counts once someone delivers it. */
 const PENDING_INBOX_MS = 10 * 60_000;
+/** Only turns this recent are failed when their session is found ended; older open rows are history. */
+const DIED_WINDOW_MS = 24 * 3_600_000;
+const DIED_NOTE = "Claude Code stopped before it finished.";
+const withDiedNote = (text: string) => (text.trim() ? `${text.trimEnd()}\n\n${DIED_NOTE}` : DIED_NOTE);
 
 interface OpenTurn {
   id: string;
@@ -285,6 +289,19 @@ export class TurnStopper {
          WHERE t.ended_at IS NULL AND t.started_at IS NOT NULL AND s.status = 'idle'`,
       )
       .all() as { id: string; session_id: string; started_at: number; prompt: string | null }[];
+    // The process died mid-turn: reconcile ended the session, and no hook will close the turn.
+    const died = this.d.db
+      .query(
+        `SELECT t.id, t.session_id, t.started_at, t.prompt FROM turns t JOIN sessions s ON s.id = t.session_id
+         WHERE t.ended_at IS NULL AND t.started_at IS NOT NULL AND t.full_text IS NULL AND s.status = 'ended'
+         AND t.started_at > ?`,
+      )
+      .all(Date.now() - DIED_WINDOW_MS) as typeof rows;
+    for (const r of died) {
+      if (this.inflight.has(r.session_id)) continue;
+      const info = this.transcriptInfo(r.session_id, r.started_at, undefined, r.prompt);
+      this.endStopped(r.id, { ...(info ?? NO_TURN_INFO), text: withDiedNote(info?.text ?? "") }, false, true);
+    }
     const open = new Set(rows.map((r) => r.id));
     for (const id of this.swept.keys()) if (!open.has(id)) this.swept.delete(id);
     for (const r of rows) {
@@ -307,7 +324,12 @@ export class TurnStopper {
   }
 
   /** Ends a turn as stopped and announces it once; the session goes idle unless a newer turn already started. */
-  endStopped(turnId: string, known?: ReturnType<typeof interruptedTurn>, stopped = true): string | null {
+  endStopped(
+    turnId: string,
+    known?: ReturnType<typeof interruptedTurn>,
+    stopped = true,
+    failed = false,
+  ): string | null {
     const row = this.d.db
       .query(
         "SELECT id, session_id, prompt, full_text, started_at, ended_at, stopped FROM turns WHERE id = ?",
@@ -346,13 +368,14 @@ export class TurnStopper {
       : { messages: liveSent.slice(0, TURN_MESSAGES_MAX) };
     this.d.db
       .query(
-        "UPDATE turns SET full_text = ?, summary = ?, truncated = ?, stats_json = ?, failed = 0, stopped = ?, ended_at = ?, steps_json = ?, messages_json = ? WHERE id = ?",
+        "UPDATE turns SET full_text = ?, summary = ?, truncated = ?, stats_json = ?, failed = ?, stopped = ?, ended_at = ?, steps_json = ?, messages_json = ? WHERE id = ?",
       )
       .run(
         full,
         summary,
         truncated ? 1 : 0,
         JSON.stringify(stats),
+        failed ? 1 : 0,
         stopped ? 1 : 0,
         endedAt,
         stepsJson,
@@ -367,10 +390,11 @@ export class TurnStopper {
       fullLength: full.length,
       truncated,
       stats,
-      failed: false,
+      failed,
       startedAt: row.started_at,
       endedAt,
       ...(stopped ? { stopped: true } : {}),
+      ...(failed ? { died: true } : {}),
       ...timeline,
       ...turnMessageFields(messages),
       ...attachmentFields(this.d.db, row.session_id, row.prompt, row.id),
@@ -381,7 +405,9 @@ export class TurnStopper {
       if (s && s.status !== "ended")
         this.d.registry.setStatus(row.session_id, "idle", summary ? { lastSummary: summary } : undefined);
     }
-    log.info(stopped ? "turn stopped" : "stale open turn ended", { turnId: row.id });
+    log.info(failed ? "turn failed: process gone" : stopped ? "turn stopped" : "stale open turn ended", {
+      turnId: row.id,
+    });
     return row.id;
   }
 

@@ -372,6 +372,8 @@ export const Turn = z.object({
   endedAt: z.number(),
   /** True on a turn the user stopped (the phone's Stop, session.interrupt, or Esc); sent only when true; `failed` stays false. */
   stopped: z.boolean().optional(),
+  /** True on the turn_done event of a turn whose Claude Code process died; sent only when true. Raises no push. */
+  died: z.boolean().optional(),
   /** The turn's tool calls, oldest first, in the finished form ("Read …"); at most TURN_STEPS_MAX. */
   steps: z.array(TurnStep).max(TURN_STEPS_MAX).optional(),
   /** How many steps were left out over TURN_STEPS_MAX. */

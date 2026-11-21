@@ -73,8 +73,8 @@ export function alertFor(event: RelayEvent, sessionName: (id: string) => string)
     case "prompt.opened":
       return promptAlert(event.prompt, sessionName(event.prompt.sessionId));
     case "turn.done":
-      // You stopped it yourself: nothing to tell you.
-      if (event.turn.stopped) return null;
+      // You stopped it yourself, or its process died with the terminal: nothing to tell you.
+      if (event.turn.stopped || event.turn.died) return null;
       return turnAlert(event.turn, sessionName(event.turn.sessionId));
     case "session.notice":
       if (event.level === "info") return null;
