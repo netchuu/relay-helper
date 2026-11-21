@@ -7,6 +7,7 @@ import {
   type RpcMethod,
   RpcSchemas,
   type SendResult,
+  type SessionCommands,
   type SessionResumed,
   type SessionStarted,
   sessionNameLength,
@@ -46,10 +47,17 @@ import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { fitEvent, fitPrompts } from "./promptFit.ts";
-import { processAlive, publicSession, type Registry, type SessionRecord } from "./registry.ts";
+import {
+  commandRouteOf,
+  processAlive,
+  publicSession,
+  type Registry,
+  type SessionRecord,
+} from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
 import { SentMessages } from "./sentMessages.ts";
+import { slashCommandsFor } from "./slashCommands.ts";
 import { StartError, sessionDirectories, startSession } from "./startSession.ts";
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
@@ -546,6 +554,19 @@ export function createRpc(
       // Claude Code reports the model itself (PostModelSwitch); the effort comes with the status line.
       audit(d.db, actor, "session.model", { sessionId, model, effort, via: res.via });
       return { via: res.via } satisfies ModelResult;
+    },
+
+    "session.commands": ({ sessionId }) => {
+      const session = d.registry.get(sessionId);
+      if (!session) throw new RpcFailure("not_found", "session not found");
+      const route = d.headless?.has(session.id)
+        ? "helper"
+        : (commandRouteOf(session) ?? (canResume(session) ? "resume" : null));
+      return {
+        commands: slashCommandsFor(session.cwd),
+        run: route !== null && route !== "inbox",
+        ...(route ? { route } : {}),
+      } satisfies SessionCommands;
     },
 
     "session.pin": ({ sessionId, pinned }, actor) => {

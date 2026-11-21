@@ -21,7 +21,7 @@ import { MessageTracker } from "./messages.ts";
 import { Notifier } from "./notifier.ts";
 import { Phones } from "./phones.ts";
 import { PresenceMonitor } from "./presence.ts";
-import { Registry } from "./registry.ts";
+import { Registry, setTypingPreferred } from "./registry.ts";
 import { RelayLink } from "./relayLink.ts";
 import { RelayApns, RelayFcm } from "./relayPush.ts";
 import { deliverQueued, ReplyQueue } from "./replyQueue.ts";
@@ -39,6 +39,7 @@ export async function runDaemon(): Promise<void> {
   const db = openDb(paths.db);
   bindSuggestionSeen(db);
   const events = new EventLog(db);
+  setTypingPreferred(config.preferTyping);
   const registry = new Registry(db, events);
   setKnownPids(() => registry.list().flatMap((s) => (s.pid ? [s.pid] : [])));
   const broker = new Broker(db, events, (sessionId) => {

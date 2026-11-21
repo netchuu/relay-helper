@@ -21,6 +21,7 @@ import {
   RpcSchemas,
   SendResult,
   Session,
+  SessionCommands,
   SessionDirectory,
   SessionResumed,
   SessionStarted,
@@ -898,6 +899,28 @@ const model = {
   },
 };
 
+// `session.commands`: one command of each source, then the same session when a typed `/name` only arrives as a note.
+const commands = {
+  params: RpcSchemas["session.commands"].parse({ sessionId: session.id }),
+  result: SessionCommands.parse({
+    commands: [
+      { name: "compact", description: "Summarize the conversation to free up context", source: "builtin" },
+      { name: "ship-it", description: "Run the checks, then push the branch", source: "project" },
+      { name: "tidy-notes", description: "Sort today's notes into folders", source: "user" },
+      { name: "garden:water-plants", description: "Water the plants in the greenhouse", source: "plugin" },
+    ],
+    run: true,
+    route: "terminal",
+  }),
+  // The inbox: the message arrives labelled, so a command typed on the phone doesn't run.
+  note: SessionCommands.parse({ commands: [], run: false, route: "inbox" }),
+  // No way to send at all: no `route`.
+  none: SessionCommands.parse({ commands: [], run: false }),
+  // `Session.commandsRun` follows the route: true when typing runs a command, false for the inbox.
+  session: Session.parse({ ...session, commandsRun: true }),
+  sessionNote: Session.parse({ ...session, replyRoute: "labelled", commandsRun: false }),
+};
+
 const dir = join(import.meta.dir, "fixtures");
 mkdirSync(dir, { recursive: true });
 const write = (name: string, value: unknown) =>
@@ -928,6 +951,7 @@ write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);
 write("model.json", model);
+write("commands.json", commands);
 write("start.json", start);
 write("resume.json", resume);
 write("recorded.json", recorded);

@@ -1,0 +1,74 @@
+{
+  "params": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666"
+  },
+  "result": {
+    "commands": [
+      {
+        "name": "compact",
+        "description": "Summarize the conversation to free up context",
+        "source": "builtin"
+      },
+      {
+        "name": "ship-it",
+        "description": "Run the checks, then push the branch",
+        "source": "project"
+      },
+      {
+        "name": "tidy-notes",
+        "description": "Sort today's notes into folders",
+        "source": "user"
+      },
+      {
+        "name": "garden:water-plants",
+        "description": "Water the plants in the greenhouse",
+        "source": "plugin"
+      }
+    ],
+    "run": true,
+    "route": "terminal"
+  },
+  "note": {
+    "commands": [],
+    "run": false,
+    "route": "inbox"
+  },
+  "none": {
+    "commands": [],
+    "run": false
+  },
+  "session": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "commandsRun": true,
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+  },
+  "sessionNote": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "labelled",
+    "commandsRun": false,
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+  }
+}

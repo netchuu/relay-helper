@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type {
   BackgroundTask,
+  CommandRoute,
   Session,
   SessionKind,
   SessionStatus,
@@ -189,6 +190,7 @@ export function publicSession(s: SessionRecord): Session {
     // An ended session runs nothing (its list is cleared right after this upsert goes out).
     ...(s.status === "ended" ? {} : backgroundField(s.id)),
     ...replyRouteOf(s),
+    ...commandsRunField(s),
     ...(s.status === "ended" ? {} : { ...heldField(s.id), ...permissionModeField(s.id) }),
     ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
     // Model and effort as Claude Code reports them; left out for app sessions, which get no model picker.
@@ -210,6 +212,12 @@ function usageField(id: string): { usage?: Usage } {
   return usage ? { usage } : {};
 }
 
+let typingPreferred = true;
+/** Whether messages are typed into the session (config `preferTyping`); off, they all go to the inbox. */
+export function setTypingPreferred(on: boolean): void {
+  typingPreferred = on;
+}
+
 /** How a reply would arrive: "typed" as the person's own input, or "labelled" through the inbox; absent if none can be sent. */
 export function replyRouteOf(s: SessionRecord): {
   replyRoute?: "typed" | "labelled";
@@ -218,6 +226,7 @@ export function replyRouteOf(s: SessionRecord): {
   if (s.status === "ended") return {};
   // A message to the helper's own process is an ordinary user message.
   if (s.runsInHelper) return { replyRoute: "typed" };
+  if (!typingPreferred) return s.socketPath ? { replyRoute: "labelled" } : {};
   if (terminalRoutesOf(s, { promised: true }).length > 0) return { replyRoute: "typed" };
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
   // The Claude desktop app and the editor extension: typed with Accessibility, which the phone can point to.
@@ -225,6 +234,24 @@ export function replyRouteOf(s: SessionRecord): {
   if (appSession && axAllowed()) return { replyRoute: "typed" };
   if (!s.socketPath) return {};
   return appSession ? { replyRoute: "labelled", replyFix: "accessibility" } : { replyRoute: "labelled" };
+}
+
+/** Where a message to the session would go right now (see CommandRoute); null when it can't be sent. An ended session has none. */
+export function commandRouteOf(
+  s: SessionRecord,
+  app: { isApp(s: SessionRecord): boolean; allowed(): boolean } = { isApp: isAppSession, allowed: axAllowed },
+): CommandRoute | null {
+  if (s.status === "ended") return null;
+  if (s.runsInHelper) return "helper";
+  if (!typingPreferred) return s.socketPath ? "inbox" : null;
+  if (terminalRoutesOf(s, { promised: true }).length > 0) return "terminal";
+  if (process.platform === "darwin" && app.isApp(s) && app.allowed()) return "app";
+  return s.socketPath ? "inbox" : null;
+}
+
+function commandsRunField(s: SessionRecord): { commandsRun?: boolean } {
+  const route = commandRouteOf(s);
+  return route ? { commandsRun: route !== "inbox" } : {};
 }
 
 function modelOf(id: string): { model?: string; effort?: string } {

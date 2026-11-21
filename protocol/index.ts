@@ -295,6 +295,8 @@ export const Session = z.object({
   replyRoute: z.enum(["typed", "labelled"]).optional(),
   /** With "labelled": what would make replies arrive typed ("accessibility"); absent when nothing the person can switch on helps. */
   replyFix: z.enum(["accessibility"]).optional(),
+  /** True when a typed `/name` runs as a command in this session, false when it would arrive as a note; absent on older helpers and for ended sessions. See `session.commands`. */
+  commandsRun: z.boolean().optional(),
   /** True only while the session runs in a Claude Code process the helper started (`session.resume`); replies go to it. */
   runsInHelper: z.literal(true).optional(),
   startedAt: z.number(),
@@ -540,6 +542,34 @@ export type SessionStarted = z.infer<typeof SessionStarted>;
 export const SessionResumed = z.object({ via: z.literal("headless") });
 export type SessionResumed = z.infer<typeof SessionResumed>;
 
+/** Where a slash command comes from: Claude Code itself, `~/.claude`, the session's folder, or an installed plugin. */
+export const SlashCommandSource = z.enum(["builtin", "user", "project", "plugin"]);
+export type SlashCommandSource = z.infer<typeof SlashCommandSource>;
+
+/** One command or skill the phone can offer; `name` has no leading slash, a plugin's reads `plugin:name`. */
+export const SlashCommand = z.object({
+  name: z.string(),
+  description: z.string(),
+  source: SlashCommandSource,
+});
+export type SlashCommand = z.infer<typeof SlashCommand>;
+
+/**
+ * Where a typed message to the session goes: a "terminal" it is typed into (tmux, iTerm, pty, WezTerm, kitty ...),
+ * the desktop "app" or an editor extension (Accessibility), the helper's own Claude Code ("helper"), a new one
+ * started with `session.resume` ("resume"), or the "inbox" (arrives as a labelled note). Absent: no way to send.
+ */
+export const CommandRoute = z.enum(["terminal", "app", "helper", "resume", "inbox"]);
+export type CommandRoute = z.infer<typeof CommandRoute>;
+
+/** `session.commands`'s result: `run` is false when a typed `/name` would only arrive as a note (or can't be sent). */
+export const SessionCommands = z.object({
+  commands: z.array(SlashCommand),
+  run: z.boolean(),
+  route: CommandRoute.optional(),
+});
+export type SessionCommands = z.infer<typeof SessionCommands>;
+
 export const PresenceMode = z.enum(["auto", "here", "away"]);
 export type PresenceMode = z.infer<typeof PresenceMode>;
 
@@ -700,6 +730,8 @@ export const RpcSchemas = {
     sessionId: z.string(),
     name: SessionNameInput.nullable(),
   }),
+  /** The slash commands and skills the session can run, without ones that open a terminal dialog. Result: SessionCommands. */
+  "session.commands": z.object({ sessionId: z.string() }),
   /** Pin the session to the top of the Sessions list, or unpin it. Pinning a pinned session keeps its time. */
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),
   /** Stops Claude's current turn, as Esc does. Result: InterruptResult. Errors: not_found, conflict (nothing running), unavailable. */
