@@ -26,7 +26,8 @@ for (const [k, v] of Object.entries(process.env)) {
     k.startsWith("CLAUDE") ||
     k.startsWith("ANTHROPIC") ||
     k === "TMUX" ||
-    k === "TMUX_PANE"
+    k === "TMUX_PANE" ||
+    k.startsWith("RELAY_PTY")
   )
     continue;
   if (!(k in env)) env[k] = v;
