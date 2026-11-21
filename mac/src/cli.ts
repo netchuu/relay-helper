@@ -58,6 +58,7 @@ import {
 } from "./integrations/zed.ts";
 import { run } from "./platform/exec.ts";
 import { platform } from "./platform/index.ts";
+import { runAttach } from "./shell/ptyAttach.ts";
 import { runHost } from "./shell/ptyHost.ts";
 import { runShell } from "./shell/ptyShell.ts";
 import { describePrompt, formatEvent } from "./tailFormat.ts";
@@ -75,6 +76,7 @@ Usage:
   relay pair                         show a QR code to pair the iPhone app
   relay devices [revoke <id|name>]   list or revoke paired phones
   relay sessions [--all]             list sessions Relay knows about
+  relay attach [chat]                open a chat started from the phone here (Ctrl-] leaves it running)
   relay prompts                      list open questions / plans / permissions
   relay answer <promptId> <answer…>  answer a prompt (see below)
   relay send <session> [--attach <file>]… [text]
@@ -750,6 +752,8 @@ async function main(argv: string[]): Promise<void> {
     case "shell":
       // Started by Zed's terminal (see integrations/zed.ts); exits with the shell's code.
       return process.exit(await runShell(args));
+    case "attach":
+      return process.exit(await runAttach(args));
     case "host":
       // One chat started from the phone (daemon/terminalHost.ts); exits with Claude Code's code.
       return process.exit(await runHost(args));

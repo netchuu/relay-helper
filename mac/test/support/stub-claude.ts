@@ -14,6 +14,10 @@ if (log)
     log,
     `ARGS ${JSON.stringify(args)} TERM ${process.env.TERM} SIZE ${process.stdout.columns}x${process.stdout.rows}\n`,
   );
+process.on("SIGWINCH", () => {
+  if (log) appendFileSync(log, `SIZE ${process.stdout.columns}x${process.stdout.rows}\n`);
+  process.stdout.write(`\x1b[2J\x1b[Hredrawn ${process.stdout.columns}x${process.stdout.rows}\r\n❯ \r\n`);
+});
 process.stdin.setRawMode(true);
 let all = "";
 process.stdin.on("data", (d) => {

@@ -9,6 +9,11 @@ import { ScreenText } from "./screenText.ts";
 
 export const HOST_COLS = 120;
 export const HOST_ROWS = 40;
+/** What an attached window writes to say its size changed: `ESC ] relay;resize;<cols>;<rows> BEL`. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: the escape sequence is what this matches
+export const RESIZE_OSC = /\x1b\]relay;resize;(\d{2,4});(\d{1,4})\x07/g;
+/** An attached terminal that falls this far behind is dropped; the chat itself goes on. */
+const MAX_BACKLOG = 8_000_000;
 
 /** What a host writes about itself, for the daemon that started it. */
 export interface HostState {
@@ -38,8 +43,77 @@ export function readHostState(dir: string, id: string): HostState | null {
   }
 }
 
-/** The requests besides typing: the screen, letting go of the exit record, and the terminal's size. */
-export type HostOp = { op: "screen" } | { op: "release" } | { op: "resize"; cols: number; rows: number };
+/** The requests besides typing: the screen, letting go of the exit record, the terminal's size, and attaching. */
+export type HostOp =
+  | { op: "screen" }
+  | { op: "release" }
+  | { op: "resize"; cols: number; rows: number }
+  | { op: "attach"; cols: number; rows: number };
+
+/** A valid `attach` request: its window size. "auth" for a wrong token, null for anything else. */
+export function parseAttach(line: string, token: string): { cols: number; rows: number } | "auth" | null {
+  let req: { op?: unknown; token?: unknown; cols?: unknown; rows?: unknown } | null;
+  try {
+    req = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!req || typeof req !== "object" || req.op !== "attach") return null;
+  if (req.token !== token) return "auth";
+  const { cols, rows } = req;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) return null;
+  if ((cols as number) < 20 || (cols as number) > 1000 || (rows as number) < 5 || (rows as number) > 1000)
+    return null;
+  return { cols: cols as number, rows: rows as number };
+}
+
+/** Terminals attached to the chat: the chat takes the newest one's size, and the one before it back on detach. */
+export class Attachers<T> {
+  private readonly list: { key: T; cols: number; rows: number }[] = [];
+  constructor(private base: { cols: number; rows: number }) {}
+
+  get count(): number {
+    return this.list.length;
+  }
+
+  keys(): T[] {
+    return this.list.map((a) => a.key);
+  }
+
+  /** The size the chat should have now. */
+  add(key: T, cols: number, rows: number): { cols: number; rows: number } {
+    if (this.list.length === 0) this.base = this.current;
+    this.list.push({ key, cols, rows });
+    return { cols, rows };
+  }
+
+  /** A window changed size. */
+  update(key: T, cols: number, rows: number): { cols: number; rows: number } | null {
+    const item = this.list.find((a) => a.key === key);
+    if (!item || cols < 20 || cols > 1000 || rows < 5 || rows > 1000) return null;
+    item.cols = cols;
+    item.rows = rows;
+    return this.list[this.list.length - 1] === item ? { cols, rows } : null;
+  }
+
+  remove(key: T): { cols: number; rows: number } | null {
+    const i = this.list.findIndex((a) => a.key === key);
+    if (i < 0) return null;
+    const wasNewest = i === this.list.length - 1;
+    this.list.splice(i, 1);
+    return wasNewest ? this.current : null;
+  }
+
+  private get current(): { cols: number; rows: number } {
+    const last = this.list[this.list.length - 1];
+    return last ? { cols: last.cols, rows: last.rows } : this.base;
+  }
+
+  /** Records the size the chat has when nobody is attached. */
+  setBase(cols: number, rows: number): void {
+    if (this.list.length === 0) this.base = { cols, rows };
+  }
+}
 
 export type HostReply = { ok: true; screen?: string } | { ok: false; reason: string };
 
@@ -105,6 +179,8 @@ export async function runHost(args: string[]): Promise<number> {
   const draft = new DraftTracker();
   const screen = new ScreenText(HOST_ROWS);
   let released = false;
+  let lastAttachInput = 0;
+  const attached = new Attachers<Socket>({ cols: HOST_COLS, rows: HOST_ROWS });
 
   const env: Record<string, string | undefined> = {
     ...process.env,
@@ -123,6 +199,10 @@ export async function runHost(args: string[]): Promise<number> {
         data(_t: unknown, data: Uint8Array) {
           paste.feed(data);
           screen.feed(data);
+          for (const sock of attached.keys()) {
+            if (sock.writableLength > MAX_BACKLOG) sock.destroy();
+            else sock.write(data);
+          }
         },
       },
     } as Parameters<typeof Bun.spawn>[1]);
@@ -143,6 +223,18 @@ export async function runHost(args: string[]): Promise<number> {
     writeFileAtomic(statePath, JSON.stringify(state), 0o600);
   }
 
+  // Claude Code redraws on a size change only, so an attach at the size it already has nudges it.
+  let size = { cols: HOST_COLS, rows: HOST_ROWS };
+  function applySize(cols: number, rows: number, nudge = false): void {
+    const same = cols === size.cols && rows === size.rows;
+    size = { cols, rows };
+    screen.rows = rows;
+    if (nudge && same) {
+      term.resize(cols, rows - 1);
+      setTimeout(() => term.resize(size.cols, size.rows), 50);
+    } else term.resize(cols, rows);
+  }
+
   const ctx: HostContext = {
     token,
     screen: () => screen.text(),
@@ -150,8 +242,8 @@ export async function runHost(args: string[]): Promise<number> {
       released = true;
     },
     resize: (cols, rows) => {
-      term.resize(cols, rows);
-      screen.rows = rows;
+      applySize(cols, rows);
+      attached.setBase(cols, rows);
     },
     type: (line) =>
       answerRequest(line, {
@@ -159,7 +251,7 @@ export async function runHost(args: string[]): Promise<number> {
         shellPid: proc.pid,
         // Nothing sits between Relay and Claude Code here: there is no shell prompt to type into by mistake.
         isForeground: async () => proc.exitCode === null,
-        lastInput: () => 0,
+        lastInput: () => lastAttachInput,
         hasDraft: () => draft.pending,
         sentEnter: () => draft.feed("\r"),
         pasteOn: () => paste.on,
@@ -174,11 +266,40 @@ export async function runHost(args: string[]): Promise<number> {
 
   const server: Server = createServer((sock: Socket) => {
     const reader = new RequestReader();
+    let attachedHere = false;
     sock.on("error", () => {});
+    sock.on("close", () => {
+      if (!attachedHere) return;
+      const back = attached.remove(sock);
+      if (back) applySize(back.cols, back.rows);
+    });
     sock.on("data", async (chunk: Buffer) => {
+      if (attachedHere) {
+        // The attached window's size changes arrive in the input stream as an OSC the client writes itself.
+        let keys = chunk.toString("latin1");
+        for (const m of keys.matchAll(RESIZE_OSC)) {
+          const next = attached.update(sock, Number(m[1]), Number(m[2]));
+          if (next) applySize(next.cols, next.rows);
+        }
+        keys = keys.replace(RESIZE_OSC, "");
+        if (keys === "") return;
+        lastAttachInput = Date.now();
+        const bytes = Buffer.from(keys, "latin1");
+        draft.feed(bytes);
+        term.write(bytes);
+        return;
+      }
       const line = reader.push(chunk);
       if (line === null) return;
       if (line === "overflow") return void sock.end();
+      const wants = parseAttach(line, token);
+      if (wants && wants !== "auth") {
+        attachedHere = true;
+        const next = attached.add(sock, wants.cols, wants.rows);
+        sock.write(`${JSON.stringify({ ok: true })}\n`);
+        applySize(next.cols, next.rows, true);
+        return;
+      }
       sock.end(`${JSON.stringify(await answerHostRequest(line, ctx))}\n`);
     });
   });
