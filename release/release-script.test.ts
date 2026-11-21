@@ -89,6 +89,9 @@ describe("tap-commit.sh", () => {
     const r = run("bash", join(import.meta.dir, "tap-commit.sh"), repo, "9.9.9");
     expect(r.stderr.toString()).toBe("");
     expect(run("git", "-C", repo, "log", "-1", "--format=%s").stdout.toString().trim()).toBe("Relay 9.9.9");
+    expect(run("git", "-C", repo, "log", "-1", "--format=%an <%ae>|%cn <%ce>").stdout.toString().trim()).toBe(
+      "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>|github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+    );
   });
 
   test("release.sh commits before it creates the release and pushes with gh's token", () => {

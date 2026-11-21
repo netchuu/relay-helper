@@ -3,5 +3,7 @@
 # no git identity; the push later authenticates through gh's token.
 set -euo pipefail
 WORK="${1:?usage: tap-commit.sh <clone> <version>}"
-git -C "$WORK" -c user.name="Relay release" -c user.email="release@users.noreply.github.com" \
+# GitHub shows the account that owns the email; a made-up noreply address can belong to a stranger.
+git -C "$WORK" -c user.name="github-actions[bot]" \
+  -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
   commit -qm "Relay ${2:?}"
