@@ -13,6 +13,7 @@ import { Broker } from "./broker.ts";
 import { getSetting, openDb, setSetting } from "./db.ts";
 import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
+import { Handover } from "./handover.ts";
 import { HeadlessSessions } from "./headless.ts";
 import { HeldReplies } from "./held.ts";
 import { HookHandler } from "./hooks.ts";
@@ -123,8 +124,20 @@ export async function runDaemon(): Promise<void> {
   stopper.headless = headless;
   const suggestions = new SuggestionWatcher({ registry, phoneConnected: () => phones.connected });
   phones.onFirst(() => suggestions.lookNow());
+  const handover = new Handover({
+    registry,
+    terminal,
+    stop: (id) => stopper.interrupt(id, "handover"),
+    openTurn: (id) =>
+      db
+        .query<{ id: string }, [string]>(
+          "SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+        )
+        .get(id)?.id ?? null,
+  });
   const deps = {
     ...baseDeps,
+    handover,
     held,
     stopper,
     steps,

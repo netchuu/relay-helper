@@ -187,6 +187,8 @@ const MIGRATIONS: string[] = [
      SELECT id, session_id, text, created_at, waits_for FROM queued_replies;
    DROP TABLE queued_replies;
    ALTER TABLE queued_replies_18 RENAME TO queued_replies;`,
+  // 19: when a chat from the phone's own terminal was continued in the person's terminal.
+  `CREATE TABLE IF NOT EXISTS moved_sessions (session_id TEXT PRIMARY KEY, moved_at INTEGER NOT NULL);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

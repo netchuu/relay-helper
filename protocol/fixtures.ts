@@ -787,6 +787,11 @@ const start = {
   },
 };
 
+// A chat started from the phone, then resumed in the person's own terminal: the session says so, once.
+const moved = {
+  session: Session.parse({ ...session, terminal: "iTerm.app", status: "idle", movedToTerminal: true }),
+};
+
 // Continuing a session whose terminal is closed (session.resume): the helper runs Claude Code for it without a
 // terminal. A send to such a session fails with `canResume`; the phone may then offer the resume.
 const resume = {
@@ -954,5 +959,6 @@ write("model.json", model);
 write("commands.json", commands);
 write("start.json", start);
 write("resume.json", resume);
+write("moved.json", moved);
 write("recorded.json", recorded);
 console.log(`wrote fixtures to ${dir}`);

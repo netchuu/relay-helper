@@ -30,6 +30,7 @@ import { ensurePushKey, revokeDevice } from "./auth.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
+import type { Handover } from "./handover.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
 import type { HeldReplies } from "./held.ts";
 import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } from "./hooks.ts";
@@ -72,6 +73,8 @@ import {
 } from "./transcript.ts";
 
 export interface RpcDeps {
+  /** Sends for a chat wait while it moves to the person's terminal. */
+  handover?: Handover;
   db: DB;
   events: EventLog;
   registry: Registry;
@@ -697,6 +700,8 @@ export function createRpc(
       throw new RpcFailure("conflict", "the session is waiting for an answer; answer its prompt instead");
     // One send per session at a time, so messages waiting for a pause arrive in the order they were sent.
     return await inOrder(sessionId, async () => {
+      // A chat moving to the person's terminal has no typing route until it is done; then the new one counts.
+      await d.handover?.settled(sessionId);
       // Waited behind a resume that failed: the session is still ended.
       const now = d.registry.get(sessionId);
       if (!now || gone(now)) throw goneError(now);
@@ -711,7 +716,7 @@ export function createRpc(
         for (const id of ids ?? []) held.set(id, done);
       }
       try {
-        const res = await sendNow(session, text, arrived, sendId);
+        const res = await sendNow(now, text, arrived, sendId);
         if (files > 0 && res.via === "socket")
           d.events.emit({
             type: "session.notice",
@@ -839,6 +844,10 @@ export function createRpc(
           d.replies.setReason(sessionId, "locked");
           return queued("locked");
         }
+        // The chat moved to the person's terminal while this was typing into the one Relay ran: send it there.
+        const moved = d.registry.get(sessionId);
+        if (session.ptySocket && moved && moved.ptySocket !== session.ptySocket && moved.status !== "ended")
+          return sendNow(moved, text, arrived, sendId);
         if (!(err instanceof WaitForPause)) throw err;
         // `relay shell` already waited up to 15 s for you to stop typing in that tab: don't ask it again here.
         const wait = Math.max(timing.pollMs, err.retryInMs ?? 0);

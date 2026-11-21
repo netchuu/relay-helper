@@ -48,6 +48,7 @@ interface SessionRow {
   socket_token: string | null;
   pty_socket: string | null;
   pty_token: string | null;
+  moved_at: number | null;
   wezterm_pane: string | null;
   wezterm_socket: string | null;
   kitty_listen_on: string | null;
@@ -68,6 +69,8 @@ export interface SessionRecord extends Session {
   /** `relay shell`'s socket and token when the session runs in one (Zed's terminal). */
   ptySocket: string | null;
   ptyToken: string | null;
+  /** When the chat moved from Relay's own terminal to the person's. */
+  movedAt: number | null;
   /** The WezTerm pane or kitty window it runs in (paneTerminals.ts). */
   weztermPane: string | null;
   weztermSocket: string | null;
@@ -118,8 +121,8 @@ export function defaultSocketPath(pid: number | null): string | null {
 }
 
 /** A session with the pane its terminal reported (the columns are NULL for a session without one). */
-const SELECT_SESSIONS = `SELECT s.*, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id
-  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id`;
+const SELECT_SESSIONS = `SELECT s.*, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id`;
 
 function toRecord(r: SessionRow): SessionRecord {
   const socketPath = r.socket_path ?? defaultSocketPath(r.pid);
@@ -159,6 +162,7 @@ function toRecord(r: SessionRow): SessionRecord {
     socketToken: r.socket_token,
     ptySocket: r.pty_socket ?? null,
     ptyToken: r.pty_token ?? null,
+    movedAt: r.moved_at ?? null,
     weztermPane: r.wezterm_pane ?? null,
     weztermSocket: r.wezterm_socket ?? null,
     kittyListenOn: r.kitty_listen_on ?? null,
@@ -193,6 +197,9 @@ export function publicSession(s: SessionRecord): Session {
     ...commandsRunField(s),
     ...(s.status === "ended" ? {} : { ...heldField(s.id), ...permissionModeField(s.id) }),
     ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
+    ...(s.movedAt != null && s.status !== "ended" && !s.runsInHelper
+      ? { movedToTerminal: true as const }
+      : {}),
     // Model and effort as Claude Code reports them; left out for app sessions, which get no model picker.
     ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
     // What is left of the limits (usage-left); an ended session shows none.
@@ -419,6 +426,16 @@ export class Registry {
       );
     this.notePanes(id, env);
     return { session: this.get(id) as SessionRecord, created: false };
+  }
+
+  /** The chat left Relay's own terminal for the person's: its typing route goes, the new terminal's comes with the next hook. */
+  markMoved(id: string): void {
+    this.db.query("UPDATE sessions SET pty_socket = NULL, pty_token = NULL WHERE id = ?").run(id);
+    this.db
+      .query(
+        "INSERT INTO moved_sessions (session_id, moved_at) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET moved_at = excluded.moved_at",
+      )
+      .run(id, Date.now());
   }
 
   /** Stores the WezTerm pane and kitty window a hook reported: absent keeps the stored value, null forgets it. */

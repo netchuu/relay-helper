@@ -31,6 +31,11 @@ export function hostSocketPath(dir: string, id: string): string {
   return process.platform === "win32" ? `\\\\.\\pipe\\relay-host-${id}` : join(dir, `h-${id}.sock`);
 }
 
+/** The chat id a host's socket belongs to; null for any other socket (a `relay shell` tab's). */
+export function hostIdOf(socket: string): string | null {
+  return /(?:[/\\]h-|relay-host-)([0-9a-f]{8})(?:\.sock)?$/.exec(socket)?.[1] ?? null;
+}
+
 export function hostStatePath(dir: string, id: string): string {
   return join(dir, `h-${id}.json`);
 }

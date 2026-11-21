@@ -9,6 +9,7 @@ import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
+import type { Handover } from "./handover.ts";
 import { type HeldReplies, notePermissionMode } from "./held.ts";
 import { clearLeftUnsent, splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
@@ -63,6 +64,8 @@ export interface HookDeps {
   suggestions?: SuggestionWatcher;
   /** Replies Claude Code holds at the Mac (held-replies); absent in tests that don't need it. */
   held?: HeldReplies;
+  /** Stops Relay's own terminal copy of a chat resumed in the person's terminal; absent in tests that don't need it. */
+  handover?: Handover;
 }
 
 const NO_OUTPUT: HookReply = { stdout: "" };
@@ -283,6 +286,9 @@ export class HookHandler {
     if (!event || !sessionId) return NO_OUTPUT;
 
     const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : undefined);
+    if (this.d.handover?.fromLeftCopy(sessionId, envelope.env)) return NO_OUTPUT;
+    if (event === "SessionStart" && str("source") === "resume")
+      await this.d.handover?.resumed(sessionId, envelope.env);
     const { session, created } = this.d.registry.touch(sessionId, {
       cwd: str("cwd"),
       transcript: str("transcript_path"),
