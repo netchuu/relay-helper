@@ -24,6 +24,7 @@ import { pendingPicks } from "./pendingPick.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { suggestionOf } from "./suggestion.ts";
+import { cleanName } from "./text.ts";
 import { transcriptLastActivity, transcriptPathFor } from "./transcript.ts";
 import { usageOf } from "./usage.ts";
 
@@ -125,20 +126,22 @@ export function defaultSocketPath(pid: number | null): string | null {
 const SELECT_SESSIONS = `SELECT s.*, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at
   FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id`;
 
+const cleanNullable = <T extends string | null>(s: T): T => (s == null ? s : (cleanName(s) as T));
+
 function toRecord(r: SessionRow): SessionRecord {
   const socketPath = r.socket_path ?? defaultSocketPath(r.pid);
   return {
     id: r.id,
     // A phone's name wins everywhere; Claude Code's stays as originalName.
-    name: r.custom_name ?? r.name,
-    ...(r.custom_name ? { originalName: r.name } : {}),
+    name: cleanNullable(r.custom_name ?? r.name),
+    ...(r.custom_name ? { originalName: cleanNullable(r.name) } : {}),
     ...(r.pinned_at != null ? { pinnedAt: r.pinned_at } : {}),
     cwd: r.cwd,
     project: r.project,
     branch: r.branch,
     kind: (["interactive", "background"].includes(r.kind) ? r.kind : "unknown") as SessionKind,
     status: r.status as SessionStatus,
-    title: r.title,
+    title: cleanNullable(r.title),
     terminal: r.terminal,
     canReceive:
       r.status !== "ended" &&
