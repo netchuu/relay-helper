@@ -11,7 +11,7 @@ import {
 import type { EventLog } from "./events.ts";
 import { redact } from "./redact.ts";
 import { closeOpenFence, splitBlocks } from "./render.ts";
-import { TimelineReader } from "./timeline.ts";
+import { isCommandEntry, TimelineReader } from "./timeline.ts";
 
 /** Live messages: what Claude writes between tool calls, read from the transcript (no hook fires for text). */
 
@@ -152,6 +152,8 @@ interface Following {
   timeline: TimelineReader;
   actions: TurnStep[];
   actionIds: Set<string>;
+  /** Command entries written before the turn started, since the last entry of the turn before. */
+  commands: unknown[];
   /** Settles when the long outputs met so far have been read from their files (command-output). */
   outputs: Promise<void>;
 }
@@ -214,8 +216,10 @@ export class MessageTracker {
       timeline: new TimelineReader(cwd, startedAt, { transcriptPath: path }),
       actions: [],
       actionIds: new Set(),
+      commands: [],
       outputs: Promise.resolve(),
     };
+    if (path && !resumed) this.holdEarlierCommands(state, state.offset);
     this.turns.set(sessionId, state);
     live.set(sessionId, { turnId, messages: state.sent, actions: state.actions });
     if (path && this.pollMs > 0) state.timer = setInterval(() => this.read(sessionId, state), this.pollMs);
@@ -276,11 +280,57 @@ export class MessageTracker {
     this.events.emit({ type: "turn.action", sessionId, turnId: state.turnId, step: { ...step } });
   }
 
+  private holdCommand(state: Following, entry: unknown): void {
+    if (isCommandEntry(entry as Parameters<typeof isCommandEntry>[0])) state.commands.push(entry);
+    else if ((entry as { isMeta?: boolean })?.isMeta !== true) state.commands = [];
+  }
+
+  /** The trailing commands in the last bytes before `end`: a turn that starts normally skips them, but they are its first steps. */
+  private holdEarlierCommands(state: Following, end: number): void {
+    if (!state.path || end <= 0) return;
+    const start = Math.max(0, end - 256 * 1024);
+    let text: string;
+    try {
+      const fd = openSync(state.path, "r");
+      try {
+        const buf = Buffer.alloc(end - start);
+        const n = readSync(fd, buf, 0, buf.length, start);
+        text = buf.subarray(0, n).toString("utf8");
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return;
+    }
+    // Drop a partial first line, and a last line still being written.
+    const lines = text.split("\n");
+    if (start > 0) lines.shift();
+    lines.pop();
+    for (const line of lines) {
+      let entry: { timestamp?: string } | null;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const at = entry?.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+      if (!entry || Number.isNaN(at) || at >= state.startedAt) continue;
+      this.holdCommand(state, entry);
+    }
+  }
+
   /** The entry's actions and thinking lines, from the turn's start on; a failed action is sent again. */
   private readActions(sessionId: string, state: Following, entry: unknown): void {
     const e = entry as { timestamp?: string };
     const at = e?.timestamp ? Date.parse(e.timestamp) : Number.NaN;
-    if (Number.isNaN(at) || at < state.startedAt) return;
+    if (Number.isNaN(at)) return;
+    if (at < state.startedAt) {
+      this.holdCommand(state, entry);
+      return;
+    }
+    const held = state.commands;
+    state.commands = [];
+    for (const old of held) this.readActions(sessionId, { ...state, startedAt: 0 }, old);
     for (const step of state.timeline.add(entry as Parameters<TimelineReader["add"]>[0]))
       this.sendAction(sessionId, state, step);
   }

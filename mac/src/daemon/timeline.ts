@@ -284,6 +284,7 @@ export interface TimelineEntry {
   agentId?: string;
   message?: { content?: unknown };
   toolUseResult?: unknown;
+  isMeta?: boolean;
 }
 
 /**
@@ -291,6 +292,12 @@ export interface TimelineEntry {
  * failed when its `tool_result` says `is_error`) and thinking lines (one per thinking block, timed from the
  * previous main-conversation entry). `add` returns what the entry added or changed, for the live events.
  */
+/** A slash command's echo or printed output: it belongs to the prompt that follows it, not the turn before. */
+export function isCommandEntry(entry: TimelineEntry): boolean {
+  if (!entry || entry.type !== "user" || entry.isMeta || entry.isSidechain) return false;
+  return /^<(command-name|local-command-)/.test(textOf(entry.message?.content).trim());
+}
+
 export class TimelineReader {
   readonly actions: TurnStep[] = [];
   readonly thoughts: TurnStep[] = [];
@@ -301,6 +308,7 @@ export class TimelineReader {
   private readonly transcriptPath: string | null;
   private readonly unread = new Map<string, { step: TurnStep; file: string }>();
   private lastAt: number | null;
+  private command: TurnStep | null = null;
 
   /**
    * `sidechain`: the entries are a subagent's own (agent-progress), so they are read, not skipped. `transcriptPath`:
@@ -357,6 +365,38 @@ export class TimelineReader {
     return changed;
   }
 
+  /** A slash command's echo is a step named after the command; the output entry after it fills that step in. */
+  private slashCommand(entry: TimelineEntry, at: number): TurnStep | null {
+    const text = textOf(entry.message?.content).trim();
+    const name = /^<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
+    if (name) {
+      const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
+      const line = `${name.startsWith("/") ? name : `/${name}`}${args ? ` ${args}` : ""}`;
+      const input = { command: line };
+      const base = typeof entry.uuid === "string" ? entry.uuid : `c${at}-${this.actions.length}`;
+      const step: TurnStep = {
+        ...stepFor("Bash", input, this.cwd, "done"),
+        at,
+        id: base,
+        ...actionFields("Bash", input, this.cwd),
+        tool: "Command",
+      };
+      this.actions.push(step);
+      this.byId.set(base, step);
+      this.command = step;
+      return step;
+    }
+    const printed =
+      /^<local-command-(?:stdout|stderr)>([\s\S]*?)(?:<\/local-command-(?:stdout|stderr)>)?$/.exec(text);
+    if (!printed) return null;
+    const step = this.command;
+    if (!step || step.output !== undefined) return null;
+    const shown = shownOutput(printed[1] ?? "");
+    if (shown.output === undefined) return null;
+    Object.assign(step, shown);
+    return step;
+  }
+
   /** When the last entry was written (ms), if any had a time. */
   get lastEntryAt(): number | null {
     return this.lastAt;
@@ -385,6 +425,10 @@ export class TimelineReader {
     const at = Number.isNaN(ts) ? (this.lastAt ?? 0) : ts;
     const changed: TurnStep[] = [];
     const content = entry.message?.content;
+    if (entry.type === "user" && !this.sidechain && !entry.isMeta) {
+      const step = this.slashCommand(entry, at);
+      if (step) changed.push(step);
+    }
     if (Array.isArray(content)) {
       content.forEach((raw, index) => {
         const block = raw as Block;

@@ -7,6 +7,7 @@ import { finishedMessages, messageFrom, type RawMessage, turnMessageFields } fro
 import { redact } from "./redact.ts";
 import { compact, withoutIdeContext } from "./render.ts";
 import { TranscriptSteps, timelineFields } from "./steps.ts";
+import { isCommandEntry } from "./timeline.ts";
 import { isContextFullError } from "./usage.ts";
 
 /** Past turns read (redacted, read-only) from Claude Code's transcript, for sessions Relay didn't record. */
@@ -364,6 +365,11 @@ export function interruptedTurn(
     rest = entries.slice(boundary + 1).filter(({ ts }) => ts >= since);
     if (!rest.length) return empty;
   } else rest = entries.slice(anchor + 1);
+  // Commands run just before the prompt are this turn's steps; the ones after its answer are the next turn's.
+  const before =
+    anchor === -1
+      ? []
+      : entries.slice(boundary + 1, anchor).filter(({ entry }) => isCommandEntry(entry as Entry));
 
   let interrupted = false;
   let text = "";
@@ -377,8 +383,15 @@ export function interruptedTurn(
   const messages: RawMessage[] = [];
   let finished = false;
   let lastAt: number | null = null;
+  for (const { entry } of before) steps.add(entry);
+  // Commands after the turn's last answer are the next turn's, unless no prompt follows.
+  const held: Entry[] = [];
+  let cut = false;
   for (const { entry, ts } of rest) {
-    if (ts > until) break;
+    if (ts > until) {
+      cut = true;
+      break;
+    }
     if (isInterruptMarker(entry)) {
       interrupted = true;
       endedAt = ts;
@@ -386,7 +399,18 @@ export function interruptedTurn(
       continue;
     }
     // The next prompt is a new turn (one queued at the computer starts as soon as Esc stops this one).
-    if (promptText(entry) !== null) break;
+    if (promptText(entry) !== null) {
+      cut = true;
+      break;
+    }
+    if (anchor !== -1 && isCommandEntry(entry)) {
+      held.push(entry);
+      continue;
+    }
+    if (entry.type === "assistant" && !entry.isSidechain) {
+      for (const command of held) steps.add(command);
+      held.length = 0;
+    }
     if ((entry.type === "assistant" || entry.type === "user") && !entry.isSidechain) {
       finished = isFinishedAnswer(entry);
       lastAt = ts;
@@ -409,10 +433,11 @@ export function interruptedTurn(
       if (block.name && EDIT_TOOLS.has(block.name) && typeof file === "string") files.add(file);
     }
   }
+  if (!cut) for (const command of held) steps.add(command);
   return {
     interrupted,
     text,
-    toolCalls: steps.steps.length,
+    toolCalls: steps.steps.filter((s) => s.tool !== "Command").length,
     files: [...files],
     endedAt,
     steps: steps.steps,
@@ -474,6 +499,7 @@ function promptText(entry: Entry): string | null {
 function draftsFrom(path: string, cwd: string | null = null): Draft[] {
   const drafts: Draft[] = [];
   let current: Draft | null = null;
+  let waiting: Entry[] = [];
   for (const line of readTail(path).split("\n")) {
     if (!line) continue;
     let entry: Entry;
@@ -505,9 +531,20 @@ function draftsFrom(path: string, cwd: string | null = null): Draft[] {
         messages: [],
       };
       drafts.push(current);
+      for (const held of waiting) current.steps.add(held);
+      waiting = [];
+      continue;
+    }
+    if (isCommandEntry(entry)) {
+      waiting.push(entry);
       continue;
     }
     if (current && entry.type === "user") current.steps.add(entry);
+    // A command that made its own answer belongs to the turn that gets the answer.
+    if (current && entry.type === "assistant" && !entry.isSidechain) {
+      for (const held of waiting) current.steps.add(held);
+      waiting = [];
+    }
     if (!current || entry.type !== "assistant" || entry.isSidechain || !Array.isArray(entry.message?.content))
       continue;
     current.steps.add(entry);
@@ -530,6 +567,7 @@ function draftsFrom(path: string, cwd: string | null = null): Draft[] {
       if (block.name && EDIT_TOOLS.has(block.name) && typeof file === "string") current.files.add(file);
     }
   }
+  if (current) for (const held of waiting) current.steps.add(held);
   return drafts;
 }
 
@@ -538,7 +576,7 @@ function toTurn(sessionId: string, d: Draft, previewChars: number): Turn {
   const { text: summary, truncated } = compact(full, previewChars);
   const stats: TurnStats = {
     durationMs: d.endedAt > d.startedAt ? d.endedAt - d.startedAt : null,
-    toolCalls: d.steps.steps.length,
+    toolCalls: d.steps.steps.filter((s) => s.tool !== "Command").length,
     filesEdited: [...d.files],
   };
   const timeline = timelineFields(d.steps.steps, d.steps.thoughts);
