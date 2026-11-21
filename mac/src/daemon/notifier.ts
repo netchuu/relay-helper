@@ -8,6 +8,7 @@ import type { EventLog } from "./events.ts";
 import { type FcmMessage, isDeadFcmToken } from "./fcm.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { type ApnsEnvironment, isDeadToken } from "./push.ts";
+import type { PushOutcomes } from "./pushOutcomes.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import { type RelayApns, type RelayFcm, sealForPhone } from "./relayPush.ts";
@@ -280,6 +281,7 @@ export class Notifier {
     private readonly registry: Registry,
     private readonly broker: Broker,
     private readonly senders: PushSenders,
+    private readonly outcomes?: PushOutcomes,
   ) {}
 
   /** Whether pushes to devices on this platform can be sent at all. */
@@ -370,6 +372,8 @@ export class Notifier {
       )
       .all() as PushTarget[];
     let sent = 0;
+    let tried = 0;
+    let refused: { status: number; reason?: string } | undefined;
     for (const t of targets) {
       let result: { status: number; reason?: string };
       let dead: boolean;
@@ -407,8 +411,11 @@ export class Notifier {
           dead = isDeadToken(result);
         }
       }
+      tried++;
       if (result.status === 200) sent++;
-      else if (dead) {
+      else refused = result;
+      if (result.status === 200) continue;
+      if (dead) {
         this.db.query("UPDATE devices SET apns_token = NULL WHERE id = ?").run(t.id);
         log.info("forgot dead push token", {
           device: t.id,
@@ -423,6 +430,13 @@ export class Notifier {
           reason: result.reason,
         });
     }
+    this.outcomes?.record({
+      at: Date.now(),
+      tried,
+      accepted: sent,
+      status: refused?.status,
+      reason: refused?.reason,
+    });
     return sent;
   }
 }

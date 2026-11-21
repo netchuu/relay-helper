@@ -22,6 +22,7 @@ import { MessageTracker } from "./messages.ts";
 import { Notifier } from "./notifier.ts";
 import { Phones } from "./phones.ts";
 import { PresenceMonitor } from "./presence.ts";
+import { PushOutcomes } from "./pushOutcomes.ts";
 import { Registry, setTypingPreferred } from "./registry.ts";
 import { RelayLink } from "./relayLink.ts";
 import { RelayApns, RelayFcm } from "./relayPush.ts";
@@ -64,7 +65,18 @@ export async function runDaemon(): Promise<void> {
     apns = new RelayApns(config.relayUrl, identity);
     fcm = new RelayFcm(config.relayUrl, identity);
   }
-  const notifier = apns || fcm ? new Notifier(db, events, presence, registry, broker, { apns, fcm }) : null;
+  const notifier =
+    apns || fcm
+      ? new Notifier(
+          db,
+          events,
+          presence,
+          registry,
+          broker,
+          { apns, fcm },
+          new PushOutcomes(paths.pushOutcomes),
+        )
+      : null;
   const terminal = hostLauncher();
   const baseDeps = { db, events, registry, broker, presence, config, notifier, claudeBin, terminal };
   setCanStartSessions(Boolean(claudeBin));

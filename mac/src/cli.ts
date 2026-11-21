@@ -21,6 +21,7 @@ import { typingRouteFor } from "./daemon/inject.ts";
 import { runDaemon } from "./daemon/main.ts";
 import { kittyDoctorNote } from "./daemon/paneTerminals.ts";
 import { liveTmuxSockets } from "./daemon/presence.ts";
+import { readPushOutcomes, summarizePushes } from "./daemon/pushOutcomes.ts";
 import { appRouteOf, pinnedFirst, Registry } from "./daemon/registry.ts";
 import {
   BIN_DIR,
@@ -479,8 +480,13 @@ async function doctor(): Promise<void> {
       "tmux: not installed. On Linux, replies from the phone are typed only into tmux; elsewhere they arrive as a message from another session",
     );
 
-  if (config.relayUrl) ok("Push: through the relay (iPhone and Android, no keys needed on this computer)");
-  else
+  if (config.relayUrl) {
+    ok("Push: through the relay (iPhone and Android, no keys needed on this computer)");
+    const pushes = summarizePushes(readPushOutcomes(paths.pushOutcomes), Date.now(), (ms) =>
+      ago(Date.now() - ms),
+    );
+    (pushes.ok ? ok : warn)(pushes.text);
+  } else
     warn(
       "Push: off — this computer isn't paired with a relay. Prompts still reach the app while it's open, but the phone won't get notifications from this computer yet",
     );

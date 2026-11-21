@@ -37,6 +37,7 @@ export const paths = {
   config: join(RELAY_HOME, "config.json"),
   identity: join(RELAY_HOME, "identity.json"),
   log: join(RELAY_HOME, "daemon.log"),
+  pushOutcomes: join(RELAY_HOME, "push-outcomes.json"),
   /** Photos and files from the phone (attachments): <session>/<id8>-<name>, and .partial/ while uploading. */
   attachments: join(RELAY_HOME, "attachments"),
 } as const;
