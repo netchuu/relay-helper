@@ -323,6 +323,24 @@ export class TurnStopper {
     }
   }
 
+  /** Ends a turn as failed (its process stopped or reported an error); raises no push of its own. */
+  endFailed(turnId: string, text?: string): string | null {
+    const row = this.d.db
+      .query("SELECT session_id, started_at, prompt FROM turns WHERE id = ?")
+      .get(turnId) as { session_id: string; started_at: number | null; prompt: string | null } | null;
+    if (!row) return null;
+    if (text) return this.endStopped(turnId, { ...NO_TURN_INFO, text }, false, true);
+    const info = row.started_at
+      ? this.transcriptInfo(row.session_id, row.started_at, undefined, row.prompt)
+      : null;
+    return this.endStopped(
+      turnId,
+      { ...(info ?? NO_TURN_INFO), text: withDiedNote(info?.text ?? "") },
+      false,
+      true,
+    );
+  }
+
   /** Ends a turn as stopped and announces it once; the session goes idle unless a newer turn already started. */
   endStopped(
     turnId: string,

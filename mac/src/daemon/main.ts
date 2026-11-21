@@ -131,6 +131,16 @@ export async function runDaemon(): Promise<void> {
     registry,
     claudeBin,
     openPrompt: (input, signal) => hooks.openPrompt(input, signal),
+    notice: (sessionId, text) => events.emit({ type: "session.notice", sessionId, level: "error", text }),
+    turns: {
+      openId: (id) =>
+        db
+          .query<{ id: string }, [string]>(
+            "SELECT id FROM turns WHERE session_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+          )
+          .get(id)?.id ?? null,
+      fail: (turnId, text) => void stopper.endFailed(turnId, text),
+    },
   });
   registry.ownedByHelper = (id) => headless.has(id);
   stopper.headless = headless;

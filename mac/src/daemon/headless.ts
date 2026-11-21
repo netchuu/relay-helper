@@ -2,6 +2,7 @@ import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
 import type { HookReply } from "./broker.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
+import { redact } from "./redact.ts";
 import type { Registry, SessionRecord } from "./registry.ts";
 
 /** Continues a session without a terminal (`session.resume`): `claude --resume` over stream-json pipes, permissions via Relay prompts. */
@@ -81,7 +82,16 @@ export interface HeadlessDeps {
   openPrompt(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply>;
   spawn?: HeadlessSpawn;
   initTimeoutMs?: number;
+  /** Tells the phone why a chat stopped on its own. */
+  notice?(sessionId: string, text: string): void;
+  /** The session's open turn, and how it ends as failed (`text` replaces the transcript's answer when given). */
+  turns?: { openId(sessionId: string): string | null; fail(turnId: string, text?: string): void };
+  /** How long a `result` with `is_error` waits for Claude Code's own StopFailure hook before the helper ends the turn. */
+  errorGraceMs?: number;
 }
+
+/** How long a `result` with `is_error` waits for the StopFailure hook, which reports the turn itself. */
+export const ERROR_GRACE_MS = 3_000;
 
 interface Owned {
   child: HeadlessChild;
@@ -94,6 +104,8 @@ interface Owned {
   confirms: boolean;
   /** Messages written and not named yet, by uuid; each runs when the process names it or ends. */
   unnamed: Map<string, (named: boolean) => void>;
+  /** The check after a `result` with `is_error`, until it runs. */
+  errorTimer?: ReturnType<typeof setTimeout>;
 }
 
 /** How long a Stop waits for the process to end its turn before the process itself is ended. */
@@ -270,7 +282,7 @@ export class HeadlessSessions {
   private watch(id: string, entry: Owned): Promise<void> {
     const { child } = entry;
     let errText = "";
-    void drain(child.stderr, (chunk) => {
+    const stderrDone = drain(child.stderr, (chunk) => {
       errText = (errText + chunk).slice(-2000);
     });
     return new Promise<void>((resolve, reject) => {
@@ -302,6 +314,7 @@ export class HeadlessSessions {
             resolve();
           } else if (msg.type === "result") {
             for (const done of [...entry.turnEnded.values()]) done();
+            if (msg.is_error === true) this.resultFailed(id, entry, msg.result);
           } else if (msg.type === "control_response") {
             const rid = msg.response?.request_id;
             if (rid) entry.turnEnded.get(rid)?.();
@@ -313,11 +326,14 @@ export class HeadlessSessions {
           }
         }
       });
-      void child.exited.then((code) => {
+      void child.exited.then(async (code) => {
         for (const settle of entry.unnamed.values()) settle(false);
         entry.unnamed.clear();
         const mine = this.owned.get(id) === entry;
         log.info("headless session exited", { sessionId: id, code });
+        // A stop Relay asked for (or a handover) took the process out of `owned` first, or marked the chat.
+        const byItself = mine && ready && !this.handingOver.has(id);
+        const openTurn = byItself ? this.d.turns?.openId(id) : null;
         if (mine) this.drop(id, entry, true);
         const why = firstLine(errText);
         failEarly(
@@ -325,8 +341,31 @@ export class HeadlessSessions {
             ? `Claude Code couldn't continue the session: ${why}`
             : "Claude Code stopped before it answered.",
         );
+        if (!byItself) return;
+        // The last stderr lines may still be in the pipe.
+        await Promise.race([stderrDone, Bun.sleep(200)]);
+        const last = lastLine(errText);
+        this.d.notice?.(id, last ? `Claude Code stopped: ${last}` : "Claude Code stopped by itself.");
+        if (openTurn) this.d.turns?.fail(openTurn);
       });
     });
+  }
+
+  /**
+   * A turn that stopped on an API error ends as a `result` with `is_error`. Claude Code's StopFailure hook usually
+   * reports it, and then the turn is closed; when it hasn't by the time this runs, the helper does.
+   */
+  private resultFailed(id: string, entry: Owned, result: unknown): void {
+    const turnId = this.d.turns?.openId(id);
+    if (!turnId) return;
+    clearTimeout(entry.errorTimer);
+    entry.errorTimer = setTimeout(() => {
+      entry.errorTimer = undefined;
+      if (this.owned.get(id) !== entry || this.d.turns?.openId(id) !== turnId) return;
+      const said = typeof result === "string" ? redact(result).trim() : "";
+      this.d.turns.fail(turnId, said || undefined);
+      this.d.notice?.(id, said ? said.slice(0, 500) : "Claude Code stopped on an error.");
+    }, this.d.errorGraceMs ?? ERROR_GRACE_MS);
   }
 
   /** What Claude Code names as read: a `command_lifecycle` line, the user message echoed back, or a `result` for it. */
@@ -401,6 +440,7 @@ export class HeadlessSessions {
   private drop(id: string, entry: Owned, exited = false, keepStatus = false): void {
     if (this.owned.get(id) === entry) this.owned.delete(id);
     entry.abort.abort();
+    clearTimeout(entry.errorTimer);
     if (!exited) {
       try {
         entry.child.stdin.end();
@@ -429,6 +469,8 @@ interface StreamMessage {
   state?: string;
   command_uuid?: string;
   user_message_uuids?: unknown;
+  is_error?: unknown;
+  result?: unknown;
   response?: { subtype?: string; request_id?: string };
   request?: {
     subtype?: string;
@@ -451,4 +493,12 @@ async function drain(stream: ReadableStream<Uint8Array>, onText: (text: string) 
 function firstLine(text: string): string {
   const line = text.split("\n").find((l) => l.trim()) ?? "";
   return line.trim().slice(0, 200);
+}
+
+/** The last thing Claude Code printed to stderr, redacted, one short line. */
+function lastLine(text: string): string {
+  const lines = redact(text)
+    .split("\n")
+    .filter((l) => l.trim());
+  return (lines.at(-1) ?? "").trim().slice(0, 200);
 }
