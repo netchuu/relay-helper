@@ -21,9 +21,9 @@
  *    after that changes it.
  */
 
-/** A line made only of a horizontal rule, or the top or bottom edge of the older box. */
+/** A line made only of a horizontal rule (it may carry the session's name near its end), or an edge of the older box. */
 function isRule(line: string): boolean {
-  return /^[╭╰]?─{8,}[╮╯]?$/.test(line.trim());
+  return /^[╭╰]?─{8,}(?: [^─\n]{1,60} ─+)?[╮╯]?$/.test(line.trim());
 }
 
 /** The prompt markers: `❯` (2.x), `>` (1.x), `!` (shell mode). */

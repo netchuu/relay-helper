@@ -6,8 +6,8 @@ import type { DB } from "./db.ts";
 import { notePhoneLaunch } from "./hooks.ts";
 import { promptTextRead } from "./promptLine.ts";
 import type { Registry } from "./registry.ts";
+import type { TerminalLauncher } from "./terminalHost.ts";
 import { head } from "./text.ts";
-import type { TerminalLauncher } from "./tmuxStart.ts";
 
 /** How long a session started in a terminal may take to show its prompt. */
 export const READY_TIMEOUT_MS = 30_000;
@@ -134,15 +134,13 @@ function firstLine(text: string): string {
 
 /** The command for a session in a terminal: its id is chosen here, so no lookup is needed afterwards. */
 export function terminalCommand(claudeBin: string, sessionId: string, text?: string): string[] {
-  // Panes get the server's environment: the lookups' marker must not be in it, and the PATH is the helper's.
-  const env = ["env", "-u", "RELAY_INTERNAL", `PATH=${CHILD_PATH}`];
   return text === undefined
-    ? [...env, claudeBin, "--session-id", sessionId]
-    : [...env, claudeBin, "--session-id", sessionId, "--", text];
+    ? [claudeBin, "--session-id", sessionId]
+    : [claudeBin, "--session-id", sessionId, "--", text];
 }
 
 /**
- * Starts the session in a pane the helper can type into, so the phone's messages arrive as typed input. Returns
+ * Starts the session in a terminal of Relay's own, which the helper can type into, so the phone's messages arrive as typed input. Returns
  * once the prompt is showing, so the first message from the phone never meets a session that isn't ready.
  */
 async function startInTerminal(
@@ -158,7 +156,7 @@ async function startInTerminal(
     pane = await terminal.launch(
       terminalCommand(claudeBin, sessionId, opts.text),
       cwd,
-      `relay-${sessionId.slice(0, 8)}`,
+      sessionId.slice(0, 8),
     );
   } catch (err) {
     launch?.abort();
@@ -194,7 +192,7 @@ async function startInTerminal(
   const { created } = opts.registry.touch(sessionId, {
     cwd,
     kind: "interactive",
-    env: { tmux: `${pane.socket},${pane.pid},0`, tmuxPane: pane.pane, claudePid: pane.pid },
+    env: { pty: pane.socket, ptyToken: pane.token, claudePid: pane.pid },
   });
   if (created) opts.registry.publish(sessionId);
   if (opts.name) opts.registry.rename(sessionId, opts.name);
@@ -210,7 +208,7 @@ interface StartOptions {
   text?: string;
   /** The phone's name for the session. */
   name?: string | null;
-  /** Starts the session in a pane the helper types into; without it (no tmux) `claude --bg` runs it. */
+  /** Starts the session in a terminal the helper types into; without it `claude --bg` runs it. */
   terminal?: TerminalLauncher | null;
   readyTimeoutMs?: number;
   pollMs?: number;

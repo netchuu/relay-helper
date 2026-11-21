@@ -61,8 +61,8 @@ import { slashCommandsFor } from "./slashCommands.ts";
 import { StartError, sessionDirectories, startSession } from "./startSession.ts";
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
+import type { TerminalLauncher } from "./terminalHost.ts";
 import { withoutOutput } from "./timeline.ts";
-import type { TerminalLauncher } from "./tmuxStart.ts";
 import {
   TRANSCRIPT_TURN_PREFIX,
   transcriptPathFor,

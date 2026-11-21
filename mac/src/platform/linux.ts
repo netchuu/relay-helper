@@ -81,6 +81,8 @@ export function systemdUnit(ctx: ServiceContext, env: LinuxDeps["env"] = process
     `ExecStart=${sdQuote(ctx.relayBin)} daemon`,
     "Restart=always",
     "RestartSec=2",
+    // Chats started from the phone run in their own `relay host` processes; stopping the daemon must not end them.
+    "KillMode=process",
     `Environment=${sdQuote(`PATH=${ctx.path}`)}`,
   ];
   // A custom data directory (tests, or someone who moved it) has to reach the daemon too.

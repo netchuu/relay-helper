@@ -7,12 +7,12 @@ import { EventLog } from "../src/daemon/events.ts";
 import { deliver } from "../src/daemon/inject.ts";
 import { Registry, replyRouteOf } from "../src/daemon/registry.ts";
 import { StartError, startSession, terminalCommand } from "../src/daemon/startSession.ts";
-import { type TerminalLauncher, type TerminalPane, tmuxArg, tmuxLauncher } from "../src/daemon/tmuxStart.ts";
+import type { TerminalLauncher, TerminalPane } from "../src/daemon/terminalHost.ts";
 import { fakeTerminals, opts, PROMPT } from "./support/terminals.ts";
 
-// A session started from the phone runs in a pane the helper types into, so phone messages arrive as typed input.
+// A session started from the phone runs in a terminal of Relay's own, which the helper types into, so phone messages arrive as typed input.
 
-const PANE: TerminalPane = { socket: "/tmp/relay-test.sock", pane: "%7", pid: 4242 };
+const PANE: TerminalPane = { id: "abc12345", socket: "/tmp/relay-test.sock", token: "tok", pid: 4242 };
 
 /** A launcher that shows `screens` one look at a time (the last one stays) and records what it was asked to run. */
 function fakeLauncher(screens: { screen: string; exited?: boolean }[]) {
@@ -46,7 +46,7 @@ function setup() {
 }
 
 describe("a session started from the phone", () => {
-  test("reports a typing route, and a send types into its pane instead of the inbox", async () => {
+  test("reports a typing route, and a send types through its terminal instead of the inbox", async () => {
     const { dir, db, registry, done } = setup();
     const { launcher } = fakeLauncher([{ screen: PROMPT }]);
     const { sessionId } = await startSession({
@@ -62,17 +62,13 @@ describe("a session started from the phone", () => {
 
     const t = fakeTerminals(true);
     const res = await deliver(session as NonNullable<typeof session>, "hello", opts, t.ops);
-    expect(res.via).toBe("tmux");
-    expect(t.typed).toEqual(["tmux:hello"]);
+    expect(res.via).toBe("pty");
+    expect(t.typed).toEqual(["pty:hello"]);
     done();
   });
 
-  test("starts Claude Code with its own id, the message after `--`, and no marker from the helper", () => {
+  test("starts Claude Code with its own id, the message after `--`, and nothing wrapped around it", () => {
     expect(terminalCommand("/bin/claude", "abc", "fix; it")).toEqual([
-      "env",
-      "-u",
-      "RELAY_INTERNAL",
-      expect.stringMatching(/^PATH=/),
       "/bin/claude",
       "--session-id",
       "abc",
@@ -115,7 +111,7 @@ describe("a session started from the phone", () => {
     done();
   });
 
-  test("Claude Code refusing to start gives its words to the phone and closes the pane", async () => {
+  test("Claude Code refusing to start gives its words to the phone and closes the terminal", async () => {
     const { dir, db, registry, done } = setup();
     const f = fakeLauncher([{ screen: "\nWorkspace not trusted.\n", exited: true }]);
     const err = await startSession({
@@ -147,56 +143,11 @@ describe("a session started from the phone", () => {
     done();
   });
 
-  test("lets go of the pane once the prompt shows, so a finished chat leaves none behind", async () => {
+  test("lets go of the terminal once the prompt shows, so a finished chat leaves no record behind", async () => {
     const { dir, db, registry, done } = setup();
     const f = fakeLauncher([{ screen: PROMPT }]);
     await startSession({ db, registry, claudeBin: "/bin/claude", directory: dir, terminal: f.launcher });
     expect(f.released()).toBe(1);
     done();
-  });
-
-  test.skipIf(!Bun.which("tmux"))("a real pane is gone after its process exits once released", async () => {
-    const home = mkdtempSync(join(tmpdir(), "relay-tmux-"));
-    const socket = join(home, "t.sock");
-    const run = async (...a: string[]) => {
-      const p = Bun.spawn(["tmux", "-S", socket, ...a], { stdout: "pipe", stderr: "ignore" });
-      return { out: await new Response(p.stdout).text(), code: await p.exited };
-    };
-    try {
-      const made = await run(
-        "new-session",
-        "-d",
-        "-P",
-        "-F",
-        "#{pane_id}",
-        "-s",
-        "t",
-        "--",
-        "sleep",
-        "30",
-        ";",
-        "set-option",
-        "-g",
-        "remain-on-exit",
-        "on",
-      );
-      const pane = made.out.trim();
-      const live = { socket, pane, pid: 0 };
-      await tmuxLauncher.release(live);
-      await run("send-keys", "-t", pane, "C-c");
-      for (let i = 0; i < 50 && (await run("has-session", "-t", "t")).code === 0; i++) await Bun.sleep(50);
-      expect((await run("has-session", "-t", "t")).code).not.toBe(0);
-    } finally {
-      await run("kill-server");
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("tmuxArg", () => {
-  test("keeps a message that ends in a semicolon from ending the tmux command", () => {
-    expect(tmuxArg("fix it;")).toBe(String.raw`fix it\;`);
-    expect(tmuxArg(String.raw`fix it\;`)).toBe(String.raw`fix it\\;`);
-    expect(tmuxArg("fix it")).toBe("fix it");
   });
 });

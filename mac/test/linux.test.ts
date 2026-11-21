@@ -57,6 +57,7 @@ describe("linux service", () => {
     expect(unit).toContain('ExecStart="/home/ana/.relay/bin/relay" daemon');
     expect(unit).toContain("Restart=always");
     expect(unit).toContain("RestartSec=2");
+    expect(unit).toContain("KillMode=process");
     expect(unit).toContain("WantedBy=default.target");
     expect(unit).toContain('Environment="PATH=/home/ana/.local/bin:/usr/bin:/bin"');
     expect(unit).toContain("StandardError=append:/home/ana/.relay/daemon.log");

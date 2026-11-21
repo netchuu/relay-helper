@@ -47,6 +47,7 @@ export function launchdPlist(ctx: ServiceContext): string {
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>ProcessType</key><string>Interactive</string>
+  <key>AbandonProcessGroup</key><true/>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>${esc(ctx.path)}</string>
