@@ -128,6 +128,7 @@ export async function runDaemon(): Promise<void> {
     registry,
     terminal,
     stop: (id) => stopper.interrupt(id, "handover"),
+    headless,
     openTurn: (id) =>
       db
         .query<{ id: string }, [string]>(

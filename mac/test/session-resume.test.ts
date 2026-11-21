@@ -14,6 +14,7 @@ import { RpcSchemas, SendResult, type Session, SessionResumed } from "../../prot
 import { Broker } from "../src/daemon/broker.ts";
 import { type DB, openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
+import { Handover } from "../src/daemon/handover.ts";
 import { HeadlessSessions, resumeCommand } from "../src/daemon/headless.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
 import { processAlive, publicSession, Registry } from "../src/daemon/registry.ts";
@@ -53,6 +54,10 @@ for await (const chunk of process.stdin) {
         out({ type: "control_cancel_request", request_id: "r1" });
       }
       else out({ type: "result", subtype: "success" });
+    } else if (m.type === "control_request" && m.request.subtype === "interrupt") {
+      if (existsSync(here + "/deaf")) continue;
+      appendFileSync(here + "/interrupts.log", "x\\n");
+      out({ type: "control_response", response: { subtype: "success", request_id: m.request_id } });
     } else if (m.type === "control_response") {
       appendFileSync(here + "/answers.log", JSON.stringify(m.response) + "\\n");
       out({ type: "result", subtype: "success" });
@@ -139,6 +144,17 @@ beforeEach(() => {
     broker,
     presence: { noteLocalActivity() {}, get: () => ({}) },
     config: { previewChars: 600 },
+    handover: new Handover({
+      registry,
+      terminal: {} as never,
+      stop: (id) => headless.interrupt(id, 150),
+      headless: {
+        has: (id) => headless.has(id),
+        pidOf: (id) => headless.pidOf(id),
+        release: (id) => headless.release(id),
+        holdStatus: (id) => headless.holdStatus(id),
+      },
+    }),
   } as unknown as ConstructorParameters<typeof HookHandler>[0]);
   build();
 });
@@ -464,5 +480,77 @@ describe("protocol fixtures (resume.json)", () => {
     expect(f.session.runsInHelper).toBe(true);
     expect(f.sendRefused.error.canResume).toBe(true);
     expect(f.refused[0].error.canResume).toBeUndefined();
+  });
+});
+
+describe("a continued chat resumed in a terminal", () => {
+  const start = (pid: number | null) =>
+    hooks.handle(
+      {
+        payload: { hook_event_name: "SessionStart", source: "resume", session_id: ID, cwd: work },
+        env: { claudePid: pid } as never,
+      },
+      new AbortController().signal,
+    );
+  const alive = (pid: number) => processAlive(pid);
+
+  test("stops the helper's copy, keeps the chat live and sends the next message to the terminal", async () => {
+    ended();
+    await call("session.resume", { sessionId: ID, text: "first" });
+    const own = headless.pidOf(ID) as number;
+    await start(own + 100_000);
+    expect(headless.has(ID)).toBe(false);
+    await until(() => !alive(own));
+    const s = registry.get(ID);
+    expect(s?.status).not.toBe("ended");
+    expect(publicSession(s as NonNullable<typeof s>).runsInHelper).toBeFalsy();
+    expect(publicSession(s as NonNullable<typeof s>).movedToTerminal).toBe(true);
+    // The phone's next message is no longer written to the stopped process.
+    const sent = await call("session.send", { sessionId: ID, text: "second" });
+    expect(JSON.stringify(sent)).not.toContain("headless");
+    expect(lines()).toEqual(["first"]);
+  });
+
+  test("a copy that ignores the interrupt is ended without the chat showing as ended", async () => {
+    ended();
+    await call("session.resume", { sessionId: ID, text: "first" });
+    await call("session.send", { sessionId: ID, text: "this needs permission" });
+    await until(() => broker.listOpen(ID).length === 1);
+    writeFileSync(join(tools, "deaf"), "");
+    const own = headless.pidOf(ID) as number;
+    const statuses: string[] = [];
+    events.subscribe((e) => {
+      if (e.type === "session.upsert") statuses.push(e.session.status);
+    });
+    await start(own + 100_000);
+    await until(() => !alive(own));
+    expect(headless.has(ID)).toBe(false);
+    expect(statuses).not.toContain("ended");
+    expect(registry.get(ID)?.status).not.toBe("ended");
+  });
+
+  test("the owned process's own hooks never stop it", async () => {
+    ended();
+    await call("session.resume", { sessionId: ID, text: "first" });
+    const own = headless.pidOf(ID) as number;
+    await start(own);
+    await start(null);
+    expect(headless.pidOf(ID)).toBe(own);
+    expect(alive(own)).toBe(true);
+  });
+
+  test("a running turn is interrupted and its prompts close, without the chat showing as ended", async () => {
+    ended();
+    await call("session.resume", { sessionId: ID, text: "first" });
+    await call("session.send", { sessionId: ID, text: "this needs permission" });
+    await until(() => broker.listOpen(ID).length === 1);
+    const statuses: string[] = [];
+    events.subscribe((e) => {
+      if (e.type === "session.upsert") statuses.push(e.session.status);
+    });
+    await start((headless.pidOf(ID) as number) + 100_000);
+    expect(readFileSync(join(tools, "interrupts.log"), "utf8")).toBe("x\n");
+    expect(broker.listOpen(ID)).toHaveLength(0);
+    expect(statuses).not.toContain("ended");
   });
 });

@@ -96,6 +96,8 @@ export const INTERRUPT_TIMEOUT_MS = 5_000;
 
 export class HeadlessSessions {
   private readonly owned = new Map<string, Owned>();
+  /** Chats being handed to another process: their copy going away (even by a failed interrupt) doesn't end them. */
+  private readonly handingOver = new Set<string>();
 
   constructor(private readonly d: HeadlessDeps) {}
 
@@ -107,6 +109,18 @@ export class HeadlessSessions {
   /** The pid of the process the helper runs for this session, when it does. */
   pidOf(sessionId: string): number | null {
     return this.owned.get(sessionId)?.child.pid ?? null;
+  }
+
+  /** Stops the process and closes its prompts without ending the session: another process took the chat over. */
+  release(sessionId: string): void {
+    const entry = this.owned.get(sessionId);
+    if (entry) this.drop(sessionId, entry, false, true);
+    this.handingOver.delete(sessionId);
+  }
+
+  /** Marks the chat as being handed over, so the process ending before `release` doesn't show it as ended. */
+  holdStatus(sessionId: string): void {
+    if (this.owned.has(sessionId)) this.handingOver.add(sessionId);
   }
 
   /** Starts the process for `session` and sends `text` as its first message; `onWritten` runs once the text is on stdin. */
@@ -305,7 +319,7 @@ export class HeadlessSessions {
   }
 
   /** Forgets the process, closes its prompts, and stops it unless it has exited already. */
-  private drop(id: string, entry: Owned, exited = false): void {
+  private drop(id: string, entry: Owned, exited = false, keepStatus = false): void {
     if (this.owned.get(id) === entry) this.owned.delete(id);
     entry.abort.abort();
     if (!exited) {
@@ -322,7 +336,8 @@ export class HeadlessSessions {
     }
     // The session ended with its process; the list says so (and stops saying it runs here).
     const s = this.d.registry.get(id);
-    if (s && s.status !== "ended") this.d.registry.setStatus(id, "ended");
+    if (keepStatus || this.handingOver.has(id)) this.d.registry.publish(id);
+    else if (s && s.status !== "ended") this.d.registry.setStatus(id, "ended");
     else this.d.registry.publish(id);
   }
 }
