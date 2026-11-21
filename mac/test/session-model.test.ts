@@ -8,6 +8,7 @@ import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
 import type { TypeOps } from "../src/daemon/inject.ts";
 import { displayModel, SessionModels, sessionModels } from "../src/daemon/model.ts";
+import { pendingPicks } from "../src/daemon/pendingPick.ts";
 import { publicSession, Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { mergeHooks } from "../src/install.ts";
@@ -184,7 +185,7 @@ describe("session.model", () => {
     expect(sessionModels.get("s1")).toEqual({});
   });
 
-  test("a pick queued behind a phone message isn't typed once that message made Claude work", async () => {
+  test("a pick queued behind a phone message waits once that message made Claude work", async () => {
     const { rpc, t, registry } = helper();
     // Typing the message starts the turn, as Claude Code's hook would report.
     const type = t.ops.type;
@@ -196,28 +197,158 @@ describe("session.model", () => {
     const send = rpc("session.send", { sessionId: "s1", text: "fix the tests" }, "phone");
     const pick = rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
     await send;
-    expect(await pick).toEqual({
-      error: { code: "conflict", message: "Claude is working. Change the model when it is done." },
-    });
+    expect(await pick).toEqual({ result: { via: "queued" } });
     expect(t.typed).toEqual(["iterm:fix the tests"]);
   });
 
-  test("while Claude works nothing is typed", async () => {
+  test("while Claude works the pick waits and nothing is typed", async () => {
     const { rpc, t, registry } = helper();
     registry.setStatus("s1", "working");
     const out = await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
-    expect(out).toEqual({
-      error: { code: "conflict", message: "Claude is working. Change the model when it is done." },
-    });
+    expect(out).toEqual({ result: { via: "queued" } });
     expect(t.typed).toEqual([]);
+    expect(publicSession(registry.get("s1") as never)).toMatchObject({ pendingModel: "opus" });
   });
 
-  test("with a prompt open nothing is typed", async () => {
+  test("with a prompt open the pick waits", async () => {
     const { rpc, t, setOpen } = helper();
     setOpen(true);
     const out = await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
-    expect(out).toMatchObject({ error: { code: "conflict" } });
+    expect(out).toEqual({ result: { via: "queued" } });
     expect(t.typed).toEqual([]);
+  });
+
+  describe("a pick made while Claude works", () => {
+    afterEach(() => {
+      pendingPicks.clear("s1");
+      pendingPicks.clearRefusal("s1");
+    });
+
+    test("is typed once the session goes idle, and the pending fields go", async () => {
+      const { rpc, t, registry } = helper();
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
+      await rpc("session.model", { sessionId: "s1", effort: "high" }, "phone");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual([]);
+      registry.setStatus("s1", "idle");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual(["iterm:/model opus", "iterm:/effort high"]);
+      expect(publicSession(registry.get("s1") as never)).not.toHaveProperty("pendingModel");
+      expect(publicSession(registry.get("s1") as never)).not.toHaveProperty("pendingEffort");
+    });
+
+    test("a later pick replaces the earlier one", async () => {
+      const { rpc, t, registry } = helper();
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
+      await rpc("session.model", { sessionId: "s1", model: "haiku" }, "phone");
+      expect(publicSession(registry.get("s1") as never)).toMatchObject({ pendingModel: "haiku" });
+      registry.setStatus("s1", "idle");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual(["iterm:/model haiku"]);
+    });
+
+    test("is typed after a late idle, before a message sent then", async () => {
+      const { rpc, t, registry } = helper();
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", effort: "low" }, "phone");
+      // The turn ends late: the phone's message arrives in the same moment the session reports idle.
+      setTimeout(() => registry.setStatus("s1", "idle"), 30);
+      await Bun.sleep(60);
+      await rpc("session.send", { sessionId: "s1", text: "go on" }, "phone");
+      expect(t.typed).toEqual(["iterm:/effort low", "iterm:go on"]);
+    });
+
+    test("a tick and a send during a slow pick wait for it", async () => {
+      const { rpc, t, registry } = helper();
+      const events: string[] = [];
+      const type = t.ops.type;
+      t.ops.type = async (route, tty, text) => {
+        events.push(`start:${text}`);
+        await Bun.sleep(text.startsWith("/") ? 80 : 0);
+        const ok = await type(route, tty, text);
+        events.push(`end:${text}`);
+        return ok;
+      };
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
+      await rpc("session.model", { sessionId: "s1", effort: "low" }, "phone");
+      registry.setStatus("s1", "idle");
+      const first = rpc.applyPicks();
+      await Bun.sleep(20);
+      const second = rpc.applyPicks();
+      const send = rpc("session.send", { sessionId: "s1", text: "go on" }, "phone");
+      await Promise.all([first, second, send]);
+      expect(events).toEqual([
+        "start:/model opus",
+        "end:/model opus",
+        "start:/effort low",
+        "end:/effort low",
+        "start:go on",
+        "end:go on",
+      ]);
+    });
+
+    test("a pick made during a slow pick is typed before a send that waited for it", async () => {
+      const { rpc, t, registry } = helper();
+      const type = t.ops.type;
+      t.ops.type = async (route, tty, text) => {
+        await Bun.sleep(text.startsWith("/") ? 60 : 0);
+        return type(route, tty, text);
+      };
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
+      registry.setStatus("s1", "idle");
+      const tick = rpc.applyPicks();
+      await Bun.sleep(20);
+      await rpc("session.model", { sessionId: "s1", model: "haiku" }, "phone");
+      await rpc("session.send", { sessionId: "s1", text: "go on" }, "phone");
+      await tick;
+      expect(t.typed).toEqual(["iterm:/model opus", "iterm:/model haiku", "iterm:go on"]);
+    });
+
+    test("a pick made once idle, with an older one waiting, replaces it", async () => {
+      const { rpc, t, registry } = helper();
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone");
+      registry.setStatus("s1", "idle");
+      expect(await rpc("session.model", { sessionId: "s1", model: "haiku" }, "phone")).toEqual({
+        result: { via: "queued" },
+      });
+      await rpc.applyPicks();
+      expect(t.typed).toEqual(["iterm:/model haiku"]);
+    });
+
+    test("after Stop it waits for the next idle moment", async () => {
+      const { rpc, t, registry } = helper();
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", effort: "max" }, "phone");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual([]);
+      registry.setStatus("s1", "idle");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual(["iterm:/effort max"]);
+    });
+
+    test("a failed apply drops the pick and sends the refusal once", async () => {
+      const { rpc, t, registry, events } = helper();
+      const seen: Array<{ pickRefusal?: string; pendingEffort?: string }> = [];
+      events.subscribe((e) => {
+        if (e.type === "session.upsert") seen.push(e.session);
+      });
+      registry.setStatus("s1", "working");
+      await rpc("session.model", { sessionId: "s1", effort: "low" }, "phone");
+      t.state.tab = { front: false, screen: DRAFT_PROMPT };
+      registry.setStatus("s1", "idle");
+      await rpc.applyPicks();
+      expect(t.typed).toEqual([]);
+      const refusal = "There is text in the prompt at the computer. Send or clear it first.";
+      expect(seen.some((s) => s.pickRefusal === refusal && s.pendingEffort === undefined)).toBe(true);
+      const after = publicSession(registry.get("s1") as never);
+      expect(after).not.toHaveProperty("pickRefusal");
+      expect(after).not.toHaveProperty("pendingEffort");
+    });
   });
 
   test("a draft in the prompt is never typed into, and the effort stays as it was", async () => {

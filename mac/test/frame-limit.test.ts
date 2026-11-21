@@ -13,7 +13,7 @@ import { ClientSession } from "../src/daemon/clientSession.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { Registry } from "../src/daemon/registry.ts";
-import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
+import { createRpc, type RpcDeps, type RpcOutcome } from "../src/daemon/rpc.ts";
 import { SentMessages } from "../src/daemon/sentMessages.ts";
 
 // Nothing the helper sends may pass the relay's 256 KiB frame limit (the relay closes the Mac's whole link for it).
@@ -39,7 +39,7 @@ const emitBig = (events: EventLog, n: number, chars: number) =>
   events.emit({ type: "session.removed", sessionId: `${n}:${"x".repeat(chars)}` } as any);
 
 async function openSession(
-  rpc: ReturnType<typeof helper>["rpc"],
+  rpc: (method: string, params: unknown, actor: string) => Promise<RpcOutcome>,
   events: EventLog,
   db: ReturnType<typeof openDb>,
 ) {

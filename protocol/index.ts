@@ -316,6 +316,12 @@ export const Session = z.object({
   model: z.string().optional(),
   /** The session's effort level ("medium"), when known; absent otherwise. */
   effort: z.string().optional(),
+  /** A model picked while Claude works, typed once it is idle (`session.model` answered `queued`); absent when none waits. */
+  pendingModel: z.string().optional(),
+  /** Same for an effort level. */
+  pendingEffort: z.string().optional(),
+  /** Why a queued pick could not be applied: a plain sentence, sent once with the update that drops the pick. */
+  pickRefusal: z.string().optional(),
   /** What is left of the plan limits and the session's context (usage-left); absent when the helper has none. */
   usage: Usage.optional(),
   /** The next message Claude Code suggests (one line, redacted), present only while idle and readable off the screen. */
@@ -440,7 +446,7 @@ export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max", "auto"] a
 export const EffortLevel = z.enum(EFFORT_LEVELS);
 export type EffortLevel = z.infer<typeof EffortLevel>;
 
-/** `session.model`'s result: the command that was typed. The new model shows in the session once Claude Code reports it. */
+/** `session.model`'s result: the command that was typed, or `queued` while Claude works (the session then carries `pendingModel` or `pendingEffort`). The new model shows in the session once Claude Code reports it. */
 export const ModelResult = z.object({
   via: z.string(),
 });
@@ -738,7 +744,7 @@ export const RpcSchemas = {
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),
   /** Stops Claude's current turn, as Esc does. Result: InterruptResult. Errors: not_found, conflict (nothing running), unavailable. */
   "session.interrupt": z.object({ sessionId: z.string() }),
-  /** Switches the model or effort (exactly one) by typing `/model` or `/effort`, only when idle with an empty prompt. Result: ModelResult. */
+  /** Switches the model or effort (exactly one) by typing `/model` or `/effort` into an idle, empty prompt; while Claude works the pick waits (a later one replaces it) and is typed once idle, before queued messages. Result: ModelResult. */
   "session.model": z
     .object({ sessionId: z.string(), model: ModelAlias.optional(), effort: EffortLevel.optional() })
     .refine(

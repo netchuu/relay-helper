@@ -20,6 +20,7 @@ import { heldField, permissionModeField } from "./held.ts";
 import { terminalRoutesOf } from "./inject.ts";
 import { sessionModels } from "./model.ts";
 import { paneTargetOf } from "./paneTerminals.ts";
+import { pendingPicks } from "./pendingPick.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { suggestionOf } from "./suggestion.ts";
@@ -201,7 +202,7 @@ export function publicSession(s: SessionRecord): Session {
       ? { movedToTerminal: true as const }
       : {}),
     // Model and effort as Claude Code reports them; left out for app sessions, which get no model picker.
-    ...(s.status === "ended" || !modelChangeable(s) ? {} : modelOf(s.id)),
+    ...(s.status === "ended" || !modelChangeable(s) ? {} : { ...modelOf(s.id), ...pickFields(s.id) }),
     // What is left of the limits (usage-left); an ended session shows none.
     ...(s.status === "ended" ? {} : usageField(s.id)),
     // Claude Code's suggested next message (suggestion): only while idle, and only where messages can be sent.
@@ -259,6 +260,16 @@ export function commandRouteOf(
 function commandsRunField(s: SessionRecord): { commandsRun?: boolean } {
   const route = commandRouteOf(s);
   return route ? { commandsRun: route !== "inbox" } : {};
+}
+
+function pickFields(id: string): { pendingModel?: string; pendingEffort?: string; pickRefusal?: string } {
+  const { model, effort } = pendingPicks.get(id);
+  const refusal = pendingPicks.refusal(id);
+  return {
+    ...(model !== undefined ? { pendingModel: model } : {}),
+    ...(effort !== undefined ? { pendingEffort: effort } : {}),
+    ...(refusal !== undefined ? { pickRefusal: refusal } : {}),
+  };
 }
 
 function modelOf(id: string): { model?: string; effort?: string } {

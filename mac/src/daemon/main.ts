@@ -192,15 +192,20 @@ export async function runDaemon(): Promise<void> {
     // typing, as soon as the keyboard is still (or after TYPE_ANYWAY_MS anyway).
     setInterval(
       () =>
-        void replies.drain(
-          presence.get().locked === true,
-          deliverQueued({
-            preferTyping: config.preferTyping,
-            hasOpenPrompt: (id) => broker.hasOpen(id),
-            headless,
-            held,
-          }),
-        ),
+        void rpc
+          .applyPicks()
+          .catch((err) => log.warn("queued picks", { err: errMessage(err) }))
+          .then(() =>
+            replies.drain(
+              presence.get().locked === true,
+              deliverQueued({
+                preferTyping: config.preferTyping,
+                hasOpenPrompt: (id) => broker.hasOpen(id),
+                headless,
+                held,
+              }),
+            ),
+          ),
       1_000,
     ),
     setInterval(() => events.prune(7 * 86_400_000), 3_600_000),

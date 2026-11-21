@@ -46,6 +46,7 @@ import {
 } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
+import { pendingPicks } from "./pendingPick.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { fitEvent, fitPrompts } from "./promptFit.ts";
 import {
@@ -193,9 +194,17 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }
 
-export function createRpc(
-  d: RpcDeps,
-): (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome> {
+type RpcCall = (method: string, params: unknown, actor: string, opts?: RpcOpts) => Promise<RpcOutcome>;
+
+export type DaemonRpc = RpcCall & {
+  /** Types the model and effort picks that waited for Claude to go idle; the daemon calls it before it drains queued replies. */
+  applyPicks: (sessionId?: string) => Promise<void>;
+};
+
+/** Claude started working between the check and the typing: the pick waits. */
+class StillBusy extends Error {}
+
+export function createRpc(d: RpcDeps): DaemonRpc {
   async function resumeSession(
     { sessionId, text }: { sessionId: string; text: string },
     actor: string,
@@ -501,66 +510,29 @@ export function createRpc(
     },
 
     "session.model": async ({ sessionId, model, effort }, actor) => {
-      // Checked now and again once the pick's turn comes: a message queued before it may have started Claude working.
-      const idleSession = () => {
-        const session = d.registry.get(sessionId);
-        if (!session || session.status === "ended")
-          throw new RpcFailure("not_found", "This session has ended.");
-        if (session.status === "working")
-          throw new RpcFailure("conflict", "Claude is working. Change the model when it is done.");
-        if (d.broker.hasOpen(sessionId))
-          throw new RpcFailure("conflict", "Claude is waiting for an answer. Answer it first.");
-        if (d.replies && d.replies.list(sessionId).length > 0)
-          throw new RpcFailure(
-            "conflict",
-            "A message is still waiting to be typed. Try again after it arrives.",
-          );
-        return session;
+      const queue = () => {
+        pendingPicks.set(sessionId, model !== undefined ? "model" : "effort", (model ?? effort) as string);
+        d.registry.publish(sessionId);
+        audit(d.db, actor, "session.model", { sessionId, model, effort, via: "queued" });
+        return { via: "queued" } satisfies ModelResult;
       };
-      idleSession();
-      const command = model !== undefined ? `/model ${model}` : `/effort ${effort}`;
-      const res = await inOrder(sessionId, async () => {
-        const session = idleSession();
-        const { idleSeconds, locked } = await platform.presence.read({
-          tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
-        });
-        try {
-          const resultsBefore = model !== undefined ? await modelResultsOnScreen(session, d.typeOps) : 0;
-          const delivered = await deliver(
-            session,
-            command,
-            {
-              idleSeconds,
-              userTypingNow: idleSeconds !== null && idleSeconds < 8,
-              preferTyping: true,
-              locked: locked === true,
-              terminalOnly: true,
-            },
-            d.typeOps,
-          );
-          // Answered before the next queued message is typed, which would land in the question.
-          if (model !== undefined) {
-            const answer = await confirmModelSwitch(session, delivered.via, model, d.typeOps, resultsBefore);
-            if (answer === "other")
-              throw new RpcFailure("conflict", "The computer is asking something else. Answer it there.");
-          }
-          return delivered;
-        } catch (err) {
-          if (err instanceof WaitForPause)
-            throw new RpcFailure(
-              "conflict",
-              err.reason === "draft"
-                ? "There is text in the prompt at the computer. Send or clear it first."
-                : "Someone is typing at the computer. Try again in a moment.",
-            );
-          if (err instanceof DeliveryError)
-            throw new RpcFailure("unavailable", "This session can't be changed from the phone.");
-          throw err;
-        }
-      });
-      // Claude Code reports the model itself (PostModelSwitch); the effort comes with the status line.
-      audit(d.db, actor, "session.model", { sessionId, model, effort, via: res.via });
-      return { via: res.via } satisfies ModelResult;
+      const session = d.registry.get(sessionId);
+      if (!session || session.status === "ended")
+        throw new RpcFailure("not_found", "This session has ended.");
+      // A message already waiting goes after the pick, which the queue timer types first.
+      // A pick already waiting keeps its place: typing this one now would let the older one overwrite it later.
+      const waiting = pendingPicks.ids().includes(sessionId);
+      if (waiting || modelBusy(sessionId) || (d.replies && d.replies.list(sessionId).length > 0))
+        return queue();
+      try {
+        const res = await typePick(sessionId, model, effort);
+        // Claude Code reports the model itself (PostModelSwitch); the effort comes with the status line.
+        audit(d.db, actor, "session.model", { sessionId, model, effort, via: res.via });
+        return { via: res.via } satisfies ModelResult;
+      } catch (err) {
+        if (err instanceof StillBusy) return queue();
+        throw err;
+      }
     },
 
     "session.commands": ({ sessionId }) => {
@@ -698,6 +670,7 @@ export function createRpc(
     }
     if (d.broker.hasOpen(sessionId))
       throw new RpcFailure("conflict", "the session is waiting for an answer; answer its prompt instead");
+    if (pendingPicks.ids().includes(sessionId)) await applyPicks(sessionId);
     // One send per session at a time, so messages waiting for a pause arrive in the order they were sent.
     return await inOrder(sessionId, async () => {
       // A chat moving to the person's terminal has no typing route until it is done; then the new one counts.
@@ -874,12 +847,116 @@ export function createRpc(
     return reason ? { via: "queued", reason } : { via: "queued" };
   }
 
+  /** Claude is working or waiting for an answer: the prompt isn't free for a command. */
+  const modelBusy = (sessionId: string) =>
+    d.registry.get(sessionId)?.status === "working" || d.broker.hasOpen(sessionId);
+
+  /** Types `/model` or `/effort` into the session once it's idle; throws `StillBusy` when Claude started working meanwhile. */
+  async function typePick(sessionId: string, model: string | undefined, effort: string | undefined) {
+    const command = model !== undefined ? `/model ${model}` : `/effort ${effort}`;
+    return await inOrder(sessionId, async () => {
+      const session = d.registry.get(sessionId);
+      if (!session || session.status === "ended")
+        throw new RpcFailure("not_found", "This session has ended.");
+      if (modelBusy(sessionId)) throw new StillBusy();
+      const { idleSeconds, locked } = await platform.presence.read({
+        tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
+      });
+      try {
+        const resultsBefore = model !== undefined ? await modelResultsOnScreen(session, d.typeOps) : 0;
+        const delivered = await deliver(
+          session,
+          command,
+          {
+            idleSeconds,
+            userTypingNow: idleSeconds !== null && idleSeconds < 8,
+            preferTyping: true,
+            locked: locked === true,
+            terminalOnly: true,
+          },
+          d.typeOps,
+        );
+        // Answered before the next queued message is typed, which would land in the question.
+        if (model !== undefined) {
+          const answer = await confirmModelSwitch(session, delivered.via, model, d.typeOps, resultsBefore);
+          if (answer === "other")
+            throw new RpcFailure("conflict", "The computer is asking something else. Answer it there.");
+        }
+        return delivered;
+      } catch (err) {
+        if (err instanceof WaitForPause)
+          throw new RpcFailure(
+            "conflict",
+            err.reason === "draft"
+              ? "There is text in the prompt at the computer. Send or clear it first."
+              : "Someone is typing at the computer. Try again in a moment.",
+          );
+        if (err instanceof DeliveryError)
+          throw new RpcFailure("unavailable", "This session can't be changed from the phone.");
+        throw err;
+      }
+    });
+  }
+
+  const applyingPicks = new Map<string, Promise<boolean>>();
+
+  /** Types the picks made while Claude worked (or one session's) as soon as it is idle; a failure drops them and tells the phone why. */
+  async function applyPicks(only?: string): Promise<void> {
+    for (const id of only ? [only] : pendingPicks.ids()) {
+      // One run per session: a caller arriving mid-pick waits for it, then looks again for picks queued meanwhile.
+      while (pendingPicks.ids().includes(id)) {
+        const running = applyingPicks.get(id);
+        if (running) {
+          await running;
+          continue;
+        }
+        const run = applyPicksFor(id).finally(() => applyingPicks.delete(id));
+        applyingPicks.set(id, run);
+        if (!(await run)) break;
+      }
+    }
+  }
+
+  async function applyPicksFor(id: string): Promise<boolean> {
+    const session = d.registry.get(id);
+    if (!session || session.status === "ended") {
+      pendingPicks.clear(id);
+      return true;
+    }
+    if (modelBusy(id)) return false;
+    try {
+      for (const kind of ["model", "effort"] as const) {
+        const value = pendingPicks.get(id)[kind];
+        if (value === undefined) continue;
+        const res = await typePick(
+          id,
+          kind === "model" ? value : undefined,
+          kind === "effort" ? value : undefined,
+        );
+        // A newer pick that arrived while this one was typed stays queued.
+        if (pendingPicks.get(id)[kind] === value) pendingPicks.clear(id, kind);
+        d.registry.publish(id);
+        audit(d.db, "queue", "session.model", { sessionId: id, [kind]: value, via: res.via });
+      }
+    } catch (err) {
+      if (err instanceof StillBusy) return false;
+      const message =
+        err instanceof RpcFailure && err.message ? err.message : "Couldn't change the model. Try again.";
+      if (!(err instanceof RpcFailure)) log.error("queued pick failed", { err: errMessage(err) });
+      pendingPicks.clear(id);
+      pendingPicks.refuse(id, message);
+      d.registry.publish(id);
+      pendingPicks.clearRefusal(id);
+    }
+    return true;
+  }
+
   function attachmentsOrFail(): AttachmentStore {
     if (!d.attachments) throw new RpcFailure("unavailable", "Files can't be sent to this computer.");
     return d.attachments;
   }
 
-  return async (method, params, actor, opts = {}) => {
+  const call: RpcCall = async (method, params, actor, opts = {}) => {
     // Own keys only: "toString", "constructor" and "__proto__" are `in` every object.
     if (!Object.hasOwn(RpcSchemas, method))
       return { error: { code: "bad_request", message: `unknown method ${method}` } };
@@ -908,6 +985,7 @@ export function createRpc(
       return { error: { code: "internal", message: "internal error" } };
     }
   };
+  return Object.assign(call, { applyPicks });
 }
 
 /** Runs an attachment step, turning its refusal into the RPC error with the same plain sentence. */

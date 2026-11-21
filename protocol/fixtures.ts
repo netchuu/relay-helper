@@ -874,6 +874,23 @@ const model = {
   setModelLong: RpcSchemas["session.model"].parse({ sessionId: session.id, model: "sonnet[1m]" }),
   setEffort: RpcSchemas["session.model"].parse({ sessionId: session.id, effort: "high" }),
   result: ModelResult.parse({ via: "tmux" }),
+  // Picked while Claude works: the session shows it as pending, then drops it (with a refusal if typing failed).
+  resultQueued: ModelResult.parse({ via: "queued" }),
+  sessionPending: Session.parse({
+    ...session,
+    status: "working",
+    model: "Fable 5.2",
+    effort: "medium",
+    pendingModel: "opus",
+    pendingEffort: "high",
+  }),
+  sessionRefused: Session.parse({
+    ...session,
+    status: "idle",
+    model: "Fable 5.2",
+    effort: "medium",
+    pickRefusal: "There is text in the prompt at the computer. Send or clear it first.",
+  }),
   // Refusals are plain sentences the phone shows; the pill stays as it was.
   errors: [
     {
