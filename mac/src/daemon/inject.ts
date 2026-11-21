@@ -59,7 +59,7 @@ export type DeliveryRoute =
 /** The Claude Code processes the helper owns (headless.ts): a message for one of their sessions goes to its stdin. */
 export interface HeadlessRoute {
   has(sessionId: string): boolean;
-  send(sessionId: string, text: string): Promise<void>;
+  send(sessionId: string, text: string, onLost?: () => void): Promise<void>;
 }
 
 export interface DeliveryResult {
@@ -121,6 +121,8 @@ export interface DeliverOptions {
   terminalOnly?: boolean;
   /** Processes the helper runs itself: a session among them gets the message on its stdin, before any other route. */
   headless?: HeadlessRoute;
+  /** A message to a process the helper runs was answered as delivered, then the process ended without reading it. */
+  onLost?: () => void;
 }
 
 /** Claude Code needs this long after an Esc before it takes keys as a new message (it is still handling the interrupt). */
@@ -229,7 +231,7 @@ export async function deliver(
   const text = cleanTypedText(raw);
   if (opts.headless?.has(session.id)) {
     if (opts.terminalOnly) throw new DeliveryError("This session runs in Relay, without a terminal.");
-    await opts.headless.send(session.id, text).catch((err) => {
+    await opts.headless.send(session.id, text, opts.onLost).catch((err) => {
       throw new DeliveryError(err instanceof Error ? err.message : "the session didn't take the message");
     });
     return { via: "headless" };

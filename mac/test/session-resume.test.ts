@@ -38,8 +38,12 @@ if (existsSync(here + "/refuse")) { console.error("No conversation found with se
 writeFileSync(here + "/argv.json", JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), internal: process.env.RELAY_INTERNAL ?? null }));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 if (existsSync(here + "/slow")) await new Promise((r) => setTimeout(r, 400));
-if (!existsSync(here + "/silent")) out({ type: "system", subtype: "init", session_id: "x" });
+const init = () => out({ type: "system", subtype: "init", session_id: "x" });
+if (existsSync(here + "/gateInit")) {
+  const wait = setInterval(() => { if (existsSync(here + "/initNow")) { clearInterval(wait); init(); } }, 20);
+} else if (!existsSync(here + "/silent")) init();
 let buf = "";
+let n = 0;
 for await (const chunk of process.stdin) {
   buf += chunk;
   for (let nl = buf.indexOf("\\n"); nl >= 0; nl = buf.indexOf("\\n")) {
@@ -47,6 +51,8 @@ for await (const chunk of process.stdin) {
     buf = buf.slice(nl + 1);
     if (m.type === "user") {
       appendFileSync(here + "/lines.log", m.message.content + "\\n");
+      if (++n === 2 && existsSync(here + "/dieOnSecond")) process.exit(1);
+      if (existsSync(here + "/gateInit")) out({ type: "system", subtype: "command_lifecycle", command_uuid: m.uuid, state: "queued" });
       if (m.message.content.includes("needs permission"))
         out({ type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" }, permission_suggestions: [] } });
       else if (m.message.content.includes("cancelled request")) {
@@ -278,28 +284,25 @@ describe("session.resume", () => {
     expect(answers()).toEqual([]);
   });
 
-  test("a resume that is still starting is delivered, and Try Again with its sendId isn't typed twice", async () => {
+  test("a resume Claude Code has queued while it still starts is delivered, and Try Again with its sendId isn't typed twice", async () => {
     ended();
-    writeFileSync(join(tools, "slow"), "");
+    writeFileSync(join(tools, "gateInit"), "");
     const sendId = "send-1";
     const resuming = call("session.resume", {
       sessionId: ID,
       text: "carry on",
       sendId,
     });
-    await Bun.sleep(100);
-    // The fake takes 400 ms to answer init: the answer must come well before it.
-    const early = await Promise.race([
-      call("session.delivered", { sessionId: ID, sendId }),
-      Bun.sleep(200).then(() => "late"),
-    ]);
+    // The fake holds init back until told: the answer must come from its queued line.
+    const early = await call("session.delivered", { sessionId: ID, sendId });
     expect(early).toEqual({ result: { delivered: true, via: "headless" } });
-    const retried = await call("session.send", {
+    const retrying = call("session.send", {
       sessionId: ID,
       text: "carry on",
       sendId,
     });
-    expect(retried).toEqual({ result: { via: "headless", repeat: true } });
+    writeFileSync(join(tools, "initNow"), "");
+    expect(await retrying).toEqual({ result: { via: "headless", repeat: true } });
     await resuming;
     await Bun.sleep(100);
     expect(lines()).toEqual(["carry on"]);
@@ -318,6 +321,34 @@ describe("session.resume", () => {
       sendId,
     });
     expect(failed).toEqual({ error: expect.anything() });
+    expect(await call("session.delivered", { sessionId: ID, sendId })).toEqual({
+      result: { delivered: false },
+    });
+  });
+
+  test("a message the process ends without reading is forgotten, so Try Again sends it again", async () => {
+    ended();
+    writeFileSync(join(tools, "dieOnSecond"), "");
+    const notices: string[] = [];
+    events.subscribe((e) => {
+      if (e.type === "session.notice" && e.level === "error") notices.push(e.text);
+    });
+    await call("session.resume", { sessionId: ID, text: "first" });
+    const sendId = "send-3";
+    expect(await call("session.send", { sessionId: ID, text: "second", sendId })).toEqual({
+      result: { via: "headless" },
+    });
+    // The resume line, never named either, reports itself lost too.
+    await until(() => notices.length === 2, 4000);
+    expect(notices.every((t) => t.includes("Send it again"))).toBe(true);
+    expect(await call("session.delivered", { sessionId: ID, sendId })).toEqual({
+      result: { delivered: false },
+    });
+    expect(db.query("SELECT 1 FROM sent_messages WHERE send_id = ?").all(sendId)).toEqual([]);
+    expect(await call("session.send", { sessionId: ID, text: "second", sendId })).not.toEqual({
+      result: { via: "headless", repeat: true },
+    });
+    build();
     expect(await call("session.delivered", { sessionId: ID, sendId })).toEqual({
       result: { delivered: false },
     });

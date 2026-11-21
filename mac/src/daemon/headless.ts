@@ -48,14 +48,15 @@ export function resumeCommand(claudeBin: string, sessionId: string): string[] {
     "--output-format",
     "stream-json",
     "--verbose",
+    "--replay-user-messages",
     "--permission-prompt-tool",
     "stdio",
   ];
 }
 
 /** One user message as the stream-json input wants it. */
-export function userLine(text: string): string {
-  return `${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`;
+export function userLine(text: string, uuid: string = crypto.randomUUID()): string {
+  return `${JSON.stringify({ type: "user", uuid, message: { role: "user", content: text } })}\n`;
 }
 
 /** The decision of a `can_use_tool` answer, from what the broker would print for a PermissionRequest hook. */
@@ -89,6 +90,10 @@ interface Owned {
   requests: Map<string, AbortController>;
   /** A Stop waiting for the turn to end, by its interrupt's request_id; settled by `control_response` or `result`. */
   turnEnded: Map<string, () => void>;
+  /** Set once this process sent a `command_lifecycle` line: from then on a message counts as delivered only when named. */
+  confirms: boolean;
+  /** Messages written and not named yet, by uuid; each runs when the process names it or ends. */
+  unnamed: Map<string, (named: boolean) => void>;
 }
 
 /** How long a Stop waits for the process to end its turn before the process itself is ended. */
@@ -124,7 +129,12 @@ export class HeadlessSessions {
   }
 
   /** Starts the process for `session` and sends `text` as its first message; `onWritten` runs once the text is on stdin. */
-  async resume(session: SessionRecord, text: string, onWritten?: () => void): Promise<void> {
+  async resume(
+    session: SessionRecord,
+    text: string,
+    onWritten?: () => void,
+    onLost?: () => void,
+  ): Promise<void> {
     const id = session.id;
     if (!text.trim()) throw new ResumeError("bad_request", "Write a message to continue the session with.");
     // Taken before the first await: two requests at once never start two copies.
@@ -140,14 +150,36 @@ export class HeadlessSessions {
       log.warn("session.resume: launch failed", { err: errMessage(err) });
       throw new ResumeError("unavailable", "Claude Code couldn't be started.");
     }
-    const entry: Owned = { child, abort: new AbortController(), requests: new Map(), turnEnded: new Map() };
+    const entry: Owned = {
+      child,
+      abort: new AbortController(),
+      requests: new Map(),
+      turnEnded: new Map(),
+      confirms: false,
+      unnamed: new Map(),
+    };
     this.owned.set(id, entry);
     const init = this.watch(id, entry);
     try {
-      child.stdin.write(userLine(text));
-      child.stdin.flush();
-      onWritten?.();
+      const uuid = this.write1(entry, text);
+      let written = false;
+      const wrote = () => {
+        if (!written) onWritten?.();
+        written = true;
+      };
+      const named = this.naming(entry, uuid);
+      void named.then((ok) => ok && wrote());
       await init;
+      // Claude Code names a message as it reads it; one that never sends such lines is taken as read once it starts.
+      if (entry.confirms) {
+        if (!(await named))
+          throw new ResumeError("unavailable", "Claude Code stopped before it got the message.");
+      } else {
+        wrote();
+        void named.then((ok) => {
+          if (!ok) onLost?.();
+        });
+      }
     } catch (err) {
       this.drop(id, entry);
       throw err;
@@ -156,18 +188,42 @@ export class HeadlessSessions {
     this.d.registry.setStatus(id, "working");
   }
 
-  /** Writes a later message to the owned process. */
-  async send(sessionId: string, text: string): Promise<void> {
+  /**
+   * Writes a later message to the owned process and settles once Claude Code names it, even while an earlier turn runs.
+   * Without `command_lifecycle` lines it settles on the write; `onLost` then runs if the process ends before naming it.
+   */
+  async send(sessionId: string, text: string, onLost?: () => void): Promise<void> {
     const entry = this.owned.get(sessionId);
     if (!entry) throw new ResumeError("unavailable", "This session doesn't run in Relay.");
+    const stopped = new ResumeError("unavailable", "Claude Code stopped before it got the message.");
+    let named: Promise<boolean>;
     try {
-      entry.child.stdin.write(userLine(text));
-      entry.child.stdin.flush();
+      named = this.naming(entry, this.write1(entry, text));
     } catch (err) {
       log.warn("headless send failed", { err: errMessage(err) });
-      throw new ResumeError("unavailable", "Claude Code stopped before it got the message.");
+      throw stopped;
     }
     this.d.registry.setStatus(sessionId, "working");
+    if (entry.confirms) {
+      if (!(await named)) throw stopped;
+    } else {
+      void named.then((ok) => {
+        if (!ok) onLost?.();
+      });
+    }
+  }
+
+  /** Writes one user line and returns its uuid. */
+  private write1(entry: Owned, text: string): string {
+    const uuid = crypto.randomUUID();
+    entry.child.stdin.write(userLine(text, uuid));
+    entry.child.stdin.flush();
+    return uuid;
+  }
+
+  /** Settles true when Claude Code names the uuid, false when the process ends first. */
+  private naming(entry: Owned, uuid: string): Promise<boolean> {
+    return new Promise((resolve) => entry.unnamed.set(uuid, resolve));
   }
 
   /** Stop: sends an `interrupt`; a process that doesn't end the turn in time is killed. Resolves "interrupted" or "ended". */
@@ -239,6 +295,7 @@ export class HeadlessSessions {
             continue;
           }
           if (!msg) continue;
+          this.noteNamed(entry, msg);
           if (msg.type === "system" && msg.subtype === "init" && !ready) {
             ready = true;
             clearTimeout(timer);
@@ -257,6 +314,8 @@ export class HeadlessSessions {
         }
       });
       void child.exited.then((code) => {
+        for (const settle of entry.unnamed.values()) settle(false);
+        entry.unnamed.clear();
         const mine = this.owned.get(id) === entry;
         log.info("headless session exited", { sessionId: id, code });
         if (mine) this.drop(id, entry, true);
@@ -268,6 +327,26 @@ export class HeadlessSessions {
         );
       });
     });
+  }
+
+  /** What Claude Code names as read: a `command_lifecycle` line, the user message echoed back, or a `result` for it. */
+  private noteNamed(entry: Owned, msg: StreamMessage): void {
+    const uuids: string[] = [];
+    if (msg.type === "system" && msg.subtype === "command_lifecycle") {
+      // Other states say nothing about whether it was read.
+      if (msg.state !== "queued" && msg.state !== "started") return;
+      entry.confirms = true;
+      if (msg.command_uuid) uuids.push(msg.command_uuid);
+    } else if (msg.type === "user" && msg.uuid) uuids.push(msg.uuid);
+    else if (msg.type === "result" && Array.isArray(msg.user_message_uuids))
+      for (const u of msg.user_message_uuids) if (typeof u === "string") uuids.push(u);
+    for (const u of uuids) {
+      const settle = entry.unnamed.get(u);
+      if (settle) {
+        entry.unnamed.delete(u);
+        settle(true);
+      }
+    }
   }
 
   /** A permission request from the process: a Relay prompt, answered on the phone (or by its expiry). */
@@ -346,6 +425,10 @@ interface StreamMessage {
   type?: string;
   subtype?: string;
   request_id?: string;
+  uuid?: string;
+  state?: string;
+  command_uuid?: string;
+  user_message_uuids?: unknown;
   response?: { subtype?: string; request_id?: string };
   request?: {
     subtype?: string;

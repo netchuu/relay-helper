@@ -64,6 +64,16 @@ export class SentMessages {
     return send;
   }
 
+  /** Drops a delivered send's id, so Try Again sends the message again. */
+  forget(sessionId: string, sendId: string): void {
+    this.sends.delete(key(sessionId, sendId));
+    try {
+      this.db?.query("DELETE FROM sent_messages WHERE session_id = ? AND send_id = ?").run(sessionId, sendId);
+    } catch {
+      // see persist
+    }
+  }
+
   private persist(sessionId: string, sendId: string, via: SendResult["via"], at: number): void {
     try {
       this.db

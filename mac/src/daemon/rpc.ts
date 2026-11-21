@@ -205,10 +205,22 @@ export type DaemonRpc = RpcCall & {
 class StillBusy extends Error {}
 
 export function createRpc(d: RpcDeps): DaemonRpc {
+  /** The process ended without reading a message already answered as delivered: say so and let Try Again resend it. */
+  function lostMessage(sessionId: string, session: SessionRecord, sendId?: string): void {
+    if (sendId) sent.forget(sessionId, sendId);
+    d.events.emit({
+      type: "session.notice",
+      sessionId,
+      level: "error",
+      text: `Claude Code stopped before it got your message to ${session.name ?? session.project ?? "the session"}. Send it again.`,
+    });
+  }
+
   async function resumeSession(
     { sessionId, text }: { sessionId: string; text: string },
     actor: string,
     onWritten?: () => void,
+    sendId?: string,
   ): Promise<SessionResumed> {
     const session = d.registry.get(sessionId);
     if (!session) throw new RpcFailure("not_found", "session not found");
@@ -231,7 +243,9 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     await inOrder(sessionId, async () => {
       notePhoneTyped(sessionId, text, false, undefined, true);
       try {
-        await (d.headless as HeadlessSessions).resume(session, text, onWritten);
+        await (d.headless as HeadlessSessions).resume(session, text, onWritten, () =>
+          lostMessage(sessionId, session, sendId),
+        );
       } catch (err) {
         dropPhoneTyped(sessionId, text);
         if (err instanceof ResumeError) throw new RpcFailure(err.code, err.message);
@@ -355,7 +369,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           written = resolve;
         }),
       );
-      const resuming = resumeSession(params, actor, () => written(true));
+      const resuming = resumeSession(params, actor, () => written(true), sendId);
       // A start that fails after the write ends the process and forgets the id: the phone watches for the turn and
       // offers Try Again as a new send if none comes.
       const done = () => {
@@ -754,7 +768,13 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         return await deliver(
           session,
           text,
-          { idleSeconds: null, userTypingNow: false, preferTyping: false, headless: d.headless },
+          {
+            idleSeconds: null,
+            userTypingNow: false,
+            preferTyping: false,
+            headless: d.headless,
+            onLost: () => lostMessage(sessionId, session, sendId),
+          },
           d.typeOps,
         );
       } catch (err) {
