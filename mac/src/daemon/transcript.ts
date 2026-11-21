@@ -81,6 +81,7 @@ interface Entry {
   uuid?: string;
   timestamp?: string;
   isMeta?: boolean;
+  isCompactSummary?: boolean;
   isSidechain?: boolean;
   message?: { content?: unknown };
 }
@@ -145,7 +146,11 @@ export function endedContextFull(path: string, since: number): boolean {
     const ts = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
     if (Number.isNaN(ts) || ts < since - 10_000) return false;
     // Claude Code's own entries (a command's echo, a notice) say nothing about the turn.
-    if (entry.type === "user" && (entry.isMeta || isSystemMessage(entryText(entry) ?? ""))) continue;
+    if (
+      entry.type === "user" &&
+      (entry.isMeta || entry.isCompactSummary || isSystemMessage(entryText(entry) ?? ""))
+    )
+      continue;
     return (
       entry.type === "assistant" &&
       entry.isApiErrorMessage === true &&
@@ -347,7 +352,8 @@ export function interruptedTurn(
   let anchor = -1;
   for (let i = boundary + 1; i < entries.length && anchor === -1; i++) {
     const entry = (entries[i] as { entry: Entry }).entry;
-    if (entry.type !== "user" || entry.isSidechain || isInterruptMarker(entry)) continue;
+    if (entry.type !== "user" || entry.isSidechain || entry.isCompactSummary || isInterruptMarker(entry))
+      continue;
     const own = entryText(entry);
     if (own === null) continue;
     if (
@@ -392,6 +398,7 @@ export function interruptedTurn(
       cut = true;
       break;
     }
+    if (entry.isCompactSummary) continue;
     if (isInterruptMarker(entry)) {
       interrupted = true;
       endedAt = ts;
@@ -486,7 +493,7 @@ export function isSystemMessage(text: string): boolean {
 
 /** The text of a genuine prompt you typed, or null for tool results, meta entries and slash commands. */
 function promptText(entry: Entry): string | null {
-  if (entry.type !== "user" || entry.isMeta || entry.isSidechain) return null;
+  if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary || entry.isSidechain) return null;
   const text = entryText(entry);
   if (!text) return null;
   const trimmed = text.trim();
@@ -539,7 +546,7 @@ function draftsFrom(path: string, cwd: string | null = null): Draft[] {
       waiting.push(entry);
       continue;
     }
-    if (current && entry.type === "user") current.steps.add(entry);
+    if (current && entry.type === "user" && !entry.isCompactSummary) current.steps.add(entry);
     // A command that made its own answer belongs to the turn that gets the answer.
     if (current && entry.type === "assistant" && !entry.isSidechain) {
       for (const held of waiting) current.steps.add(held);

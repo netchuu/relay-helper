@@ -6,7 +6,9 @@ import type { RelayEvent, Turn } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { MessageTracker, resetLiveMessages } from "../src/daemon/messages.ts";
+import { turnFromTranscript } from "../src/daemon/render.ts";
 import { answerOwner, interruptedTurn, transcriptTurns } from "../src/daemon/transcript.ts";
+import { recentUserMessages } from "../src/integrations/claudeDesktop.ts";
 import { FIXTURE_CWD, FIXTURE_START, sanitizeEntry, sanitizeTranscript } from "./record/sanitize.ts";
 import { waitFor } from "./support/wait.ts";
 
@@ -590,5 +592,80 @@ describe("lines that parse but are not entries", () => {
       );
       expect(transcriptTurns("s", file, { limit: 5, previewChars: 100, working: false })).toHaveLength(1);
     }
+  });
+});
+
+describe("a compaction summary", () => {
+  const SUMMARY = "This session is being continued from a previous conversation that ran out of context.";
+  const boundary = (s: number) =>
+    JSON.stringify({ type: "system", subtype: "compact_boundary", timestamp: at(s), sessionId: "s" });
+  const summary = (s: number) =>
+    user(s, SUMMARY, { isCompactSummary: true, isVisibleInTranscriptOnly: true, isSidechain: false });
+  const compacted = lines(
+    user(0, "first question"),
+    assistant(1, text("first answer")),
+    boundary(2),
+    summary(3),
+    user(4, "second question"),
+    assistant(5, text("second answer")),
+  );
+
+  test("is not a turn's prompt, and the turn after it keeps its own", () => {
+    const turns = turnsOf(compacted);
+    expect(turns.map((t) => t.prompt)).toEqual(["first question", "second question"]);
+  });
+
+  test("alone in a transcript it makes no turn", () => {
+    expect(turnsOf(lines(boundary(0), summary(1), assistant(2, text("ok"))))).toEqual([]);
+  });
+
+  const tool = (s: number) =>
+    assistant(s, [{ type: "tool_use", id: `t${s}`, name: "Bash", input: { command: "ls" } }]);
+  const midTurn = lines(
+    user(0, "deploy it"),
+    tool(1),
+    boundary(2),
+    summary(3),
+    assistant(4, text("deployed")),
+  );
+  const write = (body: string) => {
+    const f = join(scratch(), "c.jsonl");
+    writeFileSync(f, body);
+    return f;
+  };
+
+  test("answerOwner keeps a turn's answer after compaction in the middle", () => {
+    const turns = [{ id: "t1", prompt: "deploy it", startedAt: FIXTURE_START }];
+    expect(answerOwner(write(midTurn), "deployed", turns)).toBe("t1");
+  });
+
+  test("turnFromTranscript keeps the steps from before compaction", () => {
+    const turn = turnFromTranscript(write(midTurn), FIXTURE_START, null);
+    expect(turn?.stats.toolCalls).toBe(1);
+  });
+
+  test("interruptedTurn anchors on the real prompt, not a summary that quotes it", () => {
+    const body = lines(
+      user(0, "earlier"),
+      assistant(1, text("done")),
+      boundary(7),
+      user(8, "recap: the user said yes", { isCompactSummary: true }),
+      user(13, "yes"),
+      assistant(14, text("deployed")),
+    );
+    const turn = interruptedTurn(write(body), FIXTURE_START + 13000, undefined, null, "yes");
+    expect(turn?.text).toBe("deployed");
+  });
+
+  test("interruptedTurn: a summary after a finished answer doesn't reopen the turn", () => {
+    const body = lines(user(0, "q1"), assistant(1, text("all done")), boundary(2), summary(3));
+    const turn = interruptedTurn(write(body), FIXTURE_START, undefined, null, "q1");
+    expect(turn?.finished).toBe(true);
+    expect(turn?.lastAt).toBe(FIXTURE_START + 1000);
+  });
+
+  test("Claude Desktop does not read a summary as a typed prompt", async () => {
+    const f = write(lines(user(0, "real prompt"), boundary(1), summary(2)));
+    expect(await recentUserMessages(f)).toEqual(["real prompt"]);
   });
 });

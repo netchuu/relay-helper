@@ -214,6 +214,7 @@ function recordedPrompt(line: string): { text: string; at: number } | null {
     operation?: string;
     content?: unknown;
     timestamp?: string;
+    isCompactSummary?: boolean;
     message?: { content?: unknown };
     attachment?: { type?: string; prompt?: unknown };
   };
@@ -224,6 +225,7 @@ function recordedPrompt(line: string): { text: string; at: number } | null {
   }
   const at = Date.parse(e.timestamp ?? "");
   if (e.type === "user") {
+    if (e.isCompactSummary) return null;
     const c = e.message?.content;
     if (Array.isArray(c) && c.some((x) => (x as { type?: string }).type === "tool_result")) return null;
     return { text: contentText(c), at };

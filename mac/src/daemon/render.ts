@@ -218,7 +218,7 @@ export function turnFromTranscript(
 }
 
 function isUserPrompt(entry: Record<string, unknown>): boolean {
-  if (entry.type !== "user" || entry.isMeta || entry.isSidechain) return false;
+  if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary || entry.isSidechain) return false;
   const content = (entry.message as { content?: unknown } | undefined)?.content;
   // A notice Claude Code adds itself (a background task finishing) isn't a prompt: taken in mid-turn, it doesn't
   // end the turn being read.
