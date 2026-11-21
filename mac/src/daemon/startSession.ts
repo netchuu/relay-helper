@@ -4,8 +4,14 @@ import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
 import type { DB } from "./db.ts";
 import { notePhoneLaunch } from "./hooks.ts";
+import { promptTextRead } from "./promptLine.ts";
 import type { Registry } from "./registry.ts";
 import { head } from "./text.ts";
+import type { TerminalLauncher } from "./tmuxStart.ts";
+
+/** How long a session started in a terminal may take to show its prompt. */
+export const READY_TIMEOUT_MS = 30_000;
+const READY_POLL_MS = 200;
 
 /**
  * Starting a Claude Code session from the phone: `sessions.directories` lists the folders past sessions ran in,
@@ -126,7 +132,76 @@ function firstLine(text: string): string {
   return head(line.trim(), 200);
 }
 
-export async function startSession(opts: {
+/** The command for a session in a terminal: its id is chosen here, so no lookup is needed afterwards. */
+export function terminalCommand(claudeBin: string, sessionId: string, text?: string): string[] {
+  // Panes get the server's environment: the lookups' marker must not be in it, and the PATH is the helper's.
+  const env = ["env", "-u", "RELAY_INTERNAL", `PATH=${CHILD_PATH}`];
+  return text === undefined
+    ? [...env, claudeBin, "--session-id", sessionId]
+    : [...env, claudeBin, "--session-id", sessionId, "--", text];
+}
+
+/**
+ * Starts the session in a pane the helper can type into, so the phone's messages arrive as typed input. Returns
+ * once the prompt is showing, so the first message from the phone never meets a session that isn't ready.
+ */
+async function startInTerminal(
+  opts: StartOptions,
+  terminal: TerminalLauncher,
+  claudeBin: string,
+  cwd: string,
+): Promise<{ sessionId: string; name: string | null }> {
+  const sessionId = crypto.randomUUID();
+  const launch = opts.text === undefined ? null : notePhoneLaunch(cwd, opts.text);
+  let pane: Awaited<ReturnType<TerminalLauncher["launch"]>>;
+  try {
+    pane = await terminal.launch(
+      terminalCommand(claudeBin, sessionId, opts.text),
+      cwd,
+      `relay-${sessionId.slice(0, 8)}`,
+    );
+  } catch (err) {
+    launch?.abort();
+    log.warn("session.start: launch failed", { err: errMessage(err) });
+    throw new StartError("unavailable", "Claude Code couldn't be started.");
+  }
+  const deadline = Date.now() + (opts.readyTimeoutMs ?? READY_TIMEOUT_MS);
+  for (;;) {
+    const seen = await terminal.look(pane).catch(() => null);
+    if (seen && !seen.exited && promptTextRead(seen.screen) !== undefined) break;
+    if (!seen || seen.exited) {
+      launch?.abort();
+      const why = seen ? firstLine(seen.screen) : "";
+      log.warn("session.start: claude exited", { why });
+      await terminal.close(pane).catch(() => {});
+      throw new StartError(
+        "unavailable",
+        why ? `Claude Code couldn't start: ${why}` : "Claude Code couldn't be started.",
+      );
+    }
+    if (Date.now() >= deadline) {
+      // With a first message Claude Code has it already, so the session stays; without one nothing is lost.
+      if (opts.text === undefined) {
+        await terminal.close(pane).catch(() => {});
+        throw new StartError("unavailable", "Claude Code didn't get ready in time.");
+      }
+      break;
+    }
+    await Bun.sleep(opts.pollMs ?? READY_POLL_MS);
+  }
+  await terminal.release(pane).catch(() => {});
+  launch?.done(sessionId);
+  const { created } = opts.registry.touch(sessionId, {
+    cwd,
+    kind: "interactive",
+    env: { tmux: `${pane.socket},${pane.pid},0`, tmuxPane: pane.pane, claudePid: pane.pid },
+  });
+  if (created) opts.registry.publish(sessionId);
+  if (opts.name) opts.registry.rename(sessionId, opts.name);
+  return { sessionId, name: opts.name ?? null };
+}
+
+interface StartOptions {
   db: DB;
   registry: Registry;
   claudeBin: string | null | undefined;
@@ -135,7 +210,13 @@ export async function startSession(opts: {
   text?: string;
   /** The phone's name for the session. */
   name?: string | null;
-}): Promise<{ sessionId: string; name: string | null }> {
+  /** Starts the session in a pane the helper types into; without it (no tmux) `claude --bg` runs it. */
+  terminal?: TerminalLauncher | null;
+  readyTimeoutMs?: number;
+  pollMs?: number;
+}
+
+export async function startSession(opts: StartOptions): Promise<{ sessionId: string; name: string | null }> {
   if (opts.text !== undefined && !opts.text.trim())
     throw new StartError("bad_request", "Write a first message to start a session.");
   if (!opts.claudeBin) throw new StartError("unavailable", "Claude Code wasn't found on this computer.");
@@ -144,6 +225,8 @@ export async function startSession(opts: {
   if (!known) throw new StartError("not_found", "That folder isn't one of your past chats' folders.");
   if (!isDirectory(known.path))
     throw new StartError("not_found", "That folder no longer exists on this computer.");
+
+  if (opts.terminal) return await startInTerminal(opts, opts.terminal, opts.claudeBin, known.path);
 
   // The first message is the phone's, not typing at the Mac: its hook may come before the session id is known.
   const launch = opts.text === undefined ? null : notePhoneLaunch(known.path, opts.text);

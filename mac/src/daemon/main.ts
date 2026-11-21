@@ -1,5 +1,13 @@
 import { existsSync, unlinkSync } from "node:fs";
-import { ensureHome, isTestHelper, loadConfig, paths, resolveClaudeBin, VERSION } from "../config.ts";
+import {
+  CHILD_PATH,
+  ensureHome,
+  isTestHelper,
+  loadConfig,
+  paths,
+  resolveClaudeBin,
+  VERSION,
+} from "../config.ts";
 import { RELAY_BIN } from "../install.ts";
 import { askForAccessibility, axAllowed, setAccessibilityAskStore } from "../integrations/claudeDesktop.ts";
 import { errMessage, log } from "../log.ts";
@@ -31,6 +39,7 @@ import { StepTracker } from "./steps.ts";
 import { TurnStopper } from "./stop.ts";
 import { SuggestionWatcher } from "./suggestion.ts";
 import { bindSuggestionSeen } from "./suggestionSeen.ts";
+import { tmuxLauncher } from "./tmuxStart.ts";
 
 export async function runDaemon(): Promise<void> {
   ensureHome();
@@ -63,7 +72,8 @@ export async function runDaemon(): Promise<void> {
     fcm = new RelayFcm(config.relayUrl, identity);
   }
   const notifier = apns || fcm ? new Notifier(db, events, presence, registry, broker, { apns, fcm }) : null;
-  const baseDeps = { db, events, registry, broker, presence, config, notifier, claudeBin };
+  const terminal = Bun.which("tmux", { PATH: CHILD_PATH }) ? tmuxLauncher : null;
+  const baseDeps = { db, events, registry, broker, presence, config, notifier, claudeBin, terminal };
   setCanStartSessions(Boolean(claudeBin));
   const steps = new StepTracker(events);
   const messages = new MessageTracker(events);

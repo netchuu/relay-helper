@@ -62,6 +62,7 @@ import { StartError, sessionDirectories, startSession } from "./startSession.ts"
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
 import { withoutOutput } from "./timeline.ts";
+import type { TerminalLauncher } from "./tmuxStart.ts";
 import {
   TRANSCRIPT_TURN_PREFIX,
   transcriptPathFor,
@@ -81,6 +82,8 @@ export interface RpcDeps {
   notifier?: Notifier | null;
   /** The real `claude` binary, for `session.start`; null or missing: starting isn't available. */
   claudeBin?: string | null;
+  /** Where `session.start` runs a new session so the helper can type into it; missing: `claude --bg`. */
+  terminal?: TerminalLauncher | null;
   /** The phone's Stop (session.interrupt). */
   stopper?: TurnStopper;
   /** Replies Claude Code holds at the Mac (held-replies). */
@@ -301,6 +304,7 @@ export function createRpc(
           db: d.db,
           registry: d.registry,
           claudeBin: d.claudeBin,
+          terminal: d.terminal,
           directory,
           ...(text === undefined ? {} : { text }),
           ...(name ? { name } : {}),
