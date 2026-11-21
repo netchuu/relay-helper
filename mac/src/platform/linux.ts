@@ -13,6 +13,7 @@ import {
 import { homedir, hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { type Runner, run as realRun } from "./exec.ts";
+import { processState, type SavedProcess, signalSaved, startTimeOf } from "./processIdentity.ts";
 import type {
   Check,
   Platform,
@@ -127,15 +128,32 @@ export function lingerNote(linger: boolean | null, user: string): Check {
 
 const pidFile = (home: string) => join(home, "daemon.pid");
 
-/** The pid in the pidfile, if that process is still a running `relay daemon`. */
-export function backgroundPid(home: string): number | null {
+/** The pidfile holds the pid and, on a second line, when that process started. */
+function readPidFile(home: string): { pid: number; saved: SavedProcess } | null {
   try {
-    const pid = Number(readFileSync(pidFile(home), "utf8").trim());
+    const [first, second] = readFileSync(pidFile(home), "utf8").split("\n");
+    const pid = Number(first?.trim());
     if (!Number.isInteger(pid) || pid <= 1) return null;
-    // /proc/<pid>/cmdline is NUL-separated; make sure the pid wasn't reused by something else.
-    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    const start = Number(second?.trim());
+    return {
+      pid,
+      saved:
+        second?.trim() && Number.isFinite(start) ? { start } : { savedAt: statSync(pidFile(home)).mtimeMs },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The pid in the pidfile, if that process is still the `relay daemon` that was started. */
+export function backgroundPid(home: string): number | null {
+  const file = readPidFile(home);
+  if (!file || processState(file.pid, file.saved) !== "same") return null;
+  try {
+    // /proc/<pid>/cmdline is NUL-separated.
+    const cmdline = readFileSync(`/proc/${file.pid}/cmdline`, "utf8").split("\0");
     return cmdline.includes("daemon") && cmdline.some((a) => a.endsWith("relay") || a.endsWith("cli.ts"))
-      ? pid
+      ? file.pid
       : null;
   } catch {
     return null;
@@ -144,14 +162,9 @@ export function backgroundPid(home: string): number | null {
 
 /** Stops a background daemon and waits up to 5 s for it to exit, so it releases the hook socket. */
 async function stopBackground(home: string): Promise<void> {
-  const pid = backgroundPid(home);
-  if (pid) {
-    try {
-      process.kill(pid, "SIGTERM");
-      for (let i = 0; i < 50 && backgroundPid(home) === pid; i++) await Bun.sleep(100);
-    } catch {
-      // already gone
-    }
+  const file = readPidFile(home);
+  if (file && backgroundPid(home) === file.pid && signalSaved(file.pid, file.saved, "SIGTERM")) {
+    for (let i = 0; i < 50 && processState(file.pid, file.saved) === "same"; i++) await Bun.sleep(100);
   }
   if (existsSync(pidFile(home))) unlinkSync(pidFile(home));
 }
@@ -177,7 +190,7 @@ function startBackground(ctx: ServiceContext): number {
     });
     if (!child.pid) throw new Error(`couldn't start ${ctx.relayBin}`);
     child.unref();
-    writeFileSync(pidFile(ctx.home), `${child.pid}\n`, { mode: 0o600 });
+    writeFileSync(pidFile(ctx.home), `${child.pid}\n${startTimeOf(child.pid) ?? ""}\n`, { mode: 0o600 });
     return child.pid;
   } finally {
     closeSync(fd);

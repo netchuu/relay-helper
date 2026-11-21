@@ -17,8 +17,9 @@ import { EventLog } from "../src/daemon/events.ts";
 import { Handover } from "../src/daemon/handover.ts";
 import { HeadlessSessions, resumeCommand } from "../src/daemon/headless.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
-import { processAlive, publicSession, Registry } from "../src/daemon/registry.ts";
+import { processAlive, publicSession, Registry, sessionAlive } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
+import { setProcessReader, startTimeOf } from "../src/platform/processIdentity.ts";
 import { waitFor } from "./support/wait.ts";
 
 const root = mkdtempSync(join(tmpdir(), "relay-resume-"));
@@ -106,10 +107,18 @@ const answers = () => {
 const until = (check: () => boolean, ms = 30_000) => waitFor(check, ms, "the condition");
 
 /** A session whose terminal is closed: ended, in `work`. */
+function savePidStart(id: string, pid: number) {
+  db.query("INSERT OR REPLACE INTO session_pid_starts (session_id, pid_start) VALUES (?, ?)").run(
+    id,
+    startTimeOf(pid),
+  );
+}
+
 function ended(id = ID, pid: number | null = null, status = "ended") {
   db.query(
     "INSERT INTO sessions (id, cwd, project, status, pid, started_at, updated_at, ended_at) VALUES (?, ?, 'proj', ?, ?, 1000, 2000, 2000)",
   ).run(id, work, status, pid);
+  if (pid) savePidStart(id, pid);
 }
 
 function build(initTimeoutMs?: number) {
@@ -166,6 +175,24 @@ beforeEach(() => {
 });
 
 describe("session.resume", () => {
+  test("a row saved without a start time that the sweep found dead resumes, though the pid's process began before the sweep", async () => {
+    const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+    const boot = Date.now() - 1_000_000;
+    setProcessReader({ startTime: () => boot + 5000, bootTime: () => boot });
+    try {
+      ended(ID, child.pid, "idle");
+      db.query("DELETE FROM session_pid_starts WHERE session_id = ?").run(ID);
+      (registry as unknown as { sweep(): void }).sweep();
+      expect(registry.get(ID)?.status).toBe("ended");
+      expect(sessionAlive(registry.get(ID) as never)).toBe(false);
+      const res = (await call("session.resume", { sessionId: ID, text: "carry on" })) as { result: unknown };
+      expect(SessionResumed.parse(res.result)).toEqual({ via: "headless" });
+    } finally {
+      child.kill();
+      setProcessReader(null);
+    }
+  });
+
   test("resumes an ended session headless with the first message, and the list says it runs in the helper", async () => {
     ended();
     const seen: Session[] = [];
@@ -435,8 +462,8 @@ describe("session.resume", () => {
       error: { code: string; canResume?: true };
     };
     expect(gone.error).toMatchObject({ code: "not_found", canResume: true });
-
     db.query("UPDATE sessions SET pid = ? WHERE id = ?").run(process.pid, ID);
+    savePidStart(ID, process.pid);
     const live = (await call("session.send", {
       sessionId: ID,
       text: "hi",

@@ -51,10 +51,10 @@ import type { PresenceMonitor } from "./presence.ts";
 import { fitEvent, fitPrompts } from "./promptFit.ts";
 import {
   commandRouteOf,
-  processAlive,
   publicSession,
   type Registry,
   type SessionRecord,
+  sessionAlive,
 } from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
 import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
@@ -228,7 +228,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     if (d.headless.has(sessionId))
       throw new RpcFailure("conflict", "This session already runs in Relay. Send the message as a reply.");
     // Never a second copy of a session that is still alive: its terminal, app or editor has the process.
-    if (session.pid !== null && processAlive(session.pid))
+    if (sessionAlive(session))
       throw new RpcFailure(
         "conflict",
         "This session is still running on the computer. Reply to it instead of continuing it again.",
@@ -729,7 +729,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
   /** The session has no live Claude Code process and its conversation is on disk: `session.resume` can continue it. */
   function canResume(session: SessionRecord): boolean {
     if (!d.headless || !d.claudeBin || d.headless.has(session.id)) return false;
-    if (session.pid !== null && processAlive(session.pid)) return false;
+    if (sessionAlive(session)) return false;
     if (session.status !== "ended" && session.pid === null) return false;
     return hasTranscript(session);
   }

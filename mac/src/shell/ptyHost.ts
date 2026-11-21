@@ -1,9 +1,10 @@
 // One phone-started chat: runs the command in a pty of its own, detached so it outlives the daemon.
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { writeFileAtomic } from "../atomicWrite.ts";
+import { type SavedProcess, startTimeOf } from "../platform/processIdentity.ts";
 import { answerRequest, DraftTracker, PasteModeTracker, RequestReader } from "./ptyShell.ts";
 import { ScreenText } from "./screenText.ts";
 
@@ -22,6 +23,8 @@ export interface HostState {
   /** The command's own process id. */
   pid: number;
   hostPid: number;
+  /** When the host process started (ms), to tell it from a process that got its pid later. */
+  hostStart?: number | null;
   /** Set once the command has ended: its last screen, so a refusal at startup can be read. */
   exited?: { code: number; screen: string };
 }
@@ -45,6 +48,16 @@ export function readHostState(dir: string, id: string): HostState | null {
     return JSON.parse(readFileSync(hostStatePath(dir, id), "utf8")) as HostState;
   } catch {
     return null;
+  }
+}
+
+/** What to check `state.hostPid` against: its start time, or for an older record when the file was written. */
+export function hostSaved(dir: string, id: string, state: HostState): SavedProcess {
+  if (state.hostStart != null) return { start: state.hostStart };
+  try {
+    return { savedAt: statSync(hostStatePath(dir, id)).mtimeMs };
+  } catch {
+    return {};
   }
 }
 
@@ -218,6 +231,7 @@ export async function runHost(args: string[]): Promise<number> {
       token,
       pid: 0,
       hostPid: process.pid,
+      hostStart: startTimeOf(process.pid),
       exited: { code: 127, screen: message },
     });
     return 127;
@@ -313,7 +327,13 @@ export async function runHost(args: string[]): Promise<number> {
     server.listen(socketPath, resolve);
   });
   if (process.platform !== "win32") chmodSync(socketPath, 0o600);
-  writeState({ socket: socketPath, token, pid: proc.pid, hostPid: process.pid });
+  writeState({
+    socket: socketPath,
+    token,
+    pid: proc.pid,
+    hostPid: process.pid,
+    hostStart: startTimeOf(process.pid),
+  });
 
   // Closing the chat from outside ends Claude Code, and with it this host, leaving no record.
   for (const sig of ["SIGHUP", "SIGTERM"] as const)
@@ -335,6 +355,7 @@ export async function runHost(args: string[]): Promise<number> {
       token,
       pid: proc.pid,
       hostPid: process.pid,
+      hostStart: startTimeOf(process.pid),
       exited: { code, screen: last },
     });
   return code;

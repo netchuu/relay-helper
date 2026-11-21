@@ -13,6 +13,7 @@ import { CHILD_PATH } from "../config.ts";
 import { axAllowed, desktopTitle } from "../integrations/claudeDesktop.ts";
 import { isIdeSessionSync } from "../integrations/ideExtension.ts";
 import { errMessage, log } from "../log.ts";
+import { processState, type SavedProcess, startTimeOf } from "../platform/processIdentity.ts";
 import { backgroundOf } from "./background.ts";
 import type { DB } from "./db.ts";
 import type { EventLog } from "./events.ts";
@@ -43,6 +44,7 @@ interface SessionRow {
   status: string;
   title: string | null;
   pid: number | null;
+  pid_start: number | null;
   terminal: string | null;
   tmux_pane: string | null;
   tmux_socket: string | null;
@@ -64,6 +66,8 @@ interface SessionRow {
 
 export interface SessionRecord extends Session {
   pid: number | null;
+  /** When `pid` started (ms); null for a session saved before that was recorded. */
+  pidStart: number | null;
   tmuxPane: string | null;
   tmuxSocket: string | null;
   socketPath: string | null;
@@ -123,8 +127,8 @@ export function defaultSocketPath(pid: number | null): string | null {
 }
 
 /** A session with the pane its terminal reported (the columns are NULL for a session without one). */
-const SELECT_SESSIONS = `SELECT s.*, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at
-  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id`;
+const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id`;
 
 const cleanNullable = <T extends string | null>(s: T): T => (s == null ? s : (cleanName(s) as T));
 
@@ -160,6 +164,7 @@ function toRecord(r: SessionRow): SessionRecord {
     updatedAt: r.updated_at,
     lastSummary: r.last_summary,
     pid: r.pid,
+    pidStart: r.pid_start ?? null,
     tmuxPane: r.tmux_pane,
     tmuxSocket: r.tmux_socket,
     socketPath,
@@ -395,12 +400,15 @@ export class Registry {
           now,
           now,
         );
+      this.savePidStart(id, env.claudePid ?? null);
       this.notePanes(id, env);
       void this.refreshGit(id, cwd);
       return { session: this.get(id) as SessionRecord, created: true };
     }
     // Overwrite connection details only when reported. A null tmux pane (not absent) means resumed outside tmux: forget the old pane.
     const leftTmux = env.tmuxPane === null && !env.tmux;
+    // The hook runs under the live process, so its start time is read once per pid, not on every hook.
+    const newStart = Boolean(env.claudePid) && (env.claudePid !== existing.pid || existing.pidStart === null);
     this.db
       .query(
         `UPDATE sessions SET
@@ -438,8 +446,18 @@ export class Registry {
         now,
         id,
       );
+    if (newStart) this.savePidStart(id, env.claudePid ?? null);
     this.notePanes(id, env);
     return { session: this.get(id) as SessionRecord, created: false };
+  }
+
+  private savePidStart(id: string, pid: number | null): void {
+    const start = pid ? startTimeOf(pid) : null;
+    if (start === null) this.db.query("DELETE FROM session_pid_starts WHERE session_id = ?").run(id);
+    else
+      this.db
+        .query("INSERT OR REPLACE INTO session_pid_starts (session_id, pid_start) VALUES (?, ?)")
+        .run(id, start);
   }
 
   /** The chat left Relay's own terminal for the person's: its typing route goes, the new terminal's comes with the next hook. */
@@ -481,8 +499,8 @@ export class Registry {
   private sweep(): void {
     for (const s of this.list()) {
       if (s.runsInHelper) continue;
-      if (s.pid && !processAlive(s.pid)) {
-        this.setStatus(s.id, "ended");
+      if (s.pid && !sessionAlive(s)) {
+        this.endDead(s);
         continue;
       }
       const { changed, lastActivity } = this.correctTimes(s, undefined);
@@ -640,19 +658,28 @@ export class Registry {
       if (liveIds.has(s.id) || s.runsInHelper) continue;
       // Started or resumed while the check ran: the list is older than the session.
       if (Math.max(this.touchedAt.get(s.id) ?? 0, this.workingAt.get(s.id) ?? 0) > askedAt) continue;
-      this.setStatus(s.id, "ended");
+      this.endDead(s);
     }
+  }
+
+  /** Ends a session; a pid found dead is dropped so a later check can't take a newer process for it. */
+  private endDead(s: SessionRecord): void {
+    if (s.pid && !sessionAlive(s)) {
+      this.db.query("UPDATE sessions SET pid = NULL WHERE id = ?").run(s.id);
+      this.db.query("DELETE FROM session_pid_starts WHERE session_id = ?").run(s.id);
+    }
+    this.setStatus(s.id, "ended");
   }
 }
 
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM: it exists but belongs to someone else.
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
+/** False when the process is gone or the pid now belongs to another one; `saved` says which one was meant. */
+export function processAlive(pid: number, saved?: SavedProcess): boolean {
+  return processState(pid, saved) !== "dead";
+}
+
+/** The session's own process is still running (not just some process with its pid). */
+export function sessionAlive(s: Pick<SessionRecord, "pid" | "pidStart" | "updatedAt">): boolean {
+  return s.pid !== null && processAlive(s.pid, { start: s.pidStart, savedAt: s.updatedAt });
 }
 
 async function run(cmd: string[], timeoutMs = 5000): Promise<string> {

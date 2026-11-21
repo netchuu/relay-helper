@@ -3,7 +3,8 @@ import { readdirSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { paths } from "../config.ts";
-import { type HostState, readHostState } from "./ptyHost.ts";
+import { processState } from "../platform/processIdentity.ts";
+import { type HostState, hostSaved, readHostState } from "./ptyHost.ts";
 
 /** Ctrl-] leaves the chat running, as in telnet. */
 export const DETACH_KEY = 0x1d;
@@ -22,15 +23,6 @@ export interface KnownSession {
   status: string;
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** The chats with a host still running, named from the sessions the daemon knows. */
 export function runningChats(dir: string, sessions: KnownSession[]): Chat[] {
   const out: Chat[] = [];
@@ -44,7 +36,7 @@ export function runningChats(dir: string, sessions: KnownSession[]): Chat[] {
     if (!file.startsWith("h-") || !file.endsWith(".json")) continue;
     const id = file.slice(2, -5);
     const state = readHostState(dir, id);
-    if (!state || state.exited || !alive(state.hostPid)) continue;
+    if (!state || state.exited || processState(state.hostPid, hostSaved(dir, id, state)) === "dead") continue;
     const s = sessions.find((x) => x.id.startsWith(id));
     out.push({ id, name: s ? (s.name ?? s.project) : null, state });
   }

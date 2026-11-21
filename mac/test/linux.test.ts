@@ -104,7 +104,7 @@ describe("linux service", () => {
     const res = await linuxService(deps).install({ ...ctx(home), relayBin: "/bin/sh" });
     expect(res.mode).toBe("background process");
     expect(res.notes[0]?.text).toContain("won't start again after a reboot");
-    expect(Number(readFileSync(join(home, "daemon.pid"), "utf8"))).toBeGreaterThan(1);
+    expect(Number(readFileSync(join(home, "daemon.pid"), "utf8").split("\n")[0])).toBeGreaterThan(1);
     expect(deps.calls.some((c) => c.includes("enable"))).toBe(false);
   });
 

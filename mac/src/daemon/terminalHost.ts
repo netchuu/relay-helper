@@ -3,7 +3,8 @@ import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { basename, join } from "node:path";
 import { CHILD_PATH, paths } from "../config.ts";
-import { hostSocketPath, hostStatePath, readHostState } from "../shell/ptyHost.ts";
+import { processState, signalSaved } from "../platform/processIdentity.ts";
+import { hostSaved, hostSocketPath, hostStatePath, readHostState } from "../shell/ptyHost.ts";
 
 /** Where a session started from the phone runs: a terminal of its own (`relay host`) the helper can type into. */
 export interface TerminalPane {
@@ -65,15 +66,6 @@ function ask(
   });
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function sweep(dir: string): void {
   try {
     for (const name of readdirSync(dir)) {
@@ -83,7 +75,7 @@ function sweep(dir: string): void {
       const state = readHostState(dir, id);
       if (!state) continue;
       const stale = state.exited && Date.now() - statSync(path).mtimeMs > STALE_RECORD_MS;
-      if (stale || (!state.exited && !alive(state.hostPid))) {
+      if (stale || (!state.exited && processState(state.hostPid, hostSaved(dir, id, state)) === "dead")) {
         rmSync(path, { force: true });
         rmSync(hostSocketPath(dir, id), { force: true });
       }
@@ -135,16 +127,14 @@ export function hostLauncher(opts: { dir?: string; self?: string[] } = {}): Term
       const reply = await ask(pane.socket, { op: "screen", token: pane.token });
       if (reply?.ok) return { screen: reply.screen ?? "", exited: false };
       // No answer: busy for a moment, or killed without a record.
-      return alive(state.hostPid) ? { screen: "", exited: false } : null;
+      return processState(state.hostPid, hostSaved(dir, pane.id, state)) !== "dead"
+        ? { screen: "", exited: false }
+        : null;
     },
     async close(pane) {
       const state = readHostState(dir, pane.id);
       if (state && !state.exited) {
-        try {
-          process.kill(state.hostPid, "SIGTERM");
-        } catch {
-          // already gone
-        }
+        signalSaved(state.hostPid, hostSaved(dir, pane.id, state), "SIGTERM");
       }
       rmSync(hostStatePath(dir, pane.id), { force: true });
     },

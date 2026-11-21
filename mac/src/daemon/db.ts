@@ -189,6 +189,9 @@ const MIGRATIONS: string[] = [
    ALTER TABLE queued_replies_18 RENAME TO queued_replies;`,
   // 19: when a chat from the phone's own terminal was continued in the person's terminal.
   `CREATE TABLE IF NOT EXISTS moved_sessions (session_id TEXT PRIMARY KEY, moved_at INTEGER NOT NULL);`,
+  // 20: when the process behind a session's `pid` started, so a pid the system gave to something else later isn't taken
+  // for the session. A table of its own, so it also runs on a database that was moved back to an older version.
+  `CREATE TABLE IF NOT EXISTS session_pid_starts (session_id TEXT PRIMARY KEY, pid_start INTEGER NOT NULL);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */
