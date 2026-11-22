@@ -10,13 +10,14 @@ import {
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { z } from "zod";
+import { relayHome } from "./home.ts";
 import { BASE_PATH } from "./platform/exec.ts";
 import { platform } from "./platform/index.ts";
 
 /** Set at build time for releases (see release/build-*.sh). */
 export const VERSION = process.env.RELAY_VERSION ?? "0.1.0";
 
-export const RELAY_HOME = process.env.RELAY_HOME ?? join(homedir(), ".relay");
+export const RELAY_HOME = relayHome();
 
 /**
  * A helper with its own RELAY_HOME (a UI-test server, a scheduled test run, a test daemon) is a test helper:

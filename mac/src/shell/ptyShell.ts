@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { CHILD_PATH, paths } from "../config.ts";
+import { relayHome } from "../home.ts";
 import { cleanTypedText } from "./typedText.ts";
 
 /** How long the tab must be quiet before Relay types into it, and the longest it waits for that. */
@@ -238,7 +238,7 @@ async function passThrough(cmd: string[]): Promise<number> {
 }
 
 async function runInPty(shell: string): Promise<number> {
-  const dir = join(paths.home, "pty");
+  const dir = join(relayHome(), "pty");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   const socketPath = join(dir, `${process.pid}.sock`);
@@ -324,6 +324,8 @@ async function runInPty(shell: string): Promise<number> {
 
 /** True when `pid`'s process group is the foreground group of the terminal the shell runs in. */
 export async function isForeground(pid: number, shellPid: number): Promise<boolean> {
+  // Loaded here: config.ts costs more start-up time than `relay wrap` can spare.
+  const { CHILD_PATH } = await import("../config.ts");
   const out = Bun.spawn(["ps", "-o", "pid=,pgid=,tpgid=", "-p", `${shellPid},${pid}`], {
     stdout: "pipe",
     stderr: "ignore",

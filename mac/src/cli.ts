@@ -62,6 +62,7 @@ import { platform } from "./platform/index.ts";
 import { runAttach } from "./shell/ptyAttach.ts";
 import { runHost } from "./shell/ptyHost.ts";
 import { runShell } from "./shell/ptyShell.ts";
+import { runWrap } from "./shell/ptyWrap.ts";
 import { describePrompt, formatEvent } from "./tailFormat.ts";
 
 const DEFAULT_RELAY_URL = "wss://relay.relay-cloud.workers.dev";
@@ -758,6 +759,9 @@ async function main(argv: string[]): Promise<void> {
     case "shell":
       // Started by Zed's terminal (see integrations/zed.ts); exits with the shell's code.
       return process.exit(await runShell(args));
+    case "wrap":
+      // Claude Code in a terminal Relay owns; exits with Claude Code's code.
+      return process.exit(await runWrap(args));
     case "attach":
       return process.exit(await runAttach(args));
     case "host":
