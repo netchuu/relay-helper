@@ -14,7 +14,7 @@ import { getSetting, openDb, setSetting } from "./db.ts";
 import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
 import { Handover } from "./handover.ts";
-import { HeadlessSessions } from "./headless.ts";
+import { HeadlessSessions, IDLE_CHECK_MS } from "./headless.ts";
 import { HeldReplies } from "./held.ts";
 import { HookHandler } from "./hooks.ts";
 import { setKnownPids } from "./inject.ts";
@@ -130,6 +130,8 @@ export async function runDaemon(): Promise<void> {
   const headless = new HeadlessSessions({
     registry,
     claudeBin,
+    idleMs: config.idleStopSeconds * 1000,
+    checkMs: Math.min(IDLE_CHECK_MS, (config.idleStopSeconds * 1000) / 4),
     openPrompt: (input, signal) => hooks.openPrompt(input, signal),
     notice: (sessionId, text) => events.emit({ type: "session.notice", sessionId, level: "error", text }),
     turns: {
@@ -174,6 +176,7 @@ export async function runDaemon(): Promise<void> {
   const hooks = new HookHandler(deps);
   hooks.resumeOpenTurns();
   const rpc = createRpc(deps);
+  headless.busy = (id) => rpc.sendingNow(id) || broker.hasOpen(id) || replies.list(id).length > 0;
 
   // Prompts from before a restart have no waiting hook any more; their terminals still show the dialog.
   broker.closeOrphans();

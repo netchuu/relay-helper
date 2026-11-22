@@ -57,6 +57,8 @@ const ConfigSchema = z.object({
   previewChars: z.number().int().min(100).max(4000).default(600),
   /** Prompts older than this are closed with resolvedBy "timeout". */
   promptTimeoutSeconds: z.number().int().min(60).default(86_400),
+  /** Seconds a chat continued from the phone may sit with nothing going on before its Claude Code process is stopped. */
+  idleStopSeconds: z.number().int().min(5).default(3600),
   /** Directories the manager agent may start sessions in (Phase 3). */
   projectRoots: z.array(z.string()).default([join(homedir(), "Projects")]),
   /**

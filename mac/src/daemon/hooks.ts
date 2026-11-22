@@ -287,6 +287,7 @@ export class HookHandler {
 
     const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : undefined);
     if (this.d.handover?.fromLeftCopy(sessionId, envelope.env)) return NO_OUTPUT;
+    if (this.d.registry.fromStoppedProcess(sessionId, envelope.env.claudePid, event)) return NO_OUTPUT;
     if (event === "SessionStart" && str("source") === "resume")
       await this.d.handover?.resumed(sessionId, envelope.env);
     const { session, created } = this.d.registry.touch(sessionId, {

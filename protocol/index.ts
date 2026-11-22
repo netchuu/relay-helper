@@ -299,6 +299,8 @@ export const Session = z.object({
   commandsRun: z.boolean().optional(),
   /** True only while the session runs in a Claude Code process the helper started (`session.resume`); replies go to it. */
   runsInHelper: z.literal(true).optional(),
+  /** True when the helper stopped an idle chat it was running: no terminal and no process, still listed, and a message continues it (`session.resume`). */
+  idleStopped: z.literal(true).optional(),
   /** True when the chat started from the phone and was then continued in the person's own terminal (`terminal` says which). */
   movedToTerminal: z.literal(true).optional(),
   startedAt: z.number(),

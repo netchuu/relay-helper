@@ -809,6 +809,15 @@ const resume = {
     text: "Carry on with the coupon fix",
     sendId: "5d1c2b7e-3f0a-4e55-9a51-6c7f0d2a8b13",
   }),
+  // The helper stopped such a chat after an hour without activity: it stays listed, without a terminal.
+  idleStopped: Session.parse({
+    ...session,
+    terminal: null,
+    status: "idle",
+    canReceive: true,
+    replyRoute: "typed",
+    idleStopped: true,
+  }),
   result: SessionResumed.parse({ via: "headless" }),
   // Later messages go to the helper's process: `session.send` answers with this route.
   sendResult: SendResult.parse({ via: "headless" }),

@@ -1,5 +1,6 @@
 import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
+import { runsInBackground } from "./background.ts";
 import type { HookReply } from "./broker.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import { redact } from "./redact.ts";
@@ -88,7 +89,18 @@ export interface HeadlessDeps {
   turns?: { openId(sessionId: string): string | null; fail(turnId: string, text?: string): void };
   /** How long a `result` with `is_error` waits for Claude Code's own StopFailure hook before the helper ends the turn. */
   errorGraceMs?: number;
+  /** The clock (ms); tests move it. */
+  now?: () => number;
+  /** How long a process with nothing going on may sit before it is stopped. */
+  idleMs?: number;
+  /** How often the one timer looks at every process. */
+  checkMs?: number;
 }
+
+/** How long an owned process may sit with no message and nothing running before the helper stops it. */
+export const IDLE_STOP_MS = 60 * 60_000;
+/** How often the processes are looked at for idleness. */
+export const IDLE_CHECK_MS = 60_000;
 
 /** How long a `result` with `is_error` waits for the StopFailure hook, which reports the turn itself. */
 export const ERROR_GRACE_MS = 3_000;
@@ -106,6 +118,12 @@ interface Owned {
   unnamed: Map<string, (named: boolean) => void>;
   /** The check after a `result` with `is_error`, until it runs. */
   errorTimer?: ReturnType<typeof setTimeout>;
+  /** When anything last happened: the start, a message written, a line from the process. */
+  lastActive: number;
+  /** When the newest scheduled wake-up is due (ms); the process is left alone until then. */
+  wakeupDue: number;
+  /** Scheduled jobs the process made and didn't delete: it is never stopped while any exists. */
+  crons: number;
 }
 
 /** How long a Stop waits for the process to end its turn before the process itself is ended. */
@@ -116,7 +134,59 @@ export class HeadlessSessions {
   /** Chats being handed to another process: their copy going away (even by a failed interrupt) doesn't end them. */
   private readonly handingOver = new Set<string>();
 
+  private idleTimer?: ReturnType<typeof setInterval>;
+  /** Whether something outside this class keeps the session busy (a send being delivered, a queued reply, a prompt, background work). */
+  busy: (sessionId: string) => boolean = () => false;
+
   constructor(private readonly d: HeadlessDeps) {}
+
+  private now(): number {
+    return (this.d.now ?? Date.now)();
+  }
+
+  /** Stops every process that has sat idle for `idleMs`; the chat stays listed and its next message continues it. */
+  stopIdle(): string[] {
+    const stopped: string[] = [];
+    const idleMs = this.d.idleMs ?? IDLE_STOP_MS;
+    const now = this.now();
+    for (const [id, entry] of [...this.owned]) {
+      if (this.holdsWork(id, entry)) continue;
+      if (now - Math.max(entry.lastActive, entry.wakeupDue) < idleMs) continue;
+      log.info("headless session idle; stopping it", { sessionId: id });
+      stopped.push(id);
+      // The chat is kept before the process goes, so no moment shows it as ended.
+      this.d.registry.keepOpen(id, entry.child.pid);
+      this.drop(id, entry, false, true);
+    }
+    return stopped;
+  }
+
+  /** Whether an open turn, a prompt, an unanswered message, scheduled work or a task running elsewhere keeps the process. */
+  private holdsWork(id: string, entry: Owned): boolean {
+    return (
+      this.d.turns?.openId(id) != null ||
+      entry.requests.size > 0 ||
+      // Without lifecycle lines a message counts as read once written, and the hour counts from it.
+      (entry.confirms && entry.unnamed.size > 0) ||
+      entry.turnEnded.size > 0 ||
+      entry.errorTimer !== undefined ||
+      entry.crons > 0 ||
+      this.handingOver.has(id) ||
+      runsInBackground(id) ||
+      this.busy(id)
+    );
+  }
+
+  private startIdleTimer(): void {
+    if (this.idleTimer) return;
+    this.idleTimer = setInterval(() => this.stopIdle(), this.d.checkMs ?? IDLE_CHECK_MS);
+    this.idleTimer.unref?.();
+  }
+
+  private stopIdleTimer(): void {
+    if (this.idleTimer && this.owned.size === 0) clearInterval(this.idleTimer);
+    if (this.owned.size === 0) this.idleTimer = undefined;
+  }
 
   /** Whether the helper runs this session's Claude Code process. */
   has(sessionId: string): boolean {
@@ -169,8 +239,13 @@ export class HeadlessSessions {
       turnEnded: new Map(),
       confirms: false,
       unnamed: new Map(),
+      lastActive: this.now(),
+      wakeupDue: 0,
+      crons: 0,
     };
     this.owned.set(id, entry);
+    this.startIdleTimer();
+    this.d.registry.clearKeptOpen(id);
     const init = this.watch(id, entry);
     try {
       const uuid = this.write1(entry, text);
@@ -215,6 +290,7 @@ export class HeadlessSessions {
       log.warn("headless send failed", { err: errMessage(err) });
       throw stopped;
     }
+    entry.lastActive = this.now();
     this.d.registry.setStatus(sessionId, "working");
     if (entry.confirms) {
       if (!(await named)) throw stopped;
@@ -276,6 +352,7 @@ export class HeadlessSessions {
   /** Stops every process the helper owns (the daemon is exiting). */
   stopAll(): void {
     for (const [id, entry] of [...this.owned]) this.drop(id, entry);
+    this.stopIdleTimer();
   }
 
   /** Reads stdout until it ends; resolves on `system`/`init`, rejects on early exit or timeout. */
@@ -307,6 +384,8 @@ export class HeadlessSessions {
             continue;
           }
           if (!msg) continue;
+          entry.lastActive = this.now();
+          this.noteScheduling(entry, msg);
           this.noteNamed(entry, msg);
           if (msg.type === "system" && msg.subtype === "init" && !ready) {
             ready = true;
@@ -366,6 +445,21 @@ export class HeadlessSessions {
       this.d.turns.fail(turnId, said || undefined);
       this.d.notice?.(id, said ? said.slice(0, 500) : "Claude Code stopped on an error.");
     }, this.d.errorGraceMs ?? ERROR_GRACE_MS);
+  }
+
+  /** A scheduled wake-up or job the process makes keeps it running (`ScheduleWakeup`, `CronCreate`, `CronDelete`). */
+  private noteScheduling(entry: Owned, msg: StreamMessage): void {
+    if (msg.type !== "assistant" || !Array.isArray(msg.message?.content)) return;
+    for (const part of msg.message.content) {
+      if (part?.type !== "tool_use") continue;
+      const input = (part.input ?? {}) as { delaySeconds?: unknown; stop?: unknown };
+      if (part.name === "ScheduleWakeup") {
+        if (input.stop === true) entry.wakeupDue = 0;
+        else if (typeof input.delaySeconds === "number")
+          entry.wakeupDue = this.now() + input.delaySeconds * 1000;
+      } else if (part.name === "CronCreate") entry.crons += 1;
+      else if (part.name === "CronDelete") entry.crons = Math.max(0, entry.crons - 1);
+    }
   }
 
   /** What Claude Code names as read: a `command_lifecycle` line, the user message echoed back, or a `result` for it. */
@@ -439,6 +533,7 @@ export class HeadlessSessions {
   /** Forgets the process, closes its prompts, and stops it unless it has exited already. */
   private drop(id: string, entry: Owned, exited = false, keepStatus = false): void {
     if (this.owned.get(id) === entry) this.owned.delete(id);
+    this.stopIdleTimer();
     entry.abort.abort();
     clearTimeout(entry.errorTimer);
     if (!exited) {
@@ -472,6 +567,7 @@ interface StreamMessage {
   is_error?: unknown;
   result?: unknown;
   response?: { subtype?: string; request_id?: string };
+  message?: { content?: { type?: string; name?: string; input?: unknown }[] };
   request?: {
     subtype?: string;
     tool_name?: unknown;

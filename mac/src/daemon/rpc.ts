@@ -199,6 +199,8 @@ type RpcCall = (method: string, params: unknown, actor: string, opts?: RpcOpts) 
 export type DaemonRpc = RpcCall & {
   /** Types the model and effort picks that waited for Claude to go idle; the daemon calls it before it drains queued replies. */
   applyPicks: (sessionId?: string) => Promise<void>;
+  /** Whether a message to the session is being delivered right now. */
+  sendingNow: (sessionId: string) => boolean;
 };
 
 /** Claude started working between the check and the typing: the pick waits. */
@@ -233,7 +235,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         "conflict",
         "This session is still running on the computer. Reply to it instead of continuing it again.",
       );
-    if (session.status !== "ended" && session.pid === null)
+    if (session.status !== "ended" && session.pid === null && !session.idleStopped)
       throw new RpcFailure(
         "conflict",
         "This session is still listed as running. Reply to it instead of continuing it again.",
@@ -669,7 +671,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     const session = d.registry.get(sessionId);
     // A session the helper is continuing right now still reads 'ended' until its process announces itself.
     const gone = (s: SessionRecord | null | undefined): boolean =>
-      !s || (s.status === "ended" && !d.headless?.has(sessionId));
+      !s || ((s.status === "ended" || s.idleStopped === true) && !d.headless?.has(sessionId));
     const goneError = (s: SessionRecord | null | undefined) =>
       new RpcFailure(
         "not_found",
@@ -733,7 +735,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
   function canResume(session: SessionRecord): boolean {
     if (!d.headless || !d.claudeBin || d.headless.has(session.id)) return false;
     if (sessionAlive(session)) return false;
-    if (session.status !== "ended" && session.pid === null) return false;
+    if (session.status !== "ended" && session.pid === null && !session.idleStopped) return false;
     return hasTranscript(session);
   }
 
@@ -1008,7 +1010,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       return { error: { code: "internal", message: "internal error" } };
     }
   };
-  return Object.assign(call, { applyPicks });
+  return Object.assign(call, { applyPicks, sendingNow: (sessionId: string) => sending.has(sessionId) });
 }
 
 /** Runs an attachment step, turning its refusal into the RPC error with the same plain sentence. */

@@ -194,6 +194,8 @@ const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS session_pid_starts (session_id TEXT PRIMARY KEY, pid_start INTEGER NOT NULL);`,
   // 21: an id for this event log, made with the database, so a phone notices when the log started again.
   `INSERT OR IGNORE INTO settings (key, value) VALUES ('eventLogId', json_quote(lower(hex(randomblob(8)))));`,
+  // 22: chats the helper stopped for being idle, and the pid of the process it stopped (its late hooks are not the chat's).
+  `CREATE TABLE IF NOT EXISTS idle_stopped_sessions (session_id TEXT PRIMARY KEY, stopped_at INTEGER NOT NULL, stopped_pid INTEGER);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

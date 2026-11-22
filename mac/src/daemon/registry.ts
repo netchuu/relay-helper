@@ -53,6 +53,7 @@ interface SessionRow {
   pty_socket: string | null;
   pty_token: string | null;
   moved_at: number | null;
+  idle_stopped_at: number | null;
   wezterm_pane: string | null;
   wezterm_socket: string | null;
   kitty_listen_on: string | null;
@@ -127,8 +128,8 @@ export function defaultSocketPath(pid: number | null): string | null {
 }
 
 /** A session with the pane its terminal reported (the columns are NULL for a session without one). */
-const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at
-  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id`;
+const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at, i.stopped_at AS idle_stopped_at
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id LEFT JOIN idle_stopped_sessions i ON i.session_id = s.id`;
 
 const cleanNullable = <T extends string | null>(s: T): T => (s == null ? s : (cleanName(s) as T));
 
@@ -147,19 +148,21 @@ function toRecord(r: SessionRow): SessionRecord {
     status: r.status as SessionStatus,
     title: cleanNullable(r.title),
     terminal: r.terminal,
+    ...(r.idle_stopped_at != null && r.status !== "ended" ? { idleStopped: true as const } : {}),
     canReceive:
       r.status !== "ended" &&
-      Boolean(
-        socketPath ||
-          r.pty_socket ||
-          (r.tmux_pane && r.tmux_socket) ||
-          paneTargetOf({
-            weztermPane: r.wezterm_pane,
-            weztermSocket: r.wezterm_socket,
-            kittyListenOn: r.kitty_listen_on,
-            kittyWindowId: r.kitty_window_id,
-          }),
-      ),
+      (r.idle_stopped_at != null ||
+        Boolean(
+          socketPath ||
+            r.pty_socket ||
+            (r.tmux_pane && r.tmux_socket) ||
+            paneTargetOf({
+              weztermPane: r.wezterm_pane,
+              weztermSocket: r.wezterm_socket,
+              kittyListenOn: r.kitty_listen_on,
+              kittyWindowId: r.kitty_window_id,
+            }),
+        )),
     startedAt: r.started_at,
     updatedAt: r.updated_at,
     lastSummary: r.last_summary,
@@ -206,6 +209,7 @@ export function publicSession(s: SessionRecord): Session {
     ...commandsRunField(s),
     ...(s.status === "ended" ? {} : { ...heldField(s.id), ...permissionModeField(s.id) }),
     ...(s.runsInHelper && s.status !== "ended" ? { runsInHelper: true as const } : {}),
+    ...(s.idleStopped && !s.runsInHelper && s.status !== "ended" ? { idleStopped: true as const } : {}),
     ...(s.movedAt != null && s.status !== "ended" && !s.runsInHelper
       ? { movedToTerminal: true as const }
       : {}),
@@ -241,7 +245,7 @@ export function replyRouteOf(s: SessionRecord): {
 } {
   if (s.status === "ended") return {};
   // A message to the helper's own process is an ordinary user message.
-  if (s.runsInHelper) return { replyRoute: "typed" };
+  if (s.runsInHelper || s.idleStopped) return { replyRoute: "typed" };
   if (!typingPreferred) return s.socketPath ? { replyRoute: "labelled" } : {};
   if (terminalRoutesOf(s, { promised: true }).length > 0) return { replyRoute: "typed" };
   if (process.platform !== "darwin") return s.socketPath ? { replyRoute: "labelled" } : {};
@@ -259,6 +263,8 @@ export function commandRouteOf(
 ): CommandRoute | null {
   if (s.status === "ended") return null;
   if (s.runsInHelper) return "helper";
+  // No process to type into: the next message continues it.
+  if (s.idleStopped) return null;
   if (!typingPreferred) return s.socketPath ? "inbox" : null;
   if (terminalRoutesOf(s, { promised: true }).length > 0) return "terminal";
   if (process.platform === "darwin" && app.isApp(s) && app.allowed()) return "app";
@@ -298,7 +304,7 @@ export function appRouteOf(s: SessionRecord): "desktop app" | "editor extension"
 
 /** Whether `/model` can be typed into the session's own terminal (not the desktop app, editors or inbox), so the phone may offer the picker. */
 function modelChangeable(s: SessionRecord): boolean {
-  if (s.runsInHelper) return false;
+  if (s.runsInHelper || s.idleStopped) return false;
   // An app session that names no terminal has none to find a tab in.
   return terminalRoutesOf(s, { promised: isAppSession(s) }).length > 0;
 }
@@ -335,6 +341,8 @@ export class Registry {
   private readonly workingAt = new Map<string, number>();
   /** Ticks when a hook last touched a session: a check that began earlier can't say the session is gone. */
   private readonly touchedAt = new Map<string, number>();
+  /** Processes the helper stopped for being idle, kept in memory after a resume so their late hooks still say nothing. */
+  private readonly stoppedPids = new Map<string, Set<number>>();
 
   /** Whether the helper itself runs this session's process (headless.ts); it is never ended for missing from `claude agents`. */
   ownedByHelper: (id: string) => boolean = () => false;
@@ -371,7 +379,9 @@ export class Registry {
     const now = Date.now();
     if (activity) this.touchedAt.set(id, ++this.tick);
     const existing = this.get(id);
-    const env = fields.env ?? {};
+    let env = fields.env ?? {};
+    // A list of Claude Code's processes taken before the stop still names the stopped one: it is not the chat's now.
+    if (env.claudePid && this.stoppedPids.get(id)?.has(env.claudePid)) env = { ...env, claudePid: undefined };
     const tmuxSocket = env.tmux ? (env.tmux.split(",")[0] ?? null) : null;
     if (!existing) {
       const cwd = fields.cwd ?? process.env.HOME ?? "/";
@@ -447,6 +457,8 @@ export class Registry {
         id,
       );
     if (newStart) this.savePidStart(id, env.claudePid ?? null);
+    // A process of someone else's took the chat over.
+    if (env.claudePid) this.clearKeptOpen(id);
     this.notePanes(id, env);
     return { session: this.get(id) as SessionRecord, created: false };
   }
@@ -468,6 +480,45 @@ export class Registry {
         "INSERT INTO moved_sessions (session_id, moved_at) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET moved_at = excluded.moved_at",
       )
       .run(id, Date.now());
+  }
+
+  /**
+   * The helper stopped this chat's idle process (pid `stoppedPid`): the chat stays listed as idle, without a terminal
+   * or a process, and the next message continues it.
+   */
+  keepOpen(id: string, stoppedPid: number | null): void {
+    if (stoppedPid) this.stoppedPids.set(id, (this.stoppedPids.get(id) ?? new Set()).add(stoppedPid));
+    this.db
+      .query(
+        "INSERT OR REPLACE INTO idle_stopped_sessions (session_id, stopped_at, stopped_pid) VALUES (?, ?, ?)",
+      )
+      .run(id, Date.now(), stoppedPid);
+    this.db
+      .query(
+        `UPDATE sessions SET pid = NULL, socket_path = NULL, socket_token = NULL, pty_socket = NULL, pty_token = NULL,
+           tmux_pane = NULL, tmux_socket = NULL, status = 'idle', ended_at = NULL WHERE id = ?`,
+      )
+      .run(id);
+    this.db.query("DELETE FROM session_pid_starts WHERE session_id = ?").run(id);
+    this.db.query("DELETE FROM session_panes WHERE session_id = ?").run(id);
+    this.publish(id);
+  }
+
+  /** The chat runs again (or ended): it is no longer kept open without a process. */
+  clearKeptOpen(id: string): void {
+    this.db.query("DELETE FROM idle_stopped_sessions WHERE session_id = ?").run(id);
+  }
+
+  /** Whether a hook comes from the process the helper stopped for being idle: it says nothing about the chat now. */
+  fromStoppedProcess(id: string, claudePid: number | null | undefined, event?: string): boolean {
+    const row = this.db
+      .query("SELECT stopped_pid FROM idle_stopped_sessions WHERE session_id = ?")
+      .get(id) as { stopped_pid: number | null } | null;
+    if (typeof claudePid === "number")
+      return claudePid === row?.stopped_pid || this.stoppedPids.get(id)?.has(claudePid) === true;
+    if (event !== "SessionEnd") return false;
+    // A pid-less SessionEnd is the killed process's hook outliving it; headless sees its own process exit.
+    return row != null || (this.ownedByHelper(id) && (this.stoppedPids.get(id)?.size ?? 0) > 0);
   }
 
   /** Stores the WezTerm pane and kitty window a hook reported: absent keeps the stored value, null forgets it. */
@@ -498,7 +549,7 @@ export class Registry {
   /** Without `claude agents`: a session whose process is gone has ended; "working" with nothing written for half an hour was left open. */
   private sweep(): void {
     for (const s of this.list()) {
-      if (s.runsInHelper) continue;
+      if (s.runsInHelper || s.idleStopped) continue;
       if (s.pid && !sessionAlive(s)) {
         this.endDead(s);
         continue;
@@ -539,6 +590,7 @@ export class Registry {
   ): void {
     const now = Date.now();
     if (status === "working") this.workingAt.set(id, ++this.tick);
+    if (status === "ended") this.clearKeptOpen(id);
     this.db
       .query(
         `UPDATE sessions SET
@@ -628,6 +680,8 @@ export class Registry {
       // (A hook that really resumed it has already moved it out of "ended".)
       if (this.get(s.sessionId)?.status === "ended" && (this.touchedAt.get(s.sessionId) ?? 0) > askedAt)
         continue;
+      // Listed before the helper stopped it: the process is gone, and the chat stays as the stop left it.
+      if (s.pid && this.stoppedPids.get(s.sessionId)?.has(s.pid)) continue;
       const kind: SessionKind = s.kind === "background" ? "background" : "interactive";
       const { session, created } = this.touch(
         s.sessionId,
@@ -655,7 +709,7 @@ export class Registry {
       } else if (times.changed) this.publish(s.sessionId);
     }
     for (const s of this.list()) {
-      if (liveIds.has(s.id) || s.runsInHelper) continue;
+      if (liveIds.has(s.id) || s.runsInHelper || s.idleStopped) continue;
       // Started or resumed while the check ran: the list is older than the session.
       if (Math.max(this.touchedAt.get(s.id) ?? 0, this.workingAt.get(s.id) ?? 0) > askedAt) continue;
       this.endDead(s);
