@@ -15,6 +15,12 @@ ENTITLEMENTS="$ROOT/release/entitlements.plist"
 # login keychain is used.
 KC=()
 [[ -z "${RELAY_KEYCHAIN:-}" ]] || KC=(--keychain "$RELAY_KEYCHAIN")
+# Notarize with an App Store Connect API key when RELAY_NOTARY_KEY (the .p8 path), RELAY_NOTARY_KEY_ID and
+# RELAY_NOTARY_ISSUER are set; otherwise with the keychain profile, which has twice gone missing from the keychain.
+NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE" ${KC[@]+"${KC[@]}"})
+if [[ -n "${RELAY_NOTARY_KEY:-}" && -n "${RELAY_NOTARY_KEY_ID:-}" && -n "${RELAY_NOTARY_ISSUER:-}" ]]; then
+  NOTARY_AUTH=(--key "$RELAY_NOTARY_KEY" --key-id "$RELAY_NOTARY_KEY_ID" --issuer "$RELAY_NOTARY_ISSUER")
+fi
 IDENTITY="${RELAY_SIGN_IDENTITY:-$(security find-identity -v -p codesigning ${RELAY_KEYCHAIN:-} | awk '/Developer ID Application/ {print $2; exit}')}"
 [[ -n "$IDENTITY" ]] || { echo "No 'Developer ID Application' certificate in the keychain." >&2; exit 1; }
 echo "• signing with: $(security find-identity -v -p codesigning ${RELAY_KEYCHAIN:-} | grep "$IDENTITY" | sed 's/.*"\(.*\)"/\1/')"
@@ -41,7 +47,7 @@ for ARCH in arm64 x64; do
   ditto -c -k --keepParent "$OUT" "$ZIP"
   echo "• notarizing darwin-$ARCH (takes a few minutes)"
   # notarytool can exit 0 on a rejected submission, so read the verdict instead of the exit status.
-  RESULT="$(xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" ${KC[@]+"${KC[@]}"} --wait --output-format json)" || {
+  RESULT="$(xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait --output-format json)" || {
     echo "$RESULT" >&2
     echo "notarytool failed for darwin-$ARCH." >&2
     exit 1
@@ -51,7 +57,7 @@ for ARCH in arm64 x64; do
   if [[ "$STATUS" != "Accepted" ]]; then
     echo "$RESULT" >&2
     echo "Apple did not accept darwin-$ARCH (status: ${STATUS:-unknown}, submission id: $(field id))." >&2
-    echo "See why: xcrun notarytool log $(field id) --keychain-profile $NOTARY_PROFILE ${KC[*]-}" >&2
+    echo "See why: xcrun notarytool log $(field id) ${NOTARY_AUTH[*]}" >&2
     exit 1
   fi
   rm "$ZIP"
