@@ -24,7 +24,7 @@ for ARCH in arm64 x64; do
   OUT="$DIST/relay-$VERSION-darwin-$ARCH"
   mkdir -p "$OUT"
   echo "• building darwin-$ARCH"
-  for ENTRY in "hook/client.ts:relay-hook" "cli.ts:relay"; do
+  for ENTRY in "hook/client.ts:relay-hook" "cli.ts:relay" "shell/wrapMain.ts:relay-wrap"; do
     SRC="${ENTRY%%:*}"; NAME="${ENTRY##*:}"
     # No bunfig.toml or .env from the working directory: a bunfig.toml there could preload code into relay.
     bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv \

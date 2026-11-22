@@ -23,8 +23,13 @@ The helper runs as you, with your permissions, so this is worth knowing before y
 - It sends traffic to the Relay Worker, end-to-end encrypted with keys made at pairing, and push
   notifications that carry only an encrypted blob. [docs/RELAY.md](docs/RELAY.md) says what the Worker, Apple,
   Google and Cloudflare can see.
-- `relay uninstall` stops the helper and removes the hooks, the login item (the launchd agent or systemd unit)
-  and anything it changed in Zed. It keeps `~/.relay`, so a later install still knows your paired phones.
+- `relay install` also puts a small `claude` program in `~/.relay/bin` and adds a marked block
+  (`# >>> relay >>>`) to your shell startup files (zsh, bash, fish) that puts that folder first in PATH. A
+  `claude` typed in a new terminal then runs Claude Code in a terminal Relay can type into. It finds the real
+  `claude` by skipping its own folder, and starts it as usual when `RELAY_NO_WRAP=1` is set or the helper is
+  not running. Your own `claude` functions and flags keep working.
+- `relay uninstall` stops the helper and removes the hooks, the login item (the launchd agent or systemd unit),
+  that block and program, and anything it changed in Zed. It keeps `~/.relay`, so a later install still knows your paired phones.
   `relay uninstall --purge` deletes `~/.relay` as well: the paired phones, the keys made at pairing, the
   database, attachments and logs. Phones paired before can't connect again; pair them anew after a new install.
 

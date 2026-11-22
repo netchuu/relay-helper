@@ -7,7 +7,7 @@
   "scripts": {
     "daemon": "bun mac/src/cli.ts daemon",
     "relay": "bun mac/src/cli.ts",
-    "build": "bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/hook/client.ts --outfile mac/bin/relay-hook && bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/cli.ts --outfile mac/bin/relay",
+    "build": "bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/hook/client.ts --outfile mac/bin/relay-hook && bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/cli.ts --outfile mac/bin/relay && bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv mac/src/shell/wrapMain.ts --outfile mac/bin/relay-wrap",
     "test": "bun test --timeout 120000 && bun test --timeout 120000 ./release",
     "record:transcripts": "bun mac/test/record/record.ts",
     "test:linux": "docker build -q -f Dockerfile.test -t relay-test . && docker run --rm relay-test",

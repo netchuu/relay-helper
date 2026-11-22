@@ -11,7 +11,7 @@ for TARGET in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl; do
   OUT="$DIST/relay-$VERSION-$TARGET"
   mkdir -p "$OUT"
   echo "• building $TARGET"
-  for ENTRY in "hook/client.ts:relay-hook" "cli.ts:relay"; do
+  for ENTRY in "hook/client.ts:relay-hook" "cli.ts:relay" "shell/wrapMain.ts:relay-wrap"; do
     SRC="${ENTRY%%:*}"; NAME="${ENTRY##*:}"
     bun build --compile --minify --no-compile-autoload-bunfig --no-compile-autoload-dotenv \
       --target="bun-$TARGET" \

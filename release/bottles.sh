@@ -16,7 +16,7 @@ for PAIR in "${TAGS[@]}"; do
   tar -xzf "$TARBALL" -C "$WORK"
   KEG="$WORK/bottle/relay/$VERSION"
   mkdir -p "$KEG/bin"
-  cp "$WORK/relay-$VERSION-$TARGET/relay" "$WORK/relay-$VERSION-$TARGET/relay-hook" "$KEG/bin/"
+  cp "$WORK/relay-$VERSION-$TARGET/relay" "$WORK/relay-$VERSION-$TARGET/relay-hook" "$WORK/relay-$VERSION-$TARGET/relay-wrap" "$KEG/bin/"
   cp "$WORK/relay-$VERSION-$TARGET/LICENSE.txt" "$KEG/"
   # Homebrew downloads "<name>-<version>.<tag>.bottle.tar.gz" from root_url (one dash, not the "--" it
   # uses in its cache). No macOS extended attributes, as in build-linux.sh.

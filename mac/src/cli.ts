@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Database } from "bun:sqlite";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import qrcode from "qrcode-terminal";
 import type {
@@ -42,6 +43,7 @@ import {
   savedSettingsPath,
   serviceContext,
   statusLineKey,
+  WRAP_BIN,
   writeSavedStatusLine,
   writeSettings,
 } from "./install.ts";
@@ -63,6 +65,15 @@ import { runAttach } from "./shell/ptyAttach.ts";
 import { runHost } from "./shell/ptyHost.ts";
 import { runShell } from "./shell/ptyShell.ts";
 import { runWrap } from "./shell/ptyWrap.ts";
+import {
+  addShellBlocks,
+  BLOCK_END,
+  BLOCK_START,
+  detectShells,
+  placeShim,
+  removeShellBlocks,
+  shellsSetUp,
+} from "./shellPath.ts";
 import { describePrompt, formatEvent } from "./tailFormat.ts";
 
 const DEFAULT_RELAY_URL = "wss://relay.relay-cloud.workers.dev";
@@ -249,6 +260,9 @@ async function install(args: string[]): Promise<void> {
     }
   }
 
+  // 4b. `claude` in every new terminal starts through Relay: a program in ~/.relay/bin, first in PATH.
+  await setUpTerminals();
+
   // The service asks macOS for Accessibility once when the Claude desktop app is installed (see below); say so.
   const claudeApp = process.platform === "darwin" && (desktopInstalled() || ideInstalled());
 
@@ -324,6 +338,16 @@ async function uninstall(args: string[]): Promise<void> {
       // Missing or unreadable Zed settings: leave them alone.
     }
   }
+  try {
+    const removed = removeShellBlocks(homedir());
+    if (removed.length > 0)
+      console.log(`• new terminals start claude as before (${removed.map((c) => c.path).join(", ")})`);
+    rmSync(WRAP_BIN, { force: true });
+  } catch (e) {
+    failures.push(
+      `Relay's lines are still in your shell startup files: ${e instanceof Error ? e.message : String(e)}\n  Remove the lines between "${BLOCK_START}" and "${BLOCK_END}".`,
+    );
+  }
   if (!noService) {
     await platform.service.uninstall(serviceContext());
     console.log(
@@ -347,7 +371,46 @@ async function uninstall(args: string[]): Promise<void> {
   }
 }
 
+async function setUpTerminals(): Promise<void> {
+  const candidates = [resolve(import.meta.dir, "../bin/relay-wrap")];
+  if (basename(process.execPath) !== "bun")
+    candidates.push(join(dirname(realpathSync(process.execPath)), "relay-wrap"));
+  const from = candidates.find((p) => existsSync(p));
+  try {
+    if (from && resolve(from) !== resolve(WRAP_BIN)) {
+      placeShim(from, WRAP_BIN);
+      await platform.afterCopy(WRAP_BIN);
+    }
+    if (!existsSync(WRAP_BIN)) return;
+    const shells = detectShells(homedir());
+    addShellBlocks(BIN_DIR, shells, homedir());
+    console.log(
+      `• ${shells.join(", ")}: only new terminals start claude through Relay, so replies from the phone are typed in`,
+    );
+  } catch (err) {
+    console.log(`⚠️  couldn't set up new terminals (${(err as Error).message}); claude starts as before`);
+  }
+}
+
 /** Sessions that run now and have no terminal Relay can type into: their phone messages arrive as notes. */
+async function doctorTerminals(ok: (m: string) => void, warn: (m: string) => void): Promise<void> {
+  const shells = shellsSetUp(homedir());
+  const fix = "run `relay install`";
+  if (!existsSync(WRAP_BIN))
+    return warn(
+      `new terminals: not set up, so replies are typed in only in terminals started by Relay — ${fix}`,
+    );
+  if (shells.length === 0)
+    return warn(`new terminals: the startup files of your shells have no Relay lines — ${fix}`);
+  if (process.env.RELAY_NO_WRAP)
+    return warn(`new terminals: set up for ${shells.join(", ")}, but RELAY_NO_WRAP is set here`);
+  if (!(await daemonAlive()))
+    return warn(
+      `new terminals: set up for ${shells.join(", ")}; claude starts as usual until the helper runs`,
+    );
+  ok(`new terminals: claude starts through Relay (${shells.join(", ")}), so replies are typed in`);
+}
+
 async function doctorTyping(ok: (m: string) => void, warn: (m: string) => void): Promise<void> {
   if (!existsSync(paths.db)) return;
   try {
@@ -472,6 +535,7 @@ async function doctor(): Promise<void> {
         "Accessibility: not allowed. Replies to sessions in the Claude app and editors arrive marked as from another session. To fix: System Settings → Privacy & Security → Accessibility → turn on relay",
       );
   }
+  await doctorTerminals(ok, warn);
   await doctorTyping(ok, warn);
   const tmux = await sh(["tmux", "-V"]);
   if (tmux.code === 0) ok(`tmux: ${tmux.out}`);

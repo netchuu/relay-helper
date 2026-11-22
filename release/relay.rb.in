@@ -38,7 +38,7 @@ class Relay < Formula
   end
 
   def install
-    bin.install "relay", "relay-hook"
+    bin.install "relay", "relay-hook", "relay-wrap"
   end
 
   def caveats

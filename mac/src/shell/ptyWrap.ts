@@ -7,6 +7,7 @@ import { basename, join } from "node:path";
 import { relayHome } from "../home.ts";
 import { answerHostRequest, hostIdOf } from "./ptyHost.ts";
 import { answerRequest, DraftTracker, PasteModeTracker, RequestReader } from "./ptyShell.ts";
+import { pathWithoutRelay } from "./realClaude.ts";
 import { ScreenText } from "./screenText.ts";
 
 // biome-ignore-start lint/suspicious/noControlCharactersInRegex: escape sequences are what these match
@@ -81,7 +82,7 @@ export function parseWrapArgs(
     i = 2;
   }
   if (args[i] === "--") i++;
-  claude ??= env.RELAY_CLAUDE_BIN || Bun.which("claude", { PATH: env.PATH ?? "" });
+  claude ??= env.RELAY_CLAUDE_BIN || Bun.which("claude", { PATH: pathWithoutRelay(env.PATH ?? "") });
   return { claude, rest: args.slice(i) };
 }
 
@@ -117,7 +118,7 @@ export async function runWrap(args: string[]): Promise<number> {
   }
 }
 
-async function passThrough(cmd: string[]): Promise<number> {
+export async function passThrough(cmd: string[]): Promise<number> {
   const proc = Bun.spawn(cmd, { stdio: ["inherit", "inherit", "inherit"], env: process.env });
   const forward = (sig: NodeJS.Signals) => () => proc.kill(sig);
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) process.on(sig, forward(sig));

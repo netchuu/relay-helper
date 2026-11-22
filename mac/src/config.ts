@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { relayHome } from "./home.ts";
 import { BASE_PATH } from "./platform/exec.ts";
@@ -107,10 +107,17 @@ export function saveConfig(patch: Partial<RelayConfig>): RelayConfig {
  * processes can't depend on interactive shell configuration.
  */
 export function resolveClaudeBin(config: RelayConfig): string | null {
-  if (config.claudeBin && existsSync(config.claudeBin) && !config.claudeBin.includes("/versions/"))
+  // Relay's own `claude` in its bin folder is the wrapper, not Claude Code.
+  const ownBin = join(RELAY_HOME, "bin");
+  if (
+    config.claudeBin &&
+    existsSync(config.claudeBin) &&
+    !config.claudeBin.includes("/versions/") &&
+    dirname(config.claudeBin) !== ownBin
+  )
     return config.claudeBin;
   const dirs = [
-    ...(process.env.PATH ?? "").split(delimiter),
+    ...(process.env.PATH ?? "").split(delimiter).filter((d) => d !== ownBin),
     join(homedir(), ".local", "bin"),
     ...platform.extraPath,
     "/usr/local/bin",

@@ -9,6 +9,8 @@ import type { ServiceContext } from "./platform/index.ts";
 export const BIN_DIR = join(paths.home, "bin");
 export const HOOK_BIN = join(BIN_DIR, "relay-hook");
 export const RELAY_BIN = join(BIN_DIR, "relay");
+/** The program `claude` runs in new terminals: Relay's wrapper, found first in PATH. */
+export const WRAP_BIN = join(BIN_DIR, "claude");
 export const DEFAULT_SETTINGS = join(homedir(), ".claude", "settings.json");
 
 /**
