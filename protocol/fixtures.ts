@@ -167,6 +167,7 @@ const sync = {
   snapshot: { sessions: [session, sessionMinimal], prompts: [question, plan], presence },
   events: [],
   latestSeq: 10,
+  eventLogId: "3f9a1c07b2d84e65",
   // A replay cut by size says so: latestSeq is the last event sent and the phone asks again from there.
   more: true,
 };

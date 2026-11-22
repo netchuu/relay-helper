@@ -805,6 +805,8 @@ export const SyncResult = z.object({
   events: z.array(RelayEvent),
   latestSeq: z.number(),
   more: z.boolean().optional(),
+  /** Names this helper's event log. A phone that knew another one starts over: its seq numbers don't match. */
+  eventLogId: z.string().optional(),
 });
 export type SyncResult = z.infer<typeof SyncResult>;
 

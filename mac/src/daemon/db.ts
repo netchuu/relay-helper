@@ -192,6 +192,8 @@ const MIGRATIONS: string[] = [
   // 20: when the process behind a session's `pid` started, so a pid the system gave to something else later isn't taken
   // for the session. A table of its own, so it also runs on a database that was moved back to an older version.
   `CREATE TABLE IF NOT EXISTS session_pid_starts (session_id TEXT PRIMARY KEY, pid_start INTEGER NOT NULL);`,
+  // 21: an id for this event log, made with the database, so a phone notices when the log started again.
+  `INSERT OR IGNORE INTO settings (key, value) VALUES ('eventLogId', json_quote(lower(hex(randomblob(8)))));`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

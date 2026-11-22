@@ -28,7 +28,7 @@ import {
 } from "./attachments.ts";
 import { ensurePushKey, revokeDevice } from "./auth.ts";
 import type { Broker } from "./broker.ts";
-import { audit, type DB } from "./db.ts";
+import { audit, type DB, getSetting } from "./db.ts";
 import type { EventLog } from "./events.ts";
 import type { Handover } from "./handover.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
@@ -284,8 +284,10 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     sync: ({ sinceSeq }, _actor, opts) => {
       const oldest = d.events.oldestSeq();
       const latestSeq = d.events.latestSeq();
-      // Too far behind (events pruned) or first connect: send a snapshot plus the current seq.
-      if (sinceSeq === 0 || sinceSeq < oldest - 1) {
+      const eventLogId = getSetting<string | null>(d.db, "eventLogId", null);
+      const logId = eventLogId ? { eventLogId } : {};
+      // First connect, too far behind (events pruned) or ahead of a log that started again: a snapshot plus the current seq.
+      if (sinceSeq === 0 || sinceSeq < oldest - 1 || sinceSeq > latestSeq) {
         const sessions = d.registry.list().map(publicSession);
         const presence = d.presence.get();
         // The prompts get what the sessions and presence leave of one reply; long texts in them are cut if needed.
@@ -301,6 +303,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           },
           events: [],
           latestSeq,
+          ...logId,
         };
       }
       // A replay cut by count or size says so, and its latestSeq is the last event sent, so the phone asks again.
@@ -316,8 +319,8 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           }),
       });
       return page.more
-        ? { events: page.events, latestSeq: page.latestSeq, more: true }
-        : { events: page.events, latestSeq: page.latestSeq };
+        ? { events: page.events, latestSeq: page.latestSeq, more: true, ...logId }
+        : { events: page.events, latestSeq: page.latestSeq, ...logId };
     },
 
     "sessions.list": ({ includeEnded }) => d.registry.list(includeEnded).map(publicSession),
