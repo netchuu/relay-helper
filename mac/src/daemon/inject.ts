@@ -16,6 +16,7 @@ import {
   PS_SNAPSHOT_ARGS,
   parseProcs,
   snapshotProcs,
+  wrapperTtys,
 } from "../platform/foreground.ts";
 import { platform } from "../platform/index.ts";
 import type { TabView, TypingRoute } from "../platform/types.ts";
@@ -157,6 +158,8 @@ export interface TypeOps {
   ttyOf(pid: number | null, procs?: Procs): Promise<string | null>;
   /** The tty of the tab showing a session that runs in a background host (`--bg-pty-host`); null when unknown. */
   viewerTtyOf?(pid: number, cwd: string, procs?: Procs): Promise<string | null>;
+  /** The terminals of the wrappers Claude Code runs under (its own pty), nearest first. */
+  wrapperTtysOf?(pid: number, procs?: Procs): Promise<WrapperTty[]>;
   peek(route: TypingRoute, tty: string): Promise<TabView | null>;
   type(route: TypingRoute, tty: string, text: string): Promise<boolean>;
   /** Whether process `pid` is in front in its terminal (`tty` null: tmux) or tab; otherwise keys would reach a shell. */
@@ -208,6 +211,7 @@ export const defaultTypeOps: TypeOps = {
   routes: (t) => platform.typing.routes(t),
   ttyOf,
   viewerTtyOf: (pid, cwd, procs) => viewerTtyOf(pid, cwd, undefined, procs),
+  wrapperTtysOf,
   peek: (route, tty) => platform.typing.peek(route, tty),
   type: (route, tty, text) => platform.typing.type(route, tty, text),
   inFront: claudeInFront,
@@ -530,6 +534,7 @@ interface Wire {
   tabKey?(route: TypingRoute, tty: string, key: KeyName): Promise<boolean>;
   ttyOf: TypeOps["ttyOf"];
   viewerTtyOf?: TypeOps["viewerTtyOf"];
+  wrapperTtysOf?(pid: number): Promise<WrapperTty[]>;
   inFront(pid: number, tty: string | null, others?: number[]): Promise<boolean>;
 }
 
@@ -566,6 +571,7 @@ function typeWire(ops: TypeOps): Wire {
     ttyOf: (pid) => ops.ttyOf(pid, procs),
     viewerTtyOf:
       ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
+    wrapperTtysOf: ops.wrapperTtysOf && ((pid) => ops.wrapperTtysOf?.(pid, procs) ?? Promise.resolve([])),
     inFront: (pid, tty, others) => ops.inFront(pid, tty, others, procs),
   };
 }
@@ -588,6 +594,7 @@ function keyWire(ops: KeyOps): Wire {
     tabKey: async (route, tty, key) => (key === "escape" ? ops.app(route, tty) : false),
     ttyOf: ops.ttyOf,
     viewerTtyOf: ops.viewerTtyOf,
+    wrapperTtysOf: ops.wrapperTtysOf,
     inFront: ops.inFront ?? (async () => false),
   };
 }
@@ -794,7 +801,7 @@ export function terminalRoutesOf(session: SessionRecord, opts: { promised?: bool
 async function claudeIsInFront(
   session: SessionRecord,
   tty: string | null,
-  ops: Pick<TypeOps, "inFront" | "ttyOf" | "viewerTtyOf">,
+  ops: Pick<TypeOps, "inFront" | "ttyOf" | "viewerTtyOf" | "wrapperTtysOf">,
   what = "typing",
 ): Promise<boolean> {
   let front = session.pid ? await ops.inFront(session.pid, tty, knownPids()).catch(() => false) : false;
@@ -803,8 +810,11 @@ async function claudeIsInFront(
   if (front && tty !== null && session.pid && ops.viewerTtyOf) {
     const own = await ops.ttyOf(session.pid).catch(() => null);
     if (own !== tty) {
-      const viewer = await ops.viewerTtyOf(session.pid, session.cwd).catch(() => null);
-      front = viewer === tty;
+      const wrapped = await ops.wrapperTtysOf?.(session.pid).catch(() => []);
+      if (!wrapped?.some((w) => w.tty === tty)) {
+        const viewer = await ops.viewerTtyOf(session.pid, session.cwd).catch(() => null);
+        front = viewer === tty;
+      }
     }
   }
   if (!front)
@@ -872,7 +882,7 @@ const foundTty = new Map<string, string>();
 /** The ttys a session may be in, in order: its process's, the last one typed into, then its background host's tab. */
 export async function candidateTtys(
   session: SessionRecord,
-  ops: Pick<TypeOps, "ttyOf" | "viewerTtyOf">,
+  ops: Pick<TypeOps, "ttyOf" | "viewerTtyOf" | "wrapperTtysOf">,
 ): Promise<{ ttys: { tty: string; by: string }[]; missing: string[] }> {
   const ttys: { tty: string; by: string }[] = [];
   const missing: string[] = [];
@@ -883,6 +893,8 @@ export async function candidateTtys(
   add(own, "process");
   if (!own)
     missing.push(session.pid ? `process ${session.pid} has no terminal (it ended?)` : "no process known");
+  if (session.pid && ops.wrapperTtysOf)
+    for (const w of await ops.wrapperTtysOf(session.pid).catch(() => [])) add(w.tty, w.by);
   add(foundTty.get(session.id) ?? null, "earlier tab");
   if (session.pid && ops.viewerTtyOf) {
     const viewer = await ops.viewerTtyOf(session.pid, session.cwd).catch(() => null);
@@ -972,6 +984,7 @@ export interface KeyOps {
   app(route: TypingRoute, tty: string): Promise<boolean>;
   ttyOf(pid: number | null): Promise<string | null>;
   viewerTtyOf?(pid: number, cwd: string): Promise<string | null>;
+  wrapperTtysOf?(pid: number): Promise<WrapperTty[]>;
 }
 
 export const defaultKeyOps: KeyOps = {
@@ -985,6 +998,7 @@ export const defaultKeyOps: KeyOps = {
   app: (route, tty) => platform.typing.key(route, tty, "escape"),
   ttyOf,
   viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
+  wrapperTtysOf: (pid) => wrapperTtysOf(pid),
 };
 
 /** Presses Esc in the session's terminal; ignores `preferTyping` and the activity rules. Returns the route, or null. */
@@ -1057,6 +1071,13 @@ export async function ttyOf(pid: number | null, procs?: Procs): Promise<string |
   const out = (await new Response(proc.stdout).text()).trim();
   await proc.exited;
   return fullTty(out);
+}
+
+export type WrapperTty = { tty: string; by: string };
+
+/** The terminals of the wrappers `pid` runs under, nearest first (see `wrapperTtys`). */
+export async function wrapperTtysOf(pid: number, procs?: Procs): Promise<WrapperTty[]> {
+  return wrapperTtys(procs ? await procs() : await snapshotProcs(), pid);
 }
 
 /** A terminal name as `ps` prints it (`ttys003` on macOS, `pts/0` or `tty1` on Linux), or null for none (`??`, `?`). */
