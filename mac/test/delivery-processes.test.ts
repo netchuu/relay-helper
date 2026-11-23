@@ -60,8 +60,9 @@ const ops: TypeOps = {
   sleep: async () => {},
 };
 
-/** The processes that read state, as against the ones that type. */
-const reads = () => started.filter((c) => !/send-keys|paste-buffer|load-buffer|send-text/.test(c.join(" ")));
+/** The processes that read state, as against the ones that type (the mode check comes with the typing). */
+const reads = () =>
+  started.filter((c) => !/send-keys|paste-buffer|load-buffer|send-text|pane_in_mode/.test(c.join(" ")));
 
 const TMUX: HookEnv = {
   tmux: "/tmp/tmux-501/default,1,0",
@@ -83,11 +84,11 @@ const KITTY: HookEnv = {
 };
 
 describe("processes started for one reply", () => {
-  test("tmux: one tmux call for the screen and the pane's tty, one ps, then the typing", async () => {
+  test("tmux: one tmux call for the screen and the pane's tty, one ps, then the typing (one mode check first)", async () => {
     expect(await deliver(session(TMUX), "go", opts(600), ops)).toEqual({ via: "tmux" });
     expect(reads().map((c) => c[0])).toEqual(["tmux", "ps"]);
     expect(reads()[0]).toContain(";");
-    expect(started.length).toBe(4);
+    expect(started.length).toBe(5);
   });
 
   test("tmux while you type: two processes, and the retry comes at the end of the pause", async () => {

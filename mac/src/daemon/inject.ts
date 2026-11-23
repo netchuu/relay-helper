@@ -1264,7 +1264,34 @@ export function tmuxTypeSteps(socket: string, pane: string, text: string): TmuxS
   return steps;
 }
 
+async function tmuxPaneInMode(socket: string, pane: string): Promise<boolean> {
+  const proc = Bun.spawn(["tmux", "-S", socket, "display-message", "-p", "-t", pane, "#{pane_in_mode}"], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const out = (await new Response(proc.stdout).text()).trim();
+  if ((await proc.exited) !== 0) throw new DeliveryError("tmux display-message failed");
+  return out === "1";
+}
+
+/** Keys sent to a pane in a mode (copy mode after a scroll) go to the mode, not the program: leave it first. */
+async function tmuxLeaveMode(socket: string, pane: string): Promise<void> {
+  if (!(await tmuxPaneInMode(socket, pane))) return;
+  const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "-X", "cancel"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  await proc.exited;
+  // A mode that -X cancel doesn't end (the tree chooser, the clock) can't be typed into.
+  if (await tmuxPaneInMode(socket, pane)) throw new DeliveryError("tmux pane is in a mode");
+}
+
 export async function tmuxType(socket: string, pane: string, text: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
   let typed = false;
   for (const step of tmuxTypeSteps(socket, pane, text)) {
     if (step.waitMs) await Bun.sleep(step.waitMs);
@@ -1282,6 +1309,7 @@ export async function tmuxType(socket: string, pane: string, text: string): Prom
 }
 
 async function tmuxEnter(socket: string, pane: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "Enter"], {
     stdin: "ignore",
     stdout: "ignore",
@@ -1298,6 +1326,7 @@ export function tmuxEscapeArgs(socket: string, pane: string): string[] {
 }
 
 async function tmuxEscape(socket: string, pane: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(tmuxEscapeArgs(socket, pane), {
     stdin: "ignore",
     stdout: "ignore",
