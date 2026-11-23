@@ -280,7 +280,8 @@ async function install(args: string[]): Promise<void> {
         method: "POST",
         unix: paths.hookSock,
       }).then(
-        (r) => (r.ok ? (r.json() as Promise<{ accessibility?: boolean }>) : null),
+        (r) =>
+          r.ok ? (r.json() as Promise<{ accessibility?: boolean; automationDenied?: string[] }>) : null,
         () => null,
       );
       console.log(
@@ -514,18 +515,19 @@ async function doctor(): Promise<void> {
       );
     else warn(`${name}: terminal not set up yet — \`relay install\``);
   }
+  // Ask the running service: permissions are per process, and this terminal may have what relay doesn't.
+  const alive = await daemonAlive();
+  const perms = alive
+    ? await fetch("http://relay/admin/permissions", { unix: paths.hookSock }).then(
+        (r) =>
+          r.ok ? (r.json() as Promise<{ accessibility?: boolean; automationDenied?: string[] }>) : null,
+        () => null,
+      )
+    : null;
   // Sessions in the Claude desktop app take replies as typed input only with Accessibility allowed.
   if (process.platform === "darwin" && (desktopSessions().length > 0 || ideInstalled())) {
-    // Ask the running service: the permission is per process, and this terminal may have it when relay doesn't.
-    const alive = await daemonAlive();
-    const service = alive
-      ? await fetch("http://relay/admin/permissions", { unix: paths.hookSock }).then(
-          (r) => (r.ok ? (r.json() as Promise<{ accessibility?: boolean }>) : null),
-          () => null,
-        )
-      : null;
     // Without a running service, this process is the best guess; an older service can't say.
-    const allowedForService = service ? service.accessibility === true : alive ? null : axAllowed();
+    const allowedForService = perms ? perms.accessibility === true : alive ? null : axAllowed();
     if (allowedForService === null)
       warn("Accessibility: the running helper can't report it; run `relay install` to update it");
     else if (allowedForService)
@@ -535,6 +537,10 @@ async function doctor(): Promise<void> {
         "Accessibility: not allowed. Replies to sessions in the Claude app and editors arrive marked as from another session. To fix: System Settings → Privacy & Security → Accessibility → turn on relay",
       );
   }
+  if (process.platform === "darwin" && perms?.automationDenied?.includes("iterm"))
+    warn(
+      "iTerm: not allowed. Replies to sessions in iTerm arrive marked as from another session. To fix: System Settings → Privacy & Security → Automation → relay → turn on iTerm",
+    );
   await doctorTerminals(ok, warn);
   await doctorTyping(ok, warn);
   const tmux = await sh(["tmux", "-V"]);

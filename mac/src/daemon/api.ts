@@ -2,6 +2,7 @@ import type { Server, ServerWebSocket } from "bun";
 import { PROTOCOL_VERSION, type RelayEvent, RpcRequest } from "../../../protocol/index.ts";
 import { askForAccessibility, axAllowed } from "../integrations/claudeDesktop.ts";
 import { errMessage, log } from "../log.ts";
+import { deniedAutomation } from "../platform/darwin.ts";
 import { hostInfo } from "../platform/index.ts";
 import {
   ambiguousDeviceIds,
@@ -68,7 +69,7 @@ export function startLocalServer(opts: {
         // Permissions as the service itself has them (macOS grants them per process, so a terminal running
         // `relay doctor` may have Accessibility while the service doesn't).
         if (req.method === "GET" && url.pathname === "/admin/permissions")
-          return json({ accessibility: axAllowed() });
+          return json({ accessibility: axAllowed(), automationDenied: deniedAutomation() });
         // relay install / relay pair: the person is at the terminal, so ask now even if asked recently.
         if (req.method === "POST" && url.pathname === "/admin/permissions/ask")
           return json({ accessibility: askForAccessibility({ force: true }) === "allowed" });

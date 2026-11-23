@@ -214,9 +214,31 @@ export function parsePeek(out: string): TabView | null {
   return { front: place === "front", screen: nl === -1 ? null : out.slice(nl + 1) };
 }
 
+const automationDenied = new Set<TypingRoute>();
+
+/** Apps macOS Automation has refused to `relay` since their last success. */
+export function deniedAutomation(): TypingRoute[] {
+  return [...automationDenied];
+}
+
+/** AppleScript error -1743: the person answered No to "relay wants to control <app>", or reset it. */
+export function isAutomationDenial(err: string): boolean {
+  return /-1743\b|not authorized to send apple events/i.test(err);
+}
+
+/** Remembers a denial (logged once, until the next success) or clears it. */
+function noteAutomation(app: TypingRoute, err: string, succeeded: boolean): void {
+  if (isAutomationDenial(err)) {
+    if (!automationDenied.has(app))
+      log.warn("automation denied", { app, hint: "System Settings > Privacy & Security > Automation" });
+    automationDenied.add(app);
+  } else if (succeeded) automationDenied.delete(app);
+}
+
 export async function peekTerminalApp(app: TypingRoute, tty: string): Promise<TabView | null> {
   const res = await run(["osascript", "-e", PEEK_SCRIPTS[app], tty], { timeoutMs: 10_000 });
   const view = parsePeek(res.out);
+  noteAutomation(app, res.err, view !== null);
   if (!view)
     log.info("tab not found", {
       app,
@@ -228,6 +250,7 @@ export async function peekTerminalApp(app: TypingRoute, tty: string): Promise<Ta
 
 export async function typeIntoTerminalApp(app: TypingRoute, tty: string, text: string): Promise<boolean> {
   const res = await run(["osascript", "-e", SCRIPTS[app], tty, asTyped(text)], { timeoutMs: 10_000 });
+  noteAutomation(app, res.err, res.out === "ok");
   if (res.out !== "ok")
     log.info("typing failed", { app, result: res.out || null, error: res.err.slice(0, 200) || null });
   return res.out === "ok";
@@ -281,6 +304,7 @@ export async function keyIntoTerminalApp(
   if (key === "escape" && app !== "iterm") return false;
   const script = key === "enter" ? ENTER_SCRIPTS[app] : ITERM_ESCAPE_SCRIPT;
   const res = await run(["osascript", "-e", script, tty], { timeoutMs: 10_000 });
+  noteAutomation(app, res.err, res.out === "ok");
   if (res.out !== "ok")
     log.info("key skipped", { app, key, result: res.out || null, error: res.err.slice(0, 200) || null });
   return res.out === "ok";
