@@ -123,28 +123,34 @@ async function run(home: string, cmd: string[], env: Record<string, string> = {}
   return { out: out.trim(), code };
 }
 
+const ZSH = ["/bin/zsh", "/usr/bin/zsh"].find((p) => existsSync(p)) ?? "/bin/zsh";
+const hasZsh = existsSync(ZSH);
+
 describe("PATH order in new shells", () => {
   const shells: [string, string[]][] = [
-    ["zsh -ic", ["/bin/zsh", "-ic", "command -v claude"]],
-    ["zsh -c", ["/bin/zsh", "-c", "command -v claude"]],
-    ["zsh -lc", ["/bin/zsh", "-lc", "command -v claude"]],
+    ["zsh -ic", [ZSH, "-ic", "command -v claude"]],
+    ["zsh -c", [ZSH, "-c", "command -v claude"]],
+    ["zsh -lc", [ZSH, "-lc", "command -v claude"]],
     ["bash -ic", ["/bin/bash", "-ic", "command -v claude"]],
     ["bash -lc", ["/bin/bash", "-lc", "command -v claude"]],
   ];
   for (const [name, cmd] of shells) {
-    test(`${name} finds Relay's claude first, behind rc files that prepend folders`, async () => {
-      const { home, bin } = makeHome(PREPENDING);
-      for (const d of [".local/bin", ".claude/bin"]) {
-        mkdirSync(join(home, d), { recursive: true });
-        writeFileSync(join(home, d, "claude"), "#!/bin/sh\n");
-        chmodSync(join(home, d, "claude"), 0o755);
-      }
-      placeShim(shim, join(bin, "claude"));
-      addShellBlocks(bin, ["zsh", "bash"], home);
-      expect((await run(home, cmd)).out).toBe(join(bin, "claude"));
-      removeShellBlocks(home);
-      expect((await run(home, cmd)).out).not.toBe(join(bin, "claude"));
-    });
+    test.skipIf(cmd[0] === ZSH && !hasZsh)(
+      `${name} finds Relay's claude first, behind rc files that prepend folders`,
+      async () => {
+        const { home, bin } = makeHome(PREPENDING);
+        for (const d of [".local/bin", ".claude/bin"]) {
+          mkdirSync(join(home, d), { recursive: true });
+          writeFileSync(join(home, d, "claude"), "#!/bin/sh\n");
+          chmodSync(join(home, d, "claude"), 0o755);
+        }
+        placeShim(shim, join(bin, "claude"));
+        addShellBlocks(bin, ["zsh", "bash"], home);
+        expect((await run(home, cmd)).out).toBe(join(bin, "claude"));
+        removeShellBlocks(home);
+        expect((await run(home, cmd)).out).not.toBe(join(bin, "claude"));
+      },
+    );
   }
 
   test("the fish block keeps the folder first and runs under fish when it is installed", async () => {
@@ -198,7 +204,7 @@ function chain(opts: { relay?: boolean; helper?: boolean } = {}) {
 }
 
 const inTerminal = (home: string, command: string, env: Record<string, string> = {}) =>
-  run(home, ["script", "-q", "/dev/null", "/bin/zsh", "-ic", command], env);
+  run(home, ["script", "-q", "/dev/null", ZSH, "-ic", command], env);
 
 describe.skipIf(process.platform !== "darwin")(
   "the chain from the person's function to the real claude",
@@ -234,16 +240,20 @@ describe.skipIf(process.platform !== "darwin")(
   },
 );
 
-test("without a terminal (claude -p, a pipe) the real claude starts directly", async () => {
-  const c = chain();
-  try {
-    const r = await run(c.home, ["/bin/zsh", "-ic", "claude -p hello | cat"]);
-    expect(r.code).toBe(0);
-    expect(c.lines().at(-1)).toBe("real --append-system-prompt-file .claude/rules.md -p hello wrapped=");
-  } finally {
-    c.stop();
-  }
-}, 30_000);
+test.skipIf(!hasZsh)(
+  "without a terminal (claude -p, a pipe) the real claude starts directly",
+  async () => {
+    const c = chain();
+    try {
+      const r = await run(c.home, [ZSH, "-ic", "claude -p hello | cat"]);
+      expect(r.code).toBe(0);
+      expect(c.lines().at(-1)).toBe("real --append-system-prompt-file .claude/rules.md -p hello wrapped=");
+    } finally {
+      c.stop();
+    }
+  },
+  30_000,
+);
 
 test("the program never calls itself when it is the only claude", async () => {
   const { home, bin } = makeHome({});

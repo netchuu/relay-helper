@@ -276,9 +276,13 @@ describe("whether a typed command runs", () => {
   const s = (o: Record<string, unknown>) => ({ ...base, ...o }) as unknown as SessionRecord;
   const noApp = { isApp: () => false, allowed: () => false };
 
-  test("the helper's pty, tmux, iTerm, WezTerm and kitty run it", () => {
+  test("the helper's pty and tmux run it", () => {
     expect(commandRouteOf(s({ ptySocket: "/p", socketPath: "/i" }), noApp)).toBe("terminal");
     expect(commandRouteOf(s({ tmuxPane: "%1", tmuxSocket: "/t", socketPath: "/i" }), noApp)).toBe("terminal");
+  });
+
+  // These terminals are driven through macOS only.
+  test.skipIf(process.platform !== "darwin")("iTerm, WezTerm and kitty run it", () => {
     expect(commandRouteOf(s({ terminal: "iTerm.app", socketPath: "/i" }), noApp)).toBe("terminal");
     for (const env of [
       { termProgram: "WezTerm", weztermPane: "7", weztermSocket: "/tmp/wez/gui-sock-1", claudePid: 4242 },
@@ -291,14 +295,17 @@ describe("whether a typed command runs", () => {
     }
   });
 
-  test("the desktop app and editor panels run it with Accessibility, and arrive as a note without", () => {
-    const app = { isApp: () => true, allowed: () => true };
-    expect(commandRouteOf(s({ socketPath: "/i" }), app)).toBe("app");
-    expect(commandRouteOf(s({}), app)).toBe("app");
-    expect(commandRouteOf(s({ socketPath: "/i" }), { isApp: () => true, allowed: () => false })).toBe(
-      "inbox",
-    );
-  });
+  test.skipIf(process.platform !== "darwin")(
+    "the desktop app and editor panels run it with Accessibility, and arrive as a note without",
+    () => {
+      const app = { isApp: () => true, allowed: () => true };
+      expect(commandRouteOf(s({ socketPath: "/i" }), app)).toBe("app");
+      expect(commandRouteOf(s({}), app)).toBe("app");
+      expect(commandRouteOf(s({ socketPath: "/i" }), { isApp: () => true, allowed: () => false })).toBe(
+        "inbox",
+      );
+    },
+  );
 
   test("with typing off every message goes to the inbox", () => {
     setTypingPreferred(false);

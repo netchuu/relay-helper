@@ -5,10 +5,10 @@ FROM oven/bun:1.3.10-slim
 # wrangler (the relay test runs the Worker locally) needs Node; under Bun it can't forward requests.
 COPY --from=node:22.12.0-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 
-# tmux for the typing tests and the tmux presence source; git for the release tap tests; perl for shasum (the
+# tmux and zsh for the typing and shell tests and the tmux presence source; git for the release tap tests; perl for shasum (the
 # installer tests); procps for `ps`; curl for APNs. The CI runner (ubuntu-24.04) has all of them.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tmux git perl procps curl ca-certificates \
+ && apt-get install -y --no-install-recommends tmux zsh git perl procps curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf "$(command -v bun)" /usr/local/bin/bunx
 
