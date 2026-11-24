@@ -473,6 +473,8 @@ export const PromptPayload = z.discriminatedUnion("kind", [
     toolName: z.string(),
     /** Human-readable one-liner, e.g. the Bash command or the edited file path. */
     summary: z.string(),
+    /** Claude Code's own one-line description of the call (a Bash command's `description`), redacted; may be absent. */
+    description: z.string().optional(),
     /** Redacted JSON of the tool input, for the detail view. */
     detail: z.string(),
     canAlwaysAllow: z.boolean(),

@@ -123,6 +123,7 @@ const permission = Prompt.parse({
     kind: "permission",
     toolName: "Bash",
     summary: "npm run migrate -- --env staging",
+    description: "Run the staging migration",
     detail: '{\n  "command": "npm run migrate"\n}',
     canAlwaysAllow: true,
   },

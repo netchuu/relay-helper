@@ -1,6 +1,6 @@
 import type { Answer, PromptKind, PromptPayload, Question } from "../../../protocol/index.ts";
 import { redact, redactDeep } from "./redact.ts";
-import { head, visibleEscapes } from "./text.ts";
+import { cleanName, head, visibleEscapes } from "./text.ts";
 
 /** Translates between Claude Code's PermissionRequest hook contract and Relay prompts (pure). */
 
@@ -42,12 +42,22 @@ export function payloadFor(input: PermissionRequestInput): PromptPayload {
     kind: "permission",
     toolName: input.tool_name,
     summary: visibleEscapes(permissionSummary(input.tool_name, ti)),
+    description: toolDescription(ti),
     detail: visibleEscapes(
       (full.length > 20_000 ? `${head(full, 20_000)}\n… (${full.length - 20_000} more characters)` : full) +
         rules,
     ),
     canAlwaysAllow: Array.isArray(input.permission_suggestions) && input.permission_suggestions.length > 0,
   };
+}
+
+const DESCRIPTION_MAX = 140;
+
+/** The call's own one-line description, when Claude wrote one; undefined when missing or empty. */
+function toolDescription(ti: Record<string, unknown>): string | undefined {
+  if (typeof ti.description !== "string") return undefined;
+  const line = redact(cleanName(ti.description)).split(/\s+/).filter(Boolean).join(" ");
+  return line ? head(line, DESCRIPTION_MAX) : undefined;
 }
 
 function permissionSummary(tool: string, ti: Record<string, unknown>): string {
