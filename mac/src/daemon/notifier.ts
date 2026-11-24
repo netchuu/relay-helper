@@ -157,6 +157,8 @@ export function turnAlert(turn: Turn, name: string): Alert {
     body: clip(firstLine(turn.summary, 180) || "Finished.", 180),
     category: Category.done,
     threadId: turn.sessionId,
+    // The newest answer replaces the older ones on a phone that was away.
+    collapseId: `done-${turn.sessionId}`,
     data: { sessionId: turn.sessionId, turnId: turn.id },
   };
 }
@@ -271,7 +273,7 @@ export class Notifier {
   private wasPresent = true;
   /** Open prompts the phone has already been told about (their own push, or a reminder). */
   private readonly told = new Set<string>();
-  /** A "done" alert held back while background shells or agents still run; sent when the last ends. */
+  /** The latest "done" alert of a turn Claude Code started itself, held while background shells or agents run; sent when the last ends. */
   private readonly heldDone = new Map<string, Alert>();
 
   constructor(
@@ -351,9 +353,13 @@ export class Notifier {
       if (this.presence.get().present) return;
       const alert = alertFor(event, (id) => this.name(id));
       if (!alert) return;
-      if (event.type === "turn.done" && runsInBackground(event.turn.sessionId)) {
-        this.heldDone.set(event.turn.sessionId, alert);
-        return;
+      if (event.type === "turn.done") {
+        // An empty prompt marks a turn nobody typed (a task notification, a wake-up): it waits for the background work.
+        if (event.turn.prompt === "" && runsInBackground(event.turn.sessionId)) {
+          this.heldDone.set(event.turn.sessionId, alert);
+          return;
+        }
+        this.heldDone.delete(event.turn.sessionId);
       }
       if (event.type === "prompt.opened") this.told.add(event.prompt.id);
       const reached = await this.pushAll(alert);

@@ -10,7 +10,7 @@ import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { sealedTitle, TEST_PUSH_KEY } from "./support/sealed.ts";
 
-// A session with background shells or agents shows as working and its "is done" push waits for the last one: runsInBackground(session).
+// A session with background shells or agents shows as working and its automatic turns' "is done" push waits for the last one: runsInBackground(session).
 
 const SHELL = {
   id: "sh1",
@@ -54,9 +54,11 @@ function setup(present = false) {
     background: new BackgroundTracker(events, { throttleMs: 0 }),
   });
   const titles: string[] = [];
+  const collapseIds: (string | undefined)[] = [];
   const apns = {
-    send: async (_t: string, _e: string, payload: object) => {
+    send: async (_t: string, _e: string, payload: object, opts?: { collapseId?: string }) => {
       titles.push(sealedTitle(payload));
+      collapseIds.push(opts?.collapseId);
       return { status: 200 };
     },
   };
@@ -68,7 +70,7 @@ function setup(present = false) {
       new AbortController().signal,
     );
   const settle = () => Bun.sleep(30);
-  return { hook, titles, settle, presenceState };
+  return { hook, titles, collapseIds, settle, presenceState };
 }
 
 test("the state counts 0, 1 and several background jobs, and follows a job ending", async () => {
@@ -109,21 +111,52 @@ test("the session ending clears it", async () => {
   expect(runsInBackground("s1")).toBe(false);
 });
 
-test("the finished push waits for the last background job, then goes out once", async () => {
+test("an answer to something you typed pushes even while background work runs", async () => {
   const t = setup();
   await t.hook("UserPromptSubmit", { prompt: "Run the server" });
   await t.hook("Stop", { last_assistant_message: "Server is up.", background_tasks: [SHELL, AGENT] });
   await t.settle();
-  expect(t.titles).toEqual([]);
-  // One job ends: still held.
+  expect(t.titles.length).toBe(1);
+  expect(t.titles[0]).toContain("done");
+});
+
+test("turns Claude Code starts itself push nothing while background work runs, then one push when it ends", async () => {
+  const t = setup();
+  await t.hook("UserPromptSubmit", { prompt: NOTE("other1") });
+  await t.hook("Stop", { last_assistant_message: "Check one.", background_tasks: [SHELL, AGENT] });
+  await t.hook("UserPromptSubmit", { prompt: NOTE("other2") });
+  await t.hook("Stop", { last_assistant_message: "Check two.", background_tasks: [SHELL, AGENT] });
   await t.hook("UserPromptSubmit", { prompt: NOTE("sh1") });
+  await t.hook("Stop", { last_assistant_message: "Check three.", background_tasks: [AGENT] });
   await t.settle();
   expect(t.titles).toEqual([]);
-  // The last one ends: the held alert goes out.
   await t.hook("UserPromptSubmit", { prompt: NOTE("ag1") });
   await t.settle();
   expect(t.titles.length).toBe(1);
   expect(t.titles[0]).toContain("done");
+});
+
+test("a typed answer replaces the held automatic one", async () => {
+  const t = setup();
+  await t.hook("UserPromptSubmit", { prompt: NOTE("other1") });
+  await t.hook("Stop", { last_assistant_message: "Check.", background_tasks: [SHELL] });
+  await t.hook("UserPromptSubmit", { prompt: "What is the time?" });
+  await t.hook("Stop", { last_assistant_message: "Noon.", background_tasks: [SHELL] });
+  await t.hook("UserPromptSubmit", { prompt: NOTE("sh1") });
+  await t.settle();
+  expect(t.titles.length).toBe(1);
+});
+
+test("pushes for one session share a collapse id", async () => {
+  const t = setup();
+  for (const word of ["one", "two"]) {
+    await t.hook("UserPromptSubmit", { prompt: word });
+    await t.hook("Stop", { last_assistant_message: `Answer ${word}.`, background_tasks: [SHELL] });
+  }
+  await t.settle();
+  expect(t.collapseIds.length).toBe(2);
+  expect(t.collapseIds[0]).toBeTruthy();
+  expect(t.collapseIds[0]).toBe(t.collapseIds[1]);
 });
 
 test("without background jobs the finished push goes out at once, as before", async () => {
@@ -136,14 +169,14 @@ test("without background jobs the finished push goes out at once, as before", as
 
 test("a held push is dropped when you are back at the Mac, and when the session ends", async () => {
   const t = setup();
-  await t.hook("UserPromptSubmit", { prompt: "go" });
+  await t.hook("UserPromptSubmit", { prompt: NOTE("other1") });
   await t.hook("Stop", { last_assistant_message: "Up.", background_tasks: [SHELL] });
   t.presenceState.present = true;
   await t.hook("UserPromptSubmit", { prompt: NOTE("sh1") });
   await t.settle();
   expect(t.titles).toEqual([]);
 
-  await t.hook("UserPromptSubmit", { prompt: "again" });
+  await t.hook("UserPromptSubmit", { prompt: NOTE("other2") });
   await t.hook("Stop", { last_assistant_message: "Up.", background_tasks: [SHELL] });
   await t.hook("SessionEnd", {});
   t.presenceState.present = false;
