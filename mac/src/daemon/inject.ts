@@ -71,6 +71,13 @@ export interface DeliveryResult {
 
 export class DeliveryError extends Error {}
 
+/** An editor session whose Claude Code panel isn't visible and that has no inbox socket: nothing can take the message. */
+export class OpenEditorPanel extends DeliveryError {
+  constructor() {
+    super("Open the Claude Code panel in your editor on the Mac, then send again");
+  }
+}
+
 /** The session is in the desktop app and the Mac is locked (macOS hides its contents): the reply waits for the unlock. */
 export class WaitForUnlock extends Error {}
 
@@ -240,6 +247,7 @@ export async function deliver(
     });
     return { via: "headless" };
   }
+  let noPanel = false;
   if (opts.preferTyping) {
     await settleAfterEscape(session.id, ops);
     const typed = await typeIntoTerminal(session, text, opts, ops);
@@ -277,11 +285,15 @@ export async function deliver(
         if (result === "sent") return { via: "ide" };
         if (result === "unconfirmed") return { via: "ide", submitted: false };
         if (result === "locked") throw new WaitForUnlock("the Mac is locked");
+        noPanel = result === "not-found";
         // Someone's draft, the editor in use, the tab not open, or anything unexpected: the inbox, below.
       }
     }
   }
-  if (!session.socketPath) throw new DeliveryError("this session has no inbox socket Relay can reach");
+  if (!session.socketPath) {
+    if (opts.preferTyping && noPanel) throw new OpenEditorPanel();
+    throw new DeliveryError("this session has no inbox socket Relay can reach");
+  }
   await postToInbox(session.socketPath, session.socketToken, `${PHONE_PREFIX}\n${text}`);
   return { via: "socket" };
 }

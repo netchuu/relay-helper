@@ -48,7 +48,7 @@ import {
   writeSettings,
 } from "./install.ts";
 import { axAllowed, desktopInstalled, desktopSessions } from "./integrations/claudeDesktop.ts";
-import { ideInstalled } from "./integrations/ideExtension.ts";
+import { ideInstalled, ideTabReport } from "./integrations/ideExtension.ts";
 import {
   addRelayShell,
   flatpakNoEscape,
@@ -530,9 +530,19 @@ async function doctor(): Promise<void> {
     const allowedForService = perms ? perms.accessibility === true : alive ? null : axAllowed();
     if (allowedForService === null)
       warn("Accessibility: the running helper can't report it; run `relay install` to update it");
-    else if (allowedForService)
+    else if (allowedForService) {
       ok("Accessibility: allowed, so replies are typed into the Claude app and editors");
-    else
+      if (ideInstalled() && axAllowed()) {
+        const { running, tabs } = await ideTabReport();
+        if (running.length === 0)
+          ok("Editor: none running, so Claude Code chats there take replies once one opens");
+        else if (tabs > 0) ok(`Claude Code panel: found (${tabs} open in your editors)`);
+        else
+          warn(
+            "Claude Code panel: not found in the running editor. Open the Claude Code panel in your editor on the Mac, or replies to editor chats can't be typed in",
+          );
+      }
+    } else
       warn(
         "Accessibility: not allowed. Replies to sessions in the Claude app and editors arrive marked as from another session. To fix: System Settings → Privacy & Security → Accessibility → turn on relay",
       );

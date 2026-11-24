@@ -2,6 +2,7 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { CHILD_PATH } from "../config.ts";
 import { type AxElement as Ax, AxElement, typeToPid } from "../platform/ax.ts";
+import { platform } from "../platform/index.ts";
 import { axAllowed, rememberTyped, typedByRelay, waitForPrompt } from "./claudeDesktop.ts";
 
 /** Editors the Claude Code extension runs in. */
@@ -25,7 +26,7 @@ export type IdeResult =
   | "draft"
   /** The editor is in front and in use: typing now would mix into the person's typing. */
   | "busy"
-  /** No editor content is visible: the screen is locked. */
+  /** The screen is locked (the presence reading says so). */
   | "locked"
   /** The keys went in with Send, but the prompt never showed up in the transcript: it may still arrive. */
   | "unconfirmed"
@@ -142,16 +143,16 @@ async function frontBundleId(): Promise<string | null> {
 }
 
 const isButton = (label: string) => (e: Ax) => e.role === "AXButton" && e.label === label;
-const isComposer = (e: Ax) =>
-  (e.role === "AXTextArea" || e.role === "AXTextField") && e.label === "Message input";
+const isTextInput = (e: Ax) => e.role === "AXTextArea" || e.role === "AXTextField";
+const isComposer = (e: Ax) => isTextInput(e) && /^message input/i.test(e.label);
+const isClaudeArea = (a: Ax) =>
+  a.findAll(isComposer, 90).length > 0 ||
+  (a.findAll(isButton("Send message"), 90).length > 0 && a.findAll(isTextInput, 90).length > 0);
 
-/** Claude Code tabs in a window: the innermost web areas with Claude's own controls and a composer. */
+/** Claude Code tabs in a window: the innermost web areas with the composer (or its Send button next to a text field). */
 function claudeTabs(window: Ax): Ax[] {
   const areas = window.findAll((e) => e.role === "AXWebArea", 90);
-  const claude = areas.filter(
-    (a) =>
-      a.findAll(isButton("Show command menu (/)"), 90).length > 0 && a.findAll(isComposer, 90).length > 0,
-  );
+  const claude = areas.filter(isClaudeArea);
   // A tab is nested web areas; keep the innermost ones (no other Claude web area inside them).
   return claude.filter(
     (a) => !claude.some((b) => !b.equals(a) && a.findAll((e) => e.equals(b), 90).length > 0),
@@ -164,6 +165,7 @@ export type IdeDeps = {
   axAllowed(): boolean;
   pidOf(bundleId: string): Promise<number | null>;
   frontBundleId(): Promise<string | null>;
+  screenLocked(): Promise<boolean>;
   app(pid: number): Ax;
   sleep(ms: number): Promise<unknown>;
   typedByRelay(sessionId: string, text: string): boolean;
@@ -177,6 +179,7 @@ const realDeps: IdeDeps = {
   axAllowed,
   pidOf,
   frontBundleId,
+  screenLocked: async () => (await platform.presence.read({ tmuxSockets: [] })).locked === true,
   app: (pid) => AxElement.app(pid),
   sleep: (ms) => Bun.sleep(ms),
   typedByRelay,
@@ -231,13 +234,13 @@ export async function sendToIde(
       }
     }
     trace("matches", matches.length, "snippets", snippets.length);
-    if (matches.length === 0) return sawContent ? "not-found" : "locked";
+    if (matches.length === 0) return !sawContent && (await deps.screenLocked()) ? "locked" : "not-found";
     if (matches.length > 1) return "ambiguous";
     const { pid, bundleId, window, tab } = matches[0] as Match;
 
     if (userActive && (await deps.frontBundleId()) === bundleId) return "busy";
     const send = tab.findAll(isButton("Send message"), 90)[0];
-    const box = tab.findAll(isComposer, 90)[0];
+    const box = tab.findAll(isComposer, 90)[0] ?? tab.findAll(isTextInput, 90)[0];
     if (!send || !box) {
       trace("no send button or composer", Boolean(send), Boolean(box));
       return "failed";
@@ -278,4 +281,29 @@ export async function sendToIde(
   } finally {
     for (const r of roots) r.release();
   }
+}
+
+/** For `relay doctor`: the editors running and how many Claude Code tabs they show right now. */
+export async function ideTabReport(deps: IdeDeps = realDeps): Promise<{ running: string[]; tabs: number }> {
+  const running: string[] = [];
+  let tabs = 0;
+  for (const bundleId of IDE_BUNDLE_IDS) {
+    const pid = await deps.pidOf(bundleId);
+    if (!pid) continue;
+    running.push(bundleId);
+    const app = deps.app(pid);
+    try {
+      app.setBool("AXManualAccessibility", true);
+      await deps.sleep(300);
+      const seen: Ax[] = [];
+      for (const window of [app.element("AXMainWindow"), ...app.elements("AXWindows")]) {
+        if (!window || seen.some((s) => s.equals(window))) continue;
+        seen.push(window);
+        tabs += claudeTabs(window).length;
+      }
+    } finally {
+      app.release();
+    }
+  }
+  return { running, tabs };
 }

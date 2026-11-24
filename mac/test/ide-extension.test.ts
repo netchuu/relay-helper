@@ -195,12 +195,14 @@ let front: string | null;
 let relayTyped: boolean;
 let confirm: boolean;
 let sleeps: number[];
+let locked: boolean;
 
 const deps = (over: Partial<IdeDeps> = {}): IdeDeps => ({
   platform: () => "darwin",
   axAllowed: () => true,
   pidOf: async (b) => pids[b] ?? null,
   frontBundleId: async () => front,
+  screenLocked: async () => locked,
   app: (pid) => apps.get(pid) as unknown as AxElement,
   sleep: async (ms) => void sleeps.push(ms),
   typedByRelay: () => relayTyped,
@@ -219,6 +221,7 @@ beforeEach(() => {
   relayTyped = false;
   confirm = true;
   sleeps = [];
+  locked = false;
 });
 
 const transcript = () => file([answer("The build finished without errors")]);
@@ -244,15 +247,44 @@ describe("sendToIde", () => {
     expect(asked).toBe(0);
   });
 
-  test("no editor running: locked (nothing visible)", async () => {
+  test("no editor running: not-found when unlocked, locked only when the screen is locked", async () => {
+    expect(await send()).toBe("not-found");
+    locked = true;
     expect(await send()).toBe("locked");
   });
 
-  test("an editor with no Claude tab: locked", async () => {
+  test("an editor with no Claude tab: not-found when unlocked, locked when the screen is locked", async () => {
     pids["com.microsoft.VSCode"] = 10;
     apps.set(10, appWith(new Fake("AXWindow")));
-    expect(await send()).toBe("locked");
+    expect(await send()).toBe("not-found");
     expect(apps.get(10)?.released).toBe(1);
+    locked = true;
+    expect(await send()).toBe("locked");
+  });
+
+  test("a tab without the command menu button, or with a longer composer label, is still found", async () => {
+    pids["com.microsoft.VSCode"] = 10;
+    const t = tab({ text: "The build finished without errors" });
+    t.area.children = t.area.children.filter((c) => c.label !== "Show command menu (/)");
+    t.composer.label = "Message input, press Enter to send";
+    apps.set(10, appWith(windowWith(t.area)));
+    expect(await send()).toBe("sent");
+  });
+
+  test("a web area with only a Send button and a text field counts as the tab", async () => {
+    pids["com.microsoft.VSCode"] = 10;
+    const t = tab({ text: "The build finished without errors" });
+    t.composer.label = "";
+    t.area.children = t.area.children.filter((c) => c.label !== "Show command menu (/)");
+    apps.set(10, appWith(windowWith(t.area)));
+    expect(await send()).toBe("sent");
+  });
+
+  test("a web area with no composer and no Send button is not a tab", async () => {
+    pids["com.microsoft.VSCode"] = 10;
+    const other = new Fake("AXWebArea", "", [new Fake("AXButton", "Show command menu (/)")]);
+    apps.set(10, appWith(windowWith(other)));
+    expect(await send()).toBe("not-found");
   });
 
   test("a Claude tab that shows another session: not-found", async () => {

@@ -18,6 +18,7 @@ import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } 
 import {
   deliver,
   type HeadlessRoute,
+  OpenEditorPanel,
   PHONE_PREFIX,
   TYPE_ANYWAY_MS,
   type TypeOps,
@@ -203,7 +204,11 @@ export class ReplyQueue {
         });
         this.drop(
           reply,
-          err instanceof NotSent ? "it's typed in the prompt but wasn't sent" : "Relay couldn't reach it",
+          err instanceof NotSent
+            ? "it's typed in the prompt but wasn't sent"
+            : err instanceof OpenEditorPanel
+              ? err.message
+              : "Relay couldn't reach it",
         );
       }
     }
