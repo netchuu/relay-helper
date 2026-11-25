@@ -275,6 +275,9 @@ export const ITERM_ESCAPE_SCRIPT = `on run argv
   return "not-found"
 end run`;
 
+/** Ctrl+S (Claude Code's stash key) for iTerm2: the byte through `write text … newline no`. */
+export const ITERM_STASH_SCRIPT = ITERM_ESCAPE_SCRIPT.replace("character id 27", "character id 19");
+
 /** Enter alone, for a typed message that sat unsent: `write text ""` is a bare Return. */
 export const ENTER_SCRIPTS: Record<TypingRoute, string> = {
   iterm: `on run argv
@@ -299,10 +302,11 @@ end run`,
 export async function keyIntoTerminalApp(
   app: TypingRoute,
   tty: string,
-  key: "escape" | "enter",
+  key: "escape" | "enter" | "stash",
 ): Promise<boolean> {
-  if (key === "escape" && app !== "iterm") return false;
-  const script = key === "enter" ? ENTER_SCRIPTS[app] : ITERM_ESCAPE_SCRIPT;
+  if (key !== "enter" && app !== "iterm") return false;
+  const script =
+    key === "enter" ? ENTER_SCRIPTS[app] : key === "stash" ? ITERM_STASH_SCRIPT : ITERM_ESCAPE_SCRIPT;
   const res = await run(["osascript", "-e", script, tty], { timeoutMs: 10_000 });
   noteAutomation(app, res.err, res.out === "ok");
   if (res.out !== "ok")

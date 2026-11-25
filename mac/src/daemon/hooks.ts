@@ -11,7 +11,7 @@ import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
 import type { Handover } from "./handover.ts";
 import { type HeldReplies, notePermissionMode } from "./held.ts";
-import { clearLeftUnsent, splitAttachmentPaths } from "./inject.ts";
+import { clearLeftUnsent, draftSubmitted, splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import { modelFromTranscript, sessionModels } from "./model.ts";
 import type { PresenceMonitor } from "./presence.ts";
@@ -384,6 +384,7 @@ export class HookHandler {
         // Only a real submit empties the input box; a notice leaves the typed draft where it was.
         if (!system) {
           notePromptSubmitted(sessionId);
+          draftSubmitted(sessionId, raw);
           forgetSuggestionKnown(sessionId);
           clearLeftUnsent(sessionId);
         }

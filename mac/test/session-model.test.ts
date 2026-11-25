@@ -365,13 +365,13 @@ describe("session.model", () => {
     expect(sessionModels.get("s1")).toEqual({});
   });
 
-  test("someone typing at the computer is not typed over", async () => {
+  test("keys pressed at the computer a moment ago don't hold the change", async () => {
     platform.presence.read = async () => ({ idleSeconds: 0, locked: false, source: "test" });
     const { rpc, t } = helper();
     t.state.tab = { front: true, screen: EMPTY_PROMPT };
     const out = await rpc("session.model", { sessionId: "s1", model: "haiku" }, "phone");
-    expect(out).toMatchObject({ error: { code: "conflict" } });
-    expect(t.typed).toEqual([]);
+    expect(out).not.toHaveProperty("error");
+    expect(t.typed[0]).toBe("iterm:/model haiku");
   });
 
   test("a session with no terminal to type into is refused, never sent through the inbox", async () => {

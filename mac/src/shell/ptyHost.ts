@@ -197,7 +197,6 @@ export async function runHost(args: string[]): Promise<number> {
   const draft = new DraftTracker();
   const screen = new ScreenText(HOST_ROWS);
   let released = false;
-  let lastAttachInput = 0;
   const attached = new Attachers<Socket>({ cols: HOST_COLS, rows: HOST_ROWS });
 
   const env: Record<string, string | undefined> = {
@@ -270,9 +269,9 @@ export async function runHost(args: string[]): Promise<number> {
         shellPid: proc.pid,
         // Nothing sits between Relay and Claude Code here: there is no shell prompt to type into by mistake.
         isForeground: async () => proc.exitCode === null,
-        lastInput: () => lastAttachInput,
         hasDraft: () => draft.pending,
         sentEnter: () => draft.feed("\r"),
+        stashed: () => draft.stash(),
         pasteOn: () => paste.on,
         write: (d) => {
           draft.feed(d);
@@ -302,7 +301,6 @@ export async function runHost(args: string[]): Promise<number> {
         }
         keys = keys.replace(RESIZE_OSC, "");
         if (keys === "") return;
-        lastAttachInput = Date.now();
         const bytes = Buffer.from(keys, "latin1");
         draft.feed(bytes);
         term.write(bytes);

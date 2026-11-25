@@ -148,7 +148,6 @@ async function runInPty(cmd: string[]): Promise<number> {
     unreadBytes = 0;
     return screen.text();
   };
-  let lastInput = 0;
 
   const size = () => ({ cols: process.stdout.columns || 80, rows: process.stdout.rows || 24 });
   const proc = Bun.spawn(cmd, {
@@ -198,7 +197,6 @@ async function runInPty(cmd: string[]): Promise<number> {
   stdin.on("data", (d: Buffer) => {
     const typed = typedPart(d.toString("latin1"));
     if (typed !== "") {
-      lastInput = Date.now();
       draft.feed(Buffer.from(typed, "latin1"));
     }
     term.write(d);
@@ -266,9 +264,9 @@ async function runInPty(cmd: string[]): Promise<number> {
             shellPid: proc.pid,
             // Nothing sits between Relay and Claude Code: it is in front while it runs.
             isForeground: async () => proc.exitCode === null,
-            lastInput: () => lastInput,
             hasDraft: () => draft.pending,
             sentEnter: () => draft.feed("\r"),
+            stashed: () => draft.stash(),
             pasteOn: () => paste.on,
             write: (d) => {
               draft.feed(d);

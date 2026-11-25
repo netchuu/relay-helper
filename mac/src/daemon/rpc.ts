@@ -37,12 +37,11 @@ import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } 
 import {
   confirmModelSwitch,
   DeliveryError,
+  DraftInPrompt,
   deliver,
   modelResultsOnScreen,
   PHONE_PREFIX,
   type TypeOps,
-  WaitForPause,
-  WaitForUnlock,
 } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
@@ -57,7 +56,7 @@ import {
   sessionAlive,
 } from "./registry.ts";
 import { withoutIdeContext } from "./render.ts";
-import { type ReplyQueue, reasonOfPause, type WaitReason } from "./replyQueue.ts";
+import type { ReplyQueue } from "./replyQueue.ts";
 import { SentMessages } from "./sentMessages.ts";
 import { slashCommandsFor } from "./slashCommands.ts";
 import { StartError, sessionDirectories, startSession } from "./startSession.ts";
@@ -92,22 +91,17 @@ export interface RpcDeps {
   stopper?: TurnStopper;
   /** Replies Claude Code holds at the Mac (held-replies). */
   held?: HeldReplies;
-  /** Replies waiting for the Mac to be unlocked (desktop-ide-delivery). */
+  /** Replies an older helper left waiting; delivered at the next tick (reply-queue). */
   replies?: ReplyQueue;
   /** Photos and files from the phone (attachments). */
   attachments?: AttachmentStore;
   /** How replies reach terminals; tests swap them. */
   typeOps?: TypeOps;
-  /** How long `session.send` waits for a pause itself before the reply queue takes over; tests shorten it. */
-  pauseWait?: { inlineMs: number; pollMs: number };
   /** Claude Code processes the helper owns for sessions continued without a terminal (`session.resume`). */
   headless?: HeadlessSessions;
   /** Whether a session's conversation is still on disk, so it can be resumed; tests replace the check. */
   hasTranscript?: (session: SessionRecord) => boolean;
 }
-
-/** How long `session.send` waits for a typing pause before answering "queued"; well inside the phone's 20 s timeout. */
-export const INLINE_PAUSE_WAIT = { inlineMs: 12_000, pollMs: 500 };
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
 
@@ -443,12 +437,9 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           const first = await earlier.catch(() => null);
           if (!first) continue;
           audit(d.db, actor, "session.send", { sessionId, via: first.via, repeat: true });
-          // Still waiting: why, as of now.
-          const reason = first.via === "queued" ? d.replies?.reasonOf(sessionId) : undefined;
           const held = first.via === "socket" && d.held?.isHeld(sessionId);
           return {
             via: first.via,
-            ...(reason ? { reason } : {}),
             ...(held ? { heldAtMac: true as const } : {}),
             repeat: true,
           } satisfies SendResult;
@@ -665,7 +656,6 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     actor: string,
     sendId?: string,
   ): Promise<SendResult> {
-    const arrived = Date.now();
     const withFiles = (ids?.length ?? 0) > 0;
     if (!withFiles && !message) throw new RpcFailure("bad_request", words.empty);
     const session = d.registry.get(sessionId);
@@ -690,7 +680,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     if (d.broker.hasOpen(sessionId))
       throw new RpcFailure("conflict", "the session is waiting for an answer; answer its prompt instead");
     if (pendingPicks.ids().includes(sessionId)) await applyPicks(sessionId);
-    // One send per session at a time, so messages waiting for a pause arrive in the order they were sent.
+    // One send per session at a time, so messages arrive in the order they were sent.
     return await inOrder(sessionId, async () => {
       // A chat moving to the person's terminal has no typing route until it is done; then the new one counts.
       await d.handover?.settled(sessionId);
@@ -708,7 +698,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         for (const id of ids ?? []) held.set(id, done);
       }
       try {
-        const res = await sendNow(now, text, arrived, sendId);
+        const res = await sendNow(now, text, sendId);
         if (files > 0 && res.via === "socket")
           d.events.emit({
             type: "session.notice",
@@ -758,13 +748,12 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     return run;
   }
 
-  /** Types the message in or sends it by another route; after a few seconds' wait for a pause it is queued (`via: "queued"`). */
+  /** Types the message in at once, or sends it by another route. */
   async function sendNow(
     session: SessionRecord,
     text: string,
-    arrived: number,
     sendId?: string,
-  ): Promise<{ via: string; reason?: WaitReason; heldAtMac?: true }> {
+  ): Promise<{ via: string; heldAtMac?: true }> {
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
     if (d.headless?.has(sessionId)) {
@@ -774,7 +763,6 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           session,
           text,
           {
-            idleSeconds: null,
             userTypingNow: false,
             preferTyping: false,
             headless: d.headless,
@@ -787,89 +775,50 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         throw err;
       }
     }
-    const waiting = d.replies?.list(sessionId) ?? [];
-    // Replies already waiting go first: keep the order the person sent them in.
-    if (d.replies && waiting.length > 0) {
-      d.replies.add(sessionId, text, arrived, waiting[waiting.length - 1]?.waitsFor, sendId);
-      return queued(d.replies.reasonOf(sessionId));
-    }
-    const timing = d.pauseWait ?? INLINE_PAUSE_WAIT;
-    for (;;) {
-      // Fresh reading, not the 5 s presence poll: never type into a terminal while you are typing.
-      const { idleSeconds, locked } = await platform.presence.read({
-        tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
-      });
-      const waited = Date.now() - arrived;
-      // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
-      notePhoneTyped(sessionId, text, true, sendId);
-      // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
-      const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`, { sendId });
-      try {
-        const res = await deliver(
-          session,
-          text,
-          {
-            submitted: () => !phoneTypePending(sessionId, text),
-            idleSeconds,
-            userTypingNow: idleSeconds !== null && idleSeconds < 8,
-            preferTyping: d.config.preferTyping,
-            locked: locked === true,
-            // Only without a reply queue (never in the daemon): no one would type it later.
-            typeAnyway: !d.replies && waited >= timing.inlineMs,
-            headless: d.headless,
-          },
-          d.typeOps,
-        );
-        phoneTypeDelivered(sessionId, text);
-        if (res.submitted === false) {
-          const name = session.name ?? session.project ?? "the session";
-          d.events.emit({
-            type: "session.notice",
-            sessionId,
-            level: "error",
-            text: `Your message to ${name} was typed but not sent. Press Enter at the computer, or send it again.`,
-          });
-        }
-        if (res.via !== "socket") watch?.cancel();
-        else if (watch && (await watch.wait())) return { ...res, heldAtMac: true };
-        return res;
-      } catch (err) {
-        watch?.cancel();
-        // Nothing was typed: a prompt the person types at the Mac next must not match this message.
-        dropPhoneTyped(sessionId, text);
-        if (err instanceof WaitForUnlock && d.replies) {
-          d.replies.add(sessionId, text, arrived, "unlock", sendId);
-          d.replies.setReason(sessionId, "locked");
-          return queued("locked");
-        }
-        // The chat moved to the person's terminal while this was typing into the one Relay ran: send it there.
-        const moved = d.registry.get(sessionId);
-        if (session.ptySocket && moved && moved.ptySocket !== session.ptySocket && moved.status !== "ended")
-          return sendNow(moved, text, arrived, sendId);
-        if (!(err instanceof WaitForPause)) throw err;
-        // `relay shell` already waited up to 15 s for you to stop typing in that tab: don't ask it again here.
-        const wait = Math.max(timing.pollMs, err.retryInMs ?? 0);
-        const again =
-          !(err.route === "pty" && err.reason === "typing") &&
-          Date.now() - arrived + wait < timing.inlineMs &&
-          !d.broker.hasOpen(sessionId);
-        if (again || !d.replies) {
-          await Bun.sleep(wait);
-          continue;
-        }
-        log.info("waiting to type", { sessionId, route: err.route, reason: err.reason });
-        d.replies.add(sessionId, text, arrived, "pause", sendId);
-        const why = reasonOfPause(err);
-        if (why) d.replies.setReason(sessionId, why);
-        if (err.retryInMs !== undefined) d.replies.retryIn(sessionId, err.retryInMs);
-        return queued(why ?? undefined);
+    // Fresh reading, not the 5 s presence poll: the lock decides whether the desktop app can be typed into.
+    const { idleSeconds, locked } = await platform.presence.read({
+      tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
+    });
+    // Before typing: the UserPromptSubmit hook arrives before deliver() returns and must know it came from the phone.
+    notePhoneTyped(sessionId, text, true, sendId);
+    // Watching for the hook before the post: a message through the inbox that Claude Code doesn't take is held.
+    const watch = d.held?.expect(sessionId, `${PHONE_PREFIX}\n${text}`, { sendId });
+    try {
+      const res = await deliver(
+        session,
+        text,
+        {
+          submitted: () => !phoneTypePending(sessionId, text),
+          userTypingNow: idleSeconds !== null && idleSeconds < 8,
+          preferTyping: d.config.preferTyping,
+          locked: locked === true,
+          headless: d.headless,
+        },
+        d.typeOps,
+      );
+      phoneTypeDelivered(sessionId, text);
+      if (res.submitted === false) {
+        const name = session.name ?? session.project ?? "the session";
+        d.events.emit({
+          type: "session.notice",
+          sessionId,
+          level: "error",
+          text: `Your message to ${name} was typed but not sent. Press Enter at the computer, or send it again.`,
+        });
       }
+      if (res.via !== "socket") watch?.cancel();
+      else if (watch && (await watch.wait())) return { ...res, heldAtMac: true };
+      return res;
+    } catch (err) {
+      watch?.cancel();
+      // Nothing was typed: a prompt the person types at the Mac next must not match this message.
+      dropPhoneTyped(sessionId, text);
+      // The chat moved to the person's terminal while this was typing into the one Relay ran: send it there.
+      const moved = d.registry.get(sessionId);
+      if (session.ptySocket && moved && moved.ptySocket !== session.ptySocket && moved.status !== "ended")
+        return sendNow(moved, text, sendId);
+      throw err;
     }
-  }
-
-  /** The answer for a message that waits: why too, when the helper knows. */
-  function queued(reason: WaitReason | undefined): { via: string; reason?: WaitReason } {
-    return reason ? { via: "queued", reason } : { via: "queued" };
   }
 
   /** Claude is working or waiting for an answer: the prompt isn't free for a command. */
@@ -884,7 +833,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       if (!session || session.status === "ended")
         throw new RpcFailure("not_found", "This session has ended.");
       if (modelBusy(sessionId)) throw new StillBusy();
-      const { idleSeconds, locked } = await platform.presence.read({
+      const { locked } = await platform.presence.read({
         tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
       });
       try {
@@ -893,8 +842,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           session,
           command,
           {
-            idleSeconds,
-            userTypingNow: idleSeconds !== null && idleSeconds < 8,
+            userTypingNow: false,
             preferTyping: true,
             locked: locked === true,
             terminalOnly: true,
@@ -909,12 +857,10 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         }
         return delivered;
       } catch (err) {
-        if (err instanceof WaitForPause)
+        if (err instanceof DraftInPrompt)
           throw new RpcFailure(
             "conflict",
-            err.reason === "draft"
-              ? "There is text in the prompt at the computer. Send or clear it first."
-              : "Someone is typing at the computer. Try again in a moment.",
+            "There is text in the prompt at the computer. Send or clear it first.",
           );
         if (err instanceof DeliveryError)
           throw new RpcFailure("unavailable", "This session can't be changed from the phone.");

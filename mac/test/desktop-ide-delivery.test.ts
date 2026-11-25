@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { RelayEvent } from "../../protocol/index.ts";
 import { openDb, SCHEMA_VERSION } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { PHONE_PREFIX, WaitForUnlock } from "../src/daemon/inject.ts";
+import { PHONE_PREFIX } from "../src/daemon/inject.ts";
 import { publicSession, Registry, replyRouteOf, type SessionRecord } from "../src/daemon/registry.ts";
 import { withoutIdeContext } from "../src/daemon/render.ts";
 import { QUEUE_MAX_AGE_MS, ReplyQueue } from "../src/daemon/replyQueue.ts";
@@ -49,7 +49,7 @@ describe("queue: order and concurrency", () => {
     queue.add("s2", "b1", 2);
     queue.add("s1", "a2", 3);
     const sent: string[] = [];
-    await queue.drain(false, async (s, t) => void sent.push(`${s.id}:${t}`), 10);
+    await queue.drain(async (s, t) => void sent.push(`${s.id}:${t}`), 10);
     expect(sent).toEqual(["s1:a1", "s2:b1", "s1:a2"]);
   });
 
@@ -62,11 +62,7 @@ describe("queue: order and concurrency", () => {
       await Bun.sleep(30);
       sent.push(t);
     };
-    await Promise.all([
-      queue.drain(false, slow, 10),
-      queue.drain(false, slow, 10),
-      queue.drain(false, slow, 10),
-    ]);
+    await Promise.all([queue.drain(slow, 10), queue.drain(slow, 10), queue.drain(slow, 10)]);
     expect(sent).toEqual(["one", "two"]);
     expect(queue.list()).toEqual([]);
   });
@@ -75,34 +71,15 @@ describe("queue: order and concurrency", () => {
     const { queue } = setup();
     queue.add("s1", "first", 1);
     const sent: string[] = [];
-    await queue.drain(
-      false,
-      async (_s, t) => {
-        if (t === "first") queue.add("s1", "late", 2);
-        sent.push(t);
-      },
-      10,
-    );
+    await queue.drain(async (_s, t) => {
+      if (t === "first") queue.add("s1", "late", 2);
+      sent.push(t);
+    }, 10);
     // Not lost: either delivered now or still waiting for the next drain.
     const left = queue.list().map((r) => r.text);
     expect([...sent, ...left]).toEqual(["first", "late"]);
-    await queue.drain(false, async (_s, t) => void sent.push(t), 10);
+    await queue.drain(async (_s, t) => void sent.push(t), 10);
     expect(sent).toEqual(["first", "late"]);
-  });
-
-  test("locked again at the very first reply: nothing sent, nothing dropped, no notice", async () => {
-    const { queue, notices } = setup();
-    queue.add("s1", "a", 1);
-    queue.add("s2", "b", 2);
-    await queue.drain(
-      false,
-      async () => {
-        throw new WaitForUnlock("locked");
-      },
-      10,
-    );
-    expect(queue.list().map((r) => r.text)).toEqual(["a", "b"]);
-    expect(notices).toEqual([]);
   });
 
   test("one reply that fails is dropped alone; the next still goes out", async () => {
@@ -110,14 +87,10 @@ describe("queue: order and concurrency", () => {
     queue.add("s1", "bad", 1);
     queue.add("s1", "good", 2);
     const sent: string[] = [];
-    await queue.drain(
-      false,
-      async (_s, t) => {
-        if (t === "bad") throw new Error("boom");
-        sent.push(t);
-      },
-      10,
-    );
+    await queue.drain(async (_s, t) => {
+      if (t === "bad") throw new Error("boom");
+      sent.push(t);
+    }, 10);
     expect(sent).toEqual(["good"]);
     expect(notices.map((n) => n.text)).toEqual([
       "Your message to web-shop wasn't sent: Relay couldn't reach it.",
@@ -130,25 +103,25 @@ describe("queue: dropping", () => {
     const { queue, notices } = setup();
     queue.add("s1", "on the edge", 0);
     const sent: string[] = [];
-    await queue.drain(false, async (_s, t) => void sent.push(t), QUEUE_MAX_AGE_MS);
+    await queue.drain(async (_s, t) => void sent.push(t), QUEUE_MAX_AGE_MS);
     expect(sent).toEqual(["on the edge"]);
     queue.add("s1", "too late", 0);
-    await queue.drain(false, async (_s, t) => void sent.push(t), QUEUE_MAX_AGE_MS + 1);
+    await queue.drain(async (_s, t) => void sent.push(t), QUEUE_MAX_AGE_MS + 1);
     expect(sent).toEqual(["on the edge"]);
     expect(notices.map((n) => n.text)).toEqual([
-      "Your message to web-shop wasn't sent: your Mac stayed locked for a day.",
+      "Your message to web-shop wasn't sent: Relay couldn't type it in for a day.",
     ]);
   });
 
   test("a session the helper no longer knows: dropped, the notice names no session", async () => {
     const { queue, notices } = setup();
     queue.add("gone", "hello", 1);
-    await queue.drain(false, async () => {}, 10);
+    await queue.drain(async () => {}, 10);
     expect(queue.list()).toEqual([]);
     expect(notices).toEqual([
       {
         sessionId: "gone",
-        text: "Your message to the session wasn't sent: the session ended before your Mac was unlocked.",
+        text: "Your message to the session wasn't sent: the session ended before it could be typed in.",
       },
     ]);
   });
@@ -158,18 +131,10 @@ describe("queue: dropping", () => {
     queue.add("s1", "hello", 1);
     registry.rename("s1", "Checkout");
     registry.setStatus("s1", "ended");
-    await queue.drain(false, async () => {}, 10);
+    await queue.drain(async () => {}, 10);
     expect(notices.map((n) => n.text)).toEqual([
-      "Your message to Checkout wasn't sent: the session ended before your Mac was unlocked.",
+      "Your message to Checkout wasn't sent: the session ended before it could be typed in.",
     ]);
-  });
-
-  test("still locked: an old reply isn't dropped yet (the age is only checked on unlock)", async () => {
-    const { queue, notices } = setup();
-    queue.add("s1", "old", 0);
-    await queue.drain(true, async () => {}, QUEUE_MAX_AGE_MS * 3);
-    expect(queue.list()).toHaveLength(1);
-    expect(notices).toEqual([]);
   });
 });
 

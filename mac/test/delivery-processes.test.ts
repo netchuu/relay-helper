@@ -1,13 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import {
-  type DeliverOptions,
-  defaultTypeOps,
-  deliver,
-  type TypeOps,
-  WaitForPause,
-} from "../src/daemon/inject.ts";
+import { type DeliverOptions, defaultTypeOps, deliver, type TypeOps } from "../src/daemon/inject.ts";
 import { type HookEnv, Registry, type SessionRecord } from "../src/daemon/registry.ts";
 import { ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { answerRequest, isForeground, type RequestContext } from "../src/shell/ptyShell.ts";
@@ -48,8 +42,7 @@ function session(env: HookEnv): SessionRecord {
   return made;
 }
 
-const opts = (idleSeconds: number | null): DeliverOptions => ({
-  idleSeconds,
+const opts = (): DeliverOptions => ({
   userTypingNow: false,
   preferTyping: true,
 });
@@ -85,34 +78,20 @@ const KITTY: HookEnv = {
 
 describe("processes started for one reply", () => {
   test("tmux: one tmux call for the screen and the pane's tty, one ps, then the typing (one mode check first)", async () => {
-    expect(await deliver(session(TMUX), "go", opts(600), ops)).toEqual({ via: "tmux" });
+    expect(await deliver(session(TMUX), "go", opts(), ops)).toEqual({ via: "tmux" });
     expect(reads().map((c) => c[0])).toEqual(["tmux", "ps"]);
     expect(reads()[0]).toContain(";");
     expect(started.length).toBe(5);
   });
 
-  test("tmux while you type: two processes, and the retry comes at the end of the pause", async () => {
-    const err = await deliver(session(TMUX), "go", opts(1), ops).catch((e) => e);
-    expect(err).toBeInstanceOf(WaitForPause);
-    expect(err).toMatchObject({ route: "tmux", reason: "typing", retryInMs: 2000 });
-    expect(started.map((c) => c[0])).toEqual(["tmux", "ps"]);
-  });
-
   test("WezTerm: the screen, the pane list and one ps", async () => {
-    expect(await deliver(session(WEZ), "go", opts(600), ops)).toEqual({ via: "wezterm" });
+    expect(await deliver(session(WEZ), "go", opts(), ops)).toEqual({ via: "wezterm" });
     expect(reads().map((c) => c[0])).toEqual(["wezterm", "wezterm", "ps"]);
   });
 
   test("kitty: the screen, the window list and one ps", async () => {
-    expect(await deliver(session(KITTY), "go", opts(600), ops)).toEqual({ via: "kitty" });
+    expect(await deliver(session(KITTY), "go", opts(), ops)).toEqual({ via: "kitty" });
     expect(reads().map((c) => c[0])).toEqual(["kitty", "kitty", "ps"]);
-  });
-
-  test("WezTerm and kitty while you type: the reads only, nothing typed", async () => {
-    for (const env of [WEZ, KITTY]) {
-      await expect(deliver(session(env), "go", opts(1), ops)).rejects.toBeInstanceOf(WaitForPause);
-    }
-    expect(started).toEqual(reads());
   });
 
   test("a terminal tab: one ps for the tab's tty and the in-front check together", async () => {
@@ -122,7 +101,7 @@ describe("processes started for one reply", () => {
       peek: async () => ({ screen: EMPTY, front: false }),
       type: async () => true,
     };
-    const res = await deliver(session({ termProgram: "iTerm.app", claudePid: 4242 }), "go", opts(600), tab);
+    const res = await deliver(session({ termProgram: "iTerm.app", claudePid: 4242 }), "go", opts(), tab);
     expect(res).toEqual({ via: "iterm" });
     expect(started.map((c) => c[0])).toEqual(["ps"]);
   });
@@ -135,14 +114,13 @@ describe("processes started for one reply", () => {
       pty: "/tmp/pty.sock",
       ptyToken: "tok",
     } as HookEnv;
-    expect(await deliver(session(env), "go", opts(1), pty)).toEqual({ via: "pty" });
+    expect(await deliver(session(env), "go", opts(), pty)).toEqual({ via: "pty" });
     expect(started).toEqual([]);
 
     const ctx: RequestContext = {
       token: "tok",
       shellPid: 999,
       isForeground,
-      lastInput: () => 0,
       pasteOn: () => false,
       write: () => {},
       sleep: async () => {},
@@ -151,26 +129,5 @@ describe("processes started for one reply", () => {
     const reply = await answerRequest(JSON.stringify({ token: "tok", pid: 4242, text: "go" }), ctx);
     expect(reply).toEqual({ ok: true });
     expect(started.map((c) => c[0])).toEqual(["ps", "ps"]);
-  });
-});
-
-describe("a waiting reply", () => {
-  test("is not tried again before the keyboard can have been still", async () => {
-    const db = openDb(":memory:");
-    const events = new EventLog(db);
-    const registry = new Registry(db, events);
-    registry.touch("s1", { cwd: "/p", env: TMUX });
-    const queue = new ReplyQueue(db, events, registry);
-    queue.add("s1", "go", 1_000_000, "pause");
-    let tries = 0;
-    const typing = async () => {
-      tries++;
-      throw new WaitForPause("tmux", "typing", 2000);
-    };
-    await queue.drain(false, typing, 1_000_000);
-    await queue.drain(false, typing, 1_001_000);
-    expect(tries).toBe(1);
-    await queue.drain(false, typing, 1_002_000);
-    expect(tries).toBe(2);
   });
 });

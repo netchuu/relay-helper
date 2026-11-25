@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { RelayEvent } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { DeliveryError, WaitForUnlock } from "../src/daemon/inject.ts";
+import { DeliveryError } from "../src/daemon/inject.ts";
 import { Registry, replyRouteOf, type SessionRecord } from "../src/daemon/registry.ts";
 import { QUEUE_MAX_AGE_MS, ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
@@ -87,8 +87,8 @@ function setup() {
   return { db, events, registry, queue, notices };
 }
 
-describe("replies waiting for the unlock", () => {
-  test("nothing goes out while locked; on unlock they go in the order sent", async () => {
+describe("replies an older helper left waiting", () => {
+  test("they go out at once, in the order sent", async () => {
     const { queue } = setup();
     queue.add("s1", "first", 1_000);
     queue.add("s1", "second", 2_000);
@@ -96,23 +96,9 @@ describe("replies waiting for the unlock", () => {
     const deliver = async (_s: SessionRecord, text: string) => {
       sent.push(text);
     };
-    await queue.drain(true, deliver, 3_000);
-    expect(sent).toEqual([]);
-    expect(queue.list("s1")).toHaveLength(2);
-    await queue.drain(false, deliver, 3_000);
+    await queue.drain(deliver, 3_000);
     expect(sent).toEqual(["first", "second"]);
     expect(queue.list()).toEqual([]);
-  });
-
-  test("locked again mid-way: stops and keeps the rest, in order", async () => {
-    const { queue } = setup();
-    queue.add("s1", "a", 1);
-    queue.add("s1", "b", 2);
-    const deliver = async (_s: SessionRecord, text: string) => {
-      if (text === "b") throw new WaitForUnlock("locked");
-    };
-    await queue.drain(false, deliver, 10);
-    expect(queue.list().map((r) => r.text)).toEqual(["b"]);
   });
 
   test("dropped with a notice when the session ended, after a day, or when it can't be delivered", async () => {
@@ -121,24 +107,22 @@ describe("replies waiting for the unlock", () => {
     registry.setStatus("s2", "ended");
     queue.add("s2", "to an ended session", 1_000);
     queue.add("s1", "too old", 1_000);
-    await queue.drain(false, async () => {}, 1_000 + QUEUE_MAX_AGE_MS + 1);
+    await queue.drain(async () => {}, 1_000 + QUEUE_MAX_AGE_MS + 1);
     expect(queue.list()).toEqual([]);
     expect(notices).toEqual([
-      "Your message to api wasn't sent: the session ended before your Mac was unlocked.",
-      "Your message to web-shop wasn't sent: your Mac stayed locked for a day.",
+      "Your message to api wasn't sent: the session ended before it could be typed in.",
+      "Your message to web-shop wasn't sent: Relay couldn't type it in for a day.",
     ]);
 
     notices.length = 0;
     queue.add("s1", "unreachable", 5_000);
-    await queue.drain(
-      false,
-      async () => {
-        throw new DeliveryError("no inbox");
-      },
-      6_000,
-    );
+    await queue.drain(async () => {
+      throw new DeliveryError("Unlock your Mac to send to the Claude app");
+    }, 6_000);
     expect(queue.list()).toEqual([]);
-    expect(notices).toEqual(["Your message to web-shop wasn't sent: Relay couldn't reach it."]);
+    expect(notices).toEqual([
+      "Your message to web-shop wasn't sent: Unlock your Mac to send to the Claude app.",
+    ]);
   });
 
   test("a session stuck in a slow delivery doesn't hold up another session's replies", async () => {
@@ -155,9 +139,9 @@ describe("replies waiting for the unlock", () => {
       if (text === "slow") await gate;
       sent.push(text);
     };
-    const first = queue.drain(false, deliver, 2_000);
+    const first = queue.drain(deliver, 2_000);
     await Bun.sleep(5);
-    await queue.drain(false, deliver, 2_000);
+    await queue.drain(deliver, 2_000);
     expect(sent).toEqual(["fast"]);
     release();
     await first;
@@ -168,22 +152,6 @@ describe("replies waiting for the unlock", () => {
     const { db, events, registry, queue } = setup();
     queue.add("s1", "kept", 1);
     expect(new ReplyQueue(db, events, registry).list().map((r) => r.text)).toEqual(["kept"]);
-  });
-
-  test("session.send queues behind replies already waiting, so the order holds", async () => {
-    const { db, events, registry, queue } = setup();
-    const rpc = createRpc({
-      db,
-      events,
-      registry,
-      replies: queue,
-      broker: { hasOpen: () => false },
-      config: { preferTyping: true },
-    } as unknown as RpcDeps);
-    queue.add("s1", "waiting", 1);
-    const res = await rpc("session.send", { sessionId: "s1", text: "next" }, "phone");
-    expect(res).toEqual({ result: { via: "queued" } });
-    expect(queue.list("s1").map((r) => r.text)).toEqual(["waiting", "next"]);
   });
 });
 

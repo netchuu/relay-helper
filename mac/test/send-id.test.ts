@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DeliveryCheck, RelayEvent, RpcSchemas, SendResult } from "../../protocol/index.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { DeliveryError, PAUSE_SECONDS, type TypeOps } from "../src/daemon/inject.ts";
+import { DeliveryError, type TypeOps } from "../src/daemon/inject.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { deliverQueued, ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
@@ -56,7 +56,6 @@ function helper(extra: Partial<RpcDeps> = {}) {
     broker: { hasOpen: () => false },
     config: { preferTyping: true },
     typeOps: t.ops,
-    pauseWait: { inlineMs: 400, pollMs: 20 },
     ...extra,
   } as unknown as RpcDeps);
   return { rpc, t, queue, db };
@@ -66,10 +65,8 @@ const send = (text: string, sendId?: string, sessionId = "s1") => ({ sessionId, 
 
 describe("session.send with a sendId", () => {
   const read = platform.presence.read;
-  let idle: number | null = 60;
   beforeEach(() => {
-    idle = 60;
-    platform.presence.read = async () => ({ idleSeconds: idle, locked: false, source: "test" });
+    platform.presence.read = async () => ({ idleSeconds: 60, locked: false, source: "test" });
   });
   afterEach(() => {
     platform.presence.read = read;
@@ -108,9 +105,17 @@ describe("session.send with a sendId", () => {
     });
   });
 
-  test("a repeat while the first still waits for a pause waits for it, and it's typed once", async () => {
-    const { rpc, t } = helper({ pauseWait: { inlineMs: 2_000, pollMs: 20 } });
-    idle = PAUSE_SECONDS - 0.1;
+  test("a repeat while the first is still being typed waits for it, and it's typed once", async () => {
+    const { rpc, t } = helper();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const typeNow = t.ops.type;
+    t.ops.type = async (...args) => {
+      await gate;
+      return typeNow(...args);
+    };
     t.state.tab = { front: true, screen: EMPTY_PROMPT };
     const first = rpc("session.send", send("After you", "id-1"), "phone");
     await Bun.sleep(60);
@@ -118,37 +123,11 @@ describe("session.send with a sendId", () => {
     const asked = rpc("session.delivered", { sessionId: "s1", sendId: "id-1" }, "phone");
     await Bun.sleep(60);
     expect(t.typed).toEqual([]);
-    idle = 5;
+    release();
     expect(await first).toEqual({ result: { via: "iterm" } });
     expect(await again).toEqual({ result: { via: "iterm", repeat: true } });
     expect(await asked).toEqual({ result: { delivered: true, via: "iterm" } });
     expect(t.typed).toEqual(["iterm:After you"]);
-  });
-
-  test('"queued" keeps working with the id: a repeat says queued and the reply queue holds it once', async () => {
-    const { rpc, t, queue } = helper();
-    idle = 0;
-    t.state.tab = { front: true, screen: EMPTY_PROMPT };
-    expect(await rpc("session.send", send("Later", "id-1"), "phone")).toEqual({
-      result: { via: "queued", reason: "typing" },
-    });
-    expect(await rpc("session.send", send("Later", "id-1"), "phone")).toEqual({
-      result: { via: "queued", reason: "typing", repeat: true },
-    });
-    expect(await rpc("session.delivered", { sessionId: "s1", sendId: "id-1" }, "phone")).toEqual({
-      result: { delivered: true, via: "queued" },
-    });
-    expect(queue.list().map((r) => r.text)).toEqual(["Later"]);
-    idle = 10;
-    await queue.drain(
-      false,
-      deliverQueued({ preferTyping: true, hasOpenPrompt: () => false, typeOps: t.ops }),
-      Date.now() + 60_000,
-    );
-    expect(t.typed).toEqual(["iterm:Later"]);
-    // Typed by the queue meanwhile: a late Try Again still types nothing.
-    await rpc("session.send", send("Later", "id-1"), "phone");
-    expect(t.typed).toEqual(["iterm:Later"]);
   });
 
   test("a send that failed is forgotten: the question says not delivered, and Try Again types it", async () => {

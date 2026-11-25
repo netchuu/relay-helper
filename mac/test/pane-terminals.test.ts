@@ -10,7 +10,6 @@ import {
   splitAttachmentPaths,
   type TypeOps,
   typingRouteFor,
-  WaitForPause,
 } from "../src/daemon/inject.ts";
 import {
   kittyDoctorNote,
@@ -112,7 +111,7 @@ function opsWith(front = true): TypeOps {
   };
 }
 
-const opts = { idleSeconds: 600, userTypingNow: false, preferTyping: true };
+const opts = { userTypingNow: false, preferTyping: true };
 
 describe("WezTerm", () => {
   test("types the text and Enter into the pane, through its socket", async () => {
@@ -136,17 +135,17 @@ describe("WezTerm", () => {
     expect(log()).toContain("STDIN abc\n");
   });
 
-  test("a draft in the prompt holds the message", async () => {
+  test("a draft in the prompt is stashed with Ctrl+S, then the message is typed", async () => {
     writeFileSync(join(dir, "screen"), DRAFT);
-    await expect(deliver(session(WEZ_ENV), "hi", opts, opsWith())).rejects.toBeInstanceOf(WaitForPause);
-    expect(calls().some((c) => c.includes("send-text"))).toBe(false);
+    expect(await deliver(session(WEZ_ENV), "hi", opts, opsWith())).toEqual({ via: "wezterm" });
+    const l = log();
+    expect(l).toContain("--no-paste\nSTDIN \u0013\n");
+    expect(l.indexOf("STDIN \u0013")).toBeLessThan(l.lastIndexOf("hi"));
   });
 
-  test("while the person types, the message waits", async () => {
-    const err = await deliver(session(WEZ_ENV), "hi", { ...opts, idleSeconds: 1 }, opsWith()).catch((e) => e);
-    expect(err).toBeInstanceOf(WaitForPause);
-    expect((err as WaitForPause).reason).toBe("typing");
-    expect(calls().some((c) => c.includes("send-text"))).toBe(false);
+  test("keys pressed at the Mac a moment ago don't hold the message", async () => {
+    expect(await deliver(session(WEZ_ENV), "hi", opts, opsWith())).toEqual({ via: "wezterm" });
+    expect(calls().some((c) => c.includes("send-text"))).toBe(true);
   });
 
   test("nothing is typed when Claude Code isn't in front of the pane", async () => {
@@ -212,9 +211,13 @@ describe("kitty", () => {
     );
   });
 
-  test("a draft holds the message; not in front types nothing", async () => {
+  test("a draft is stashed first", async () => {
     writeFileSync(join(dir, "screen"), DRAFT);
-    await expect(deliver(session(KITTY_ENV), "hi", opts, opsWith())).rejects.toBeInstanceOf(WaitForPause);
+    await deliver(session(KITTY_ENV), "hi", opts, opsWith());
+    expect(log()).toContain("STDIN \u0013\n");
+  });
+
+  test("not in front types nothing", async () => {
     writeFileSync(join(dir, "screen"), EMPTY);
     await deliver(session(KITTY_ENV), "hi", opts, opsWith(false)).catch(() => {});
     writeFileSync(

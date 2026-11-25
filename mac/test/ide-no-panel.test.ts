@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { deliver, type GuiOps, OpenEditorPanel, type TypeOps, WaitForUnlock } from "../src/daemon/inject.ts";
+import { DeliveryError, deliver, type GuiOps, OpenEditorPanel, type TypeOps } from "../src/daemon/inject.ts";
 import { Registry, type SessionRecord } from "../src/daemon/registry.ts";
 import { ReplyQueue } from "../src/daemon/replyQueue.ts";
 
@@ -31,21 +31,21 @@ const ops = (g: GuiOps): TypeOps => ({
   sleep: async () => {},
   gui: g,
 });
-const opts = { idleSeconds: null, userTypingNow: false, preferTyping: true };
+const opts = { userTypingNow: false, preferTyping: true };
 
 describe("an editor chat with no visible Claude Code panel", () => {
-  test("no tab and no inbox socket: fails with the plain reason, not a wait for the unlock", async () => {
+  test("no tab and no inbox socket: fails with the plain reason", async () => {
     const err = await deliver(session(), "Что осталось?", opts, ops(gui(async () => "not-found"))).catch(
       (e) => e,
     );
     expect(err).toBeInstanceOf(OpenEditorPanel);
-    expect(err).not.toBeInstanceOf(WaitForUnlock);
     expect(err.message).toBe("Open the Claude Code panel in your editor on the Mac, then send again");
   });
 
-  test("a locked screen still waits for the unlock", async () => {
+  test("a locked screen with no inbox socket fails at once with a plain line", async () => {
     const err = await deliver(session(), "hi", opts, ops(gui(async () => "locked"))).catch((e) => e);
-    expect(err).toBeInstanceOf(WaitForUnlock);
+    expect(err).toBeInstanceOf(DeliveryError);
+    expect(err.message).toBe("Unlock your Mac to send to the Claude app");
   });
 
   test("a message held by the old reason is retried at once and ends with that reason", async () => {
@@ -59,13 +59,9 @@ describe("an editor chat with no visible Claude Code panel", () => {
     });
     const queue = new ReplyQueue(db, events, registry);
     queue.add("s1", "Что осталось?", 1_000, "unlock");
-    await queue.drain(
-      false,
-      async (s, text) => {
-        await deliver(s, text, opts, ops(gui(async () => "not-found")));
-      },
-      2_000,
-    );
+    await queue.drain(async (s, text) => {
+      await deliver(s, text, opts, ops(gui(async () => "not-found")));
+    }, 2_000);
     expect(queue.list()).toEqual([]);
     expect(notices).toEqual([
       "Your message to web-shop wasn't sent: Open the Claude Code panel in your editor on the Mac, then send again.",

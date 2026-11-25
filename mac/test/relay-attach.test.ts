@@ -175,7 +175,7 @@ describe("relay attach: a real host", () => {
     expect(await w.result).toBe("ended");
   });
 
-  test("a phone message waits for a pause in the attached typing", async () => {
+  test("a phone message goes in at once, also while the attached window types", async () => {
     const { pane, log, launcher } = await startChat();
     const w = new Window(pane.socket, pane.token);
     await waitFor(() => w.out.includes("redrawn"));
@@ -193,7 +193,7 @@ describe("relay attach: a real host", () => {
       );
     });
     expect(reply).toContain('"ok":true');
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(1800);
+    expect(Date.now() - t0).toBeLessThan(1800);
     expect(keys(log)).toContain("from phone");
     w.type("\x1d");
     await w.result;

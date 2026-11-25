@@ -251,10 +251,7 @@ describe("a reply through the inbox", () => {
     const t = await setup();
     await t.hook("Stop");
     t.queue.add(t.sid, "Later", Date.now(), "unlock");
-    await t.queue.drain(
-      false,
-      deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }),
-    );
+    await t.queue.drain(deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }));
     await Bun.sleep(WAIT * 3);
     expect(t.inbox).toEqual([`${PHONE_PREFIX}\nLater`]);
     expect(t.states()).toEqual(["waiting"]);
@@ -268,10 +265,7 @@ describe("a reply through the inbox", () => {
     await t.hook("Stop");
     t.queue.add(t.sid, "Later", Date.now(), "unlock", "id-q");
     expect(t.queue.list(t.sid)[0]?.sendId).toBe("id-q");
-    await t.queue.drain(
-      false,
-      deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }),
-    );
+    await t.queue.drain(deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }));
     await Bun.sleep(WAIT * 3);
     await t.arrives("Later");
     expect(t.held_().map((e) => [e.state, e.sendId])).toEqual([
@@ -290,10 +284,7 @@ describe("a reply through the inbox", () => {
     expect(started()).toEqual(["id-1"]);
     await t.hook("Stop");
     t.queue.add(t.sid, "Later", Date.now(), "unlock", "id-q");
-    await t.queue.drain(
-      false,
-      deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }),
-    );
+    await t.queue.drain(deliverQueued({ preferTyping: false, hasOpenPrompt: () => false, held: t.held }));
     await t.arrives("Later");
     expect(started()).toEqual(["id-1", "id-q"]);
   });

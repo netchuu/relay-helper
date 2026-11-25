@@ -79,7 +79,7 @@ export interface Platform {
     /** Types `text`, then Enter, into the tab on `tty`, whoever is in front. False when it couldn't. */
     type(route: TypingRoute, tty: string, text: string): Promise<boolean>;
     /** Presses one key (Esc to stop a turn, Enter to submit) in the tab on `tty`. False when it couldn't. */
-    key(route: TypingRoute, tty: string, key: "escape" | "enter"): Promise<boolean>;
+    key(route: TypingRoute, tty: string, key: "escape" | "enter" | "stash"): Promise<boolean>;
     /** Seconds since a key was last pressed on this computer's keyboard (not the mouse); null when unknown. */
     keyIdleSeconds?(): number | null;
   };

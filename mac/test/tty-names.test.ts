@@ -59,7 +59,7 @@ describe("the tmux pane check on Linux names", () => {
     const res = await deliver(
       registry.get("s") as SessionRecord,
       "hi",
-      { idleSeconds: 600, userTypingNow: false, preferTyping: true },
+      { userTypingNow: false, preferTyping: true },
       ops,
     );
     expect(res).toEqual({ via: "tmux" });

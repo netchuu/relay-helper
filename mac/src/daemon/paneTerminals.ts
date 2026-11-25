@@ -73,6 +73,11 @@ export function paneEnterSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\r", false)];
 }
 
+/** Ctrl+S alone: Claude Code's stash key. */
+export function paneStashSteps(target: PaneTarget): PaneStep[] {
+  return [sendText(target, "\u0013", false)];
+}
+
 /** Esc alone. */
 export function paneEscapeSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\u001b", false)];
@@ -148,6 +153,10 @@ export async function paneType(
 
 export async function paneEnter(target: PaneTarget): Promise<void> {
   await runSteps(target, paneEnterSteps(target), "send-text");
+}
+
+export async function paneStash(target: PaneTarget): Promise<void> {
+  await runSteps(target, paneStashSteps(target), "send-text");
 }
 
 export async function paneEscape(target: PaneTarget): Promise<void> {

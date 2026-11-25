@@ -62,7 +62,6 @@ describe("every route types only clean text", () => {
       token: "t",
       shellPid: 10,
       isForeground: async () => true,
-      lastInput: () => 0,
       hasDraft: () => false,
       pasteOn: () => true,
       write: (d) => void writes.push(d),

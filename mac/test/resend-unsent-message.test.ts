@@ -4,7 +4,7 @@ import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
-import { type DeliverOptions, deliver, type TypeOps, WaitForPause } from "../src/daemon/inject.ts";
+import { type DeliverOptions, deliver, type TypeOps } from "../src/daemon/inject.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { promptDraft } from "../src/daemon/promptLine.ts";
 import { type HookEnv, Registry, type SessionRecord } from "../src/daemon/registry.ts";
@@ -81,7 +81,6 @@ function session(env: HookEnv): SessionRecord {
 }
 
 const opts = (more: Partial<DeliverOptions> = {}): DeliverOptions => ({
-  idleSeconds: null,
   userTypingNow: false,
   preferTyping: true,
   submitted: () => false,
@@ -110,21 +109,33 @@ for (const [name, env, route] of [
       expect(t.state.submitted).toEqual([MSG]);
     });
 
-    test("a different draft still makes the message wait", async () => {
+    test("a different draft is stashed, and the message typed after it", async () => {
       const t = terminal();
       t.state.prompt = "fix the login bug";
-      const err = await deliver(session(env), MSG, opts(), t.ops).catch((e) => e);
-      expect(err).toBeInstanceOf(WaitForPause);
-      expect(err).toMatchObject({ reason: "draft" });
-      expect(t.state.typed).toEqual([]);
+      t.ops.stash = async () => {
+        t.state.prompt = "";
+        return true;
+      };
+      t.ops.tmuxStash = async () => {
+        t.state.prompt = "";
+      };
+      expect(await deliver(session(env), MSG, opts(), t.ops)).toMatchObject({ via: route });
+      expect(t.state.typed).toEqual([MSG]);
     });
 
-    test("a draft that only starts like the message still waits", async () => {
+    test("a draft that only starts like the message is a different draft: stashed, not sent with Enter", async () => {
       const t = terminal();
       t.state.prompt = `${MSG} and then roll back`;
-      const err = await deliver(session(env), MSG, opts(), t.ops).catch((e) => e);
-      expect(err).toBeInstanceOf(WaitForPause);
-      expect(t.state.typed).toEqual([]);
+      t.ops.stash = async () => {
+        t.state.prompt = "";
+        return true;
+      };
+      t.ops.tmuxStash = async () => {
+        t.state.prompt = "";
+      };
+      await deliver(session(env), MSG, opts({ submitted: () => true }), t.ops);
+      expect(t.state.enters).toBe(0);
+      expect(t.state.typed).toEqual([MSG]);
     });
   });
 }
@@ -141,21 +152,6 @@ describe("sending an unsent message again, more cases", () => {
     expect(t.state.typed).toEqual([MSG]);
     expect(t.state.submitted).toEqual([MSG]);
   });
-
-  for (const [name, env] of [
-    ["tmux", TMUX],
-    ["iTerm2", ITERM],
-  ] as const) {
-    test(`a matching prompt still waits while the Mac is in use (${name})`, async () => {
-      const t = terminal();
-      t.state.prompt = MSG;
-      t.ops.peek = async () => ({ front: true, screen: `${RULE}\n❯ ${t.state.prompt}\n${RULE}` });
-      const err = await deliver(session(env), MSG, opts({ idleSeconds: 0 }), t.ops).catch((e) => e);
-      expect(err).toBeInstanceOf(WaitForPause);
-      expect(err).toMatchObject({ reason: "typing" });
-      expect(t.state.enters).toBe(0);
-    });
-  }
 });
 
 describe("Claude's own suggestion on iTerm2", () => {

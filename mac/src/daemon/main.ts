@@ -214,8 +214,7 @@ export async function runDaemon(): Promise<void> {
 
   const timers = [
     setInterval(() => broker.expire(config.promptTimeoutSeconds * 1000), 60_000),
-    // Replies waiting for the unlock go out as soon as the Mac is unlocked; those waiting for a pause in your
-    // typing, as soon as the keyboard is still (or after TYPE_ANYWAY_MS anyway).
+    // Replies an older helper left waiting go out now.
     setInterval(
       () =>
         void rpc
@@ -223,7 +222,6 @@ export async function runDaemon(): Promise<void> {
           .catch((err) => log.warn("queued picks", { err: errMessage(err) }))
           .then(() =>
             replies.drain(
-              presence.get().locked === true,
               deliverQueued({
                 preferTyping: config.preferTyping,
                 hasOpenPrompt: (id) => broker.hasOpen(id),

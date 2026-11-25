@@ -37,7 +37,6 @@ function sessionWith(env: HookEnv): SessionRecord {
 }
 
 const opts = (more: Partial<DeliverOptions> = {}): DeliverOptions => ({
-  idleSeconds: null,
   userTypingNow: false,
   preferTyping: true,
   submitted: () => false,
@@ -106,7 +105,7 @@ describe("typed, arrival not seen: submitted:false, no inbox", () => {
       },
       tmuxEnter: async () => {},
     });
-    expect(await deliver(s, "hello there", opts({ idleSeconds: 60 }), ops)).toEqual({
+    expect(await deliver(s, "hello there", opts({}), ops)).toEqual({
       via: "tmux",
       submitted: false,
     });
@@ -128,7 +127,7 @@ describe("typed, arrival not seen: submitted:false, no inbox", () => {
       },
       enter: async () => true,
     });
-    expect(await deliver(s, "hello there", opts({ idleSeconds: 60 }), ops)).toEqual({
+    expect(await deliver(s, "hello there", opts({}), ops)).toEqual({
       via: "iterm",
       submitted: false,
     });
@@ -180,7 +179,7 @@ describe("typed, arrival not seen: submitted:false, no inbox", () => {
         throw new PartlyTyped("tmux send-keys failed (1)");
       },
     });
-    expect(await deliver(s, "hello", opts({ idleSeconds: 60, submitted: undefined }), ops)).toEqual({
+    expect(await deliver(s, "hello", opts({ submitted: undefined }), ops)).toEqual({
       via: "tmux",
       submitted: false,
     });
@@ -202,7 +201,7 @@ describe("typed, arrival not seen: submitted:false, no inbox", () => {
         throw new Error("tmux load-buffer failed (1)");
       },
     });
-    expect(await deliver(s, "hello", opts({ idleSeconds: 60 }), ops)).toEqual({ via: "socket" });
+    expect(await deliver(s, "hello", opts({}), ops)).toEqual({ via: "socket" });
     await Bun.sleep(20);
     expect(box.state.connections).toBe(1);
   });
@@ -217,7 +216,7 @@ describe("typed, arrival not seen: submitted:false, no inbox", () => {
         throw new PartlyTyped("wezterm send-text failed (1)");
       },
     });
-    expect(await deliver(s, "hello", opts({ idleSeconds: 60, submitted: undefined }), ops)).toEqual({
+    expect(await deliver(s, "hello", opts({ submitted: undefined }), ops)).toEqual({
       via: "wezterm",
       submitted: false,
     });

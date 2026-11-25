@@ -5,10 +5,6 @@ import { join } from "node:path";
 import { relayHome } from "../home.ts";
 import { cleanTypedText } from "./typedText.ts";
 
-/** How long the tab must be quiet before Relay types into it, and the longest it waits for that. */
-export const QUIET_MS = 2000;
-const MAX_WAIT_MS = 15_000;
-
 export interface TypeRequest {
   token: string;
   /** Text to type, then Enter. Absent in a key request. */
@@ -17,7 +13,7 @@ export interface TypeRequest {
   key?: "escape" | "enter";
   /** The agent process the reply is for; Relay only types while it is in the foreground of this tab. */
   pid: number;
-  /** The message waited long enough: type now, without a quiet moment, after a clean break if there's a draft. */
+  /** Sent by every helper that types at once; one that omits it is from before and gets the same treatment. */
   force?: boolean;
 }
 
@@ -38,6 +34,9 @@ export function typedBytes(text: string, bracketedPaste: boolean): { body: strin
   return { body: clean.replace(/\n+/g, " "), enter: "\r" };
 }
 
+/** Ctrl+S: Claude Code puts the prompt's draft aside, and brings it back when the next message is sent. */
+const STASH = "\x13";
+
 /** What a key request writes into the tab: the key alone, no Enter. */
 export const KEY_BYTES: Record<NonNullable<TypeRequest["key"]>, string> = { escape: "\x1b", enter: "\r" };
 
@@ -45,12 +44,12 @@ export interface RequestContext {
   token: string;
   shellPid: number;
   isForeground(pid: number, shellPid: number): Promise<boolean>;
-  /** When you last typed in this tab (ms). */
-  lastInput(): number;
   /** Whether you typed something into the agent's prompt that isn't sent yet (DraftTracker). */
   hasDraft?(): boolean;
   /** The helper pressed Enter itself: whatever was in the prompt went with it, so no draft is left. */
   sentEnter?(): void;
+  /** The draft was stashed; the returned function marks it back once Claude Code has restored it. */
+  stashed?(): () => void;
   pasteOn(): boolean;
   write(data: string): void;
   sleep(ms: number): Promise<void>;
@@ -79,30 +78,22 @@ export async function answerRequest(line: string, ctx: RequestContext): Promise<
     if (req.key === "enter") ctx.sentEnter?.();
     return { ok: true };
   }
-  const force = req.force === true;
-  if (!force) {
-    // Don't mix into what you're typing in this tab: wait for a quiet moment.
-    const started = ctx.now();
-    let waited = false;
-    while (ctx.now() - ctx.lastInput() < QUIET_MS) {
-      if (ctx.now() - started > MAX_WAIT_MS) return { ok: false, reason: "typing" };
-      waited = true;
-      await ctx.sleep(250);
-    }
-    // Nor into a draft you left in the prompt: the helper waits for it to be sent or cleared.
-    if (ctx.hasDraft?.()) return { ok: false, reason: "draft" };
-    // After a wait you may have quit the agent, and the text would run in the shell.
-    if (waited && !(await ctx.isForeground(req.pid, ctx.shellPid)))
-      return { ok: false, reason: "not_foreground" };
+  // The phone's message goes in now. A draft is stashed (Ctrl+S) and Claude Code brings it back after the send.
+  const draft = ctx.hasDraft?.() === true;
+  const restore = draft ? ctx.stashed?.() : undefined;
+  if (draft) {
+    ctx.write(STASH);
+    await ctx.sleep(150);
   }
   const text = req.text as string;
-  const { body, enter } = typedBytes(ctx.hasDraft?.() ? `\n\n${text}` : text, ctx.pasteOn());
+  const { body, enter } = typedBytes(text, ctx.pasteOn());
   ctx.write(body);
   await ctx.sleep(150);
   // Enter is what runs a command: check once more that the agent is still in front. The text is already typed.
   if (!(await ctx.isForeground(req.pid, ctx.shellPid))) return { ok: false, reason: "typed_not_sent" };
   ctx.write(enter);
   ctx.sentEnter?.();
+  restore?.();
   return { ok: true };
 }
 
@@ -182,6 +173,16 @@ export class DraftTracker {
     }
   }
 
+  /** The draft is stashed: none is left in the prompt. The returned function marks it back once it is restored. */
+  stash(): () => void {
+    const chars = this.chars;
+    this.chars = 0;
+    return () => {
+      this.chars = chars;
+      this.lastFed = this.now();
+    };
+  }
+
   get pending(): boolean {
     const limit = this.chars <= DraftTracker.SHORT_CHARS ? DraftTracker.STALE_MS : DraftTracker.LONG_STALE_MS;
     if (this.chars > 0 && this.now() - this.lastFed >= limit) this.chars = 0;
@@ -246,7 +247,6 @@ async function runInPty(shell: string): Promise<number> {
   const token = randomBytes(16).toString("hex");
   const paste = new PasteModeTracker();
   const draft = new DraftTracker();
-  let lastInput = 0;
 
   const size = () => ({ cols: process.stdout.columns || 80, rows: process.stdout.rows || 24 });
   const proc = Bun.spawn([shell, "-l"], {
@@ -268,7 +268,6 @@ async function runInPty(shell: string): Promise<number> {
 
   process.stdin.setRawMode(true);
   process.stdin.on("data", (d: Buffer) => {
-    lastInput = Date.now();
     draft.feed(d);
     term.write(d);
   });
@@ -297,9 +296,9 @@ async function runInPty(shell: string): Promise<number> {
           token,
           shellPid: proc.pid,
           isForeground,
-          lastInput: () => lastInput,
           hasDraft: () => draft.pending,
           sentEnter: () => draft.feed("\r"),
+          stashed: () => draft.stash(),
           pasteOn: () => paste.on,
           write: (d) => term.write(d),
           sleep: (ms) => Bun.sleep(ms),

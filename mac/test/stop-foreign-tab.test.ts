@@ -14,7 +14,7 @@ import { inFront, parseProcs } from "../src/platform/foreground.ts";
 import type { TabView } from "../src/platform/types.ts";
 
 const EMPTY: TabView = { front: false, screen: null };
-const opts: DeliverOptions = { idleSeconds: 600, userTypingNow: false, preferTyping: true };
+const opts: DeliverOptions = { userTypingNow: false, preferTyping: true };
 const ITERM: HookEnv = { termProgram: "iTerm.app", claudePid: 4242 };
 
 function registry() {

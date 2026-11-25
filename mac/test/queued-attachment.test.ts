@@ -16,7 +16,7 @@ import { ReplyQueue } from "../src/daemon/replyQueue.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { resetLiveSteps, StepTracker } from "../src/daemon/steps.ts";
 
-/** A message with a photo that waits in the reply queue keeps the photo until it is typed. */
+/** A message with a photo that an older helper left in the reply queue keeps the photo until it is typed. */
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -89,29 +89,10 @@ async function setup() {
   return { call, replies, upload };
 }
 
-test("a discard in flight while the send is queued leaves the file the queued text points at", async () => {
+test("a discard while a message an older helper left waiting points at the file is refused, and the file stays", async () => {
   const { call, replies, upload } = await setup();
-  replies.add(SID, "earlier", Date.now(), "unlock");
   const ref = await upload();
-  const send = call<{ via: string }>("session.send", {
-    sessionId: SID,
-    text: "look",
-    attachments: [ref.id],
-  });
-  await new Promise((r) => setTimeout(r, 0));
-  const discard = await call("attachment.discard", { id: ref.id });
-  const sent = await send;
-  expect(sent.result?.via).toBe("queued");
-  expect(discard.error?.code).toBe("conflict");
-  expect(existsSync(ref.path)).toBe(true);
-  expect(replies.list(SID).some((r) => r.text.includes(ref.path))).toBe(true);
-});
-
-test("a discard after the send was queued is refused too, and the file stays", async () => {
-  const { call, replies, upload } = await setup();
-  replies.add(SID, "earlier", Date.now(), "unlock");
-  const ref = await upload();
-  await call("session.send", { sessionId: SID, text: "look", attachments: [ref.id] });
+  replies.add(SID, `look ${ref.path}`, Date.now(), "unlock");
   const discard = await call("attachment.discard", { id: ref.id });
   expect(discard.error?.code).toBe("conflict");
   expect(existsSync(ref.path)).toBe(true);

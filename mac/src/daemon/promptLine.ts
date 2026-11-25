@@ -91,6 +91,8 @@ export interface PromptOptions {
   seen?: string;
   /** The last suggestion the helper read for the session: the same text is that suggestion, whatever the keys. */
   known?: string;
+  /** A draft the helper stashed and Claude Code put back: typed text, even when no key was pressed since. */
+  typed?: string;
 }
 
 const squash = (t: string) => t.replace(/\s+/g, " ").trim();
@@ -179,6 +181,8 @@ function readPrompt(screen: string, opts: PromptOptions): PromptRead | null {
   // An empty prompt box is a prompt that holds nothing (neither draft nor suggestion), not a screen we can't read.
   if (!text) return { text, suggestion: true, placeholder: true };
   if (PLACEHOLDER.test(text)) return { text, suggestion: true, placeholder: true };
+  if (opts.typed !== undefined && opts.typed !== "" && squash(text) === opts.typed)
+    return { text, suggestion: false, placeholder: false };
   const suggestion =
     opts.noKeySincePrompt === true ||
     (opts.seen !== undefined && opts.seen !== "" && squash(text) === opts.seen) ||

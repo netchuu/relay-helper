@@ -556,7 +556,6 @@ describe("the key transports", () => {
       token: "tok",
       shellPid: 1,
       isForeground: async () => true,
-      lastInput: () => Date.now(),
       pasteOn: () => true,
       write: (d) => written.push(d),
       sleep: async () => {},
@@ -594,7 +593,7 @@ describe("the key transports", () => {
 
   test("relay shell: typing is unchanged (text, then Enter, after a quiet moment)", async () => {
     let t = 0;
-    const { c, written } = ctx({ lastInput: () => 0, now: () => (t += 1000) });
+    const { c, written } = ctx({ now: () => (t += 1000) });
     expect(await answerRequest(JSON.stringify({ token: "tok", pid: 7, text: "hi" }), c)).toEqual({
       ok: true,
     });

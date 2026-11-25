@@ -72,7 +72,7 @@ export function fakeTerminals(front: boolean) {
   return { ops, typed, asked, entered };
 }
 
-export const opts: DeliverOptions = { idleSeconds: 600, userTypingNow: false, preferTyping: true };
+export const opts: DeliverOptions = { userTypingNow: false, preferTyping: true };
 export const TMUX: HookEnv = {
   tmux: "/tmp/tmux-501/default,1,0",
   tmuxPane: "%3",

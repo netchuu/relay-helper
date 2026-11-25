@@ -30,6 +30,7 @@ import {
   paneEscape,
   paneInfo,
   paneScreen,
+  paneStash,
   paneTargetOf,
   paneType,
 } from "./paneTerminals.ts";
@@ -84,43 +85,20 @@ export class OpenEditorPanel extends DeliveryError {
   }
 }
 
-/** The session is in the desktop app and the Mac is locked (macOS hides its contents): the reply waits for the unlock. */
-export class WaitForUnlock extends Error {}
-
-/** Typing now could mix into what the person at the Mac types, or into a prompt draft: the message waits for a pause. */
-export class WaitForPause extends Error {
-  constructor(
-    /** The terminal it waits to be typed into; null when it waits for something else (an open prompt). */
-    readonly route: TerminalRoute | null,
-    readonly reason: "typing" | "draft" | "prompt",
-    /** When typing, how long until the keyboard has been still for PAUSE_SECONDS: no retry makes sense before. */
-    readonly retryInMs?: number,
-  ) {
-    super(`waiting to type into ${route ?? "the session"}: ${reason}`);
-  }
-}
+/** A command for the session itself (`/model`) can't go in while the prompt holds text the person typed. */
+export class DraftInPrompt extends DeliveryError {}
 
 /** Terminals Relay types into, as opposed to the desktop app, the editor extension and the inbox. */
 export type TerminalRoute = "pty" | "tmux" | PaneTarget["kind"] | TypingRoute;
-
-/** The keyboard has to be still this long before Relay types into a tab you are in front of. */
-export const PAUSE_SECONDS = 3;
-
-/** A message that has waited this long for a pause is typed anyway (after a clean break from a draft). */
-export const TYPE_ANYWAY_MS = 120_000;
 
 /** Honest provenance line; Claude Code itself frames socket messages as coming from a peer session. */
 export const PHONE_PREFIX = "📱 From the user, sent from their phone via Relay:";
 
 export interface DeliverOptions {
-  /** Seconds since the last keyboard or mouse input at the Mac (a fresh reading); null when unknown. */
-  idleSeconds: number | null;
   /** The editor extension's own rule (active in the last 8 s): it steps aside then, to the inbox. */
   userTypingNow: boolean;
   preferTyping: boolean;
   locked?: boolean;
-  /** It waited TYPE_ANYWAY_MS for a pause: type it now, after a clean break when the prompt holds a draft. */
-  typeAnyway?: boolean;
   /**
    * Whether the message's UserPromptSubmit hook has arrived (the prompt was submitted). Given, a message typed into a
    * terminal is checked: no hook within `submitWaitMs` and the text still in the prompt, Enter is pressed once more.
@@ -156,7 +134,7 @@ export type Procs = () => Promise<Proc[]>;
 export type PaneTtys = Map<string, string | null>;
 
 export interface TypeOps {
-  pty(socketPath: string, token: string, pid: number, text: string, force: boolean): Promise<TypeReply>;
+  pty(socketPath: string, token: string, pid: number, text: string): Promise<TypeReply>;
   /** The pane's visible text; null when the pane can't be read (it's gone). */
   tmuxScreen(socket: string, pane: string, seen?: PaneTtys): Promise<string | null>;
   tmux(socket: string, pane: string, text: string): Promise<void>;
@@ -166,6 +144,7 @@ export interface TypeOps {
   paneScreen?(target: PaneTarget): Promise<string | null>;
   paneType?(target: PaneTarget, text: string): Promise<void>;
   paneEnter?(target: PaneTarget): Promise<void>;
+  paneStash?(target: PaneTarget): Promise<void>;
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null, procs?: Procs): Promise<string | null>;
@@ -181,6 +160,9 @@ export interface TypeOps {
   enterPty?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmuxEnter?(socket: string, pane: string): Promise<void>;
   enter?(route: TypingRoute, tty: string): Promise<boolean>;
+  /** Claude Code's stash key (Ctrl+S): puts the prompt's draft aside and brings it back when a message is sent. */
+  tmuxStash?(socket: string, pane: string): Promise<void>;
+  stash?(route: TypingRoute, tty: string): Promise<boolean>;
   sleep?(ms: number): Promise<void>;
   /** Whether no key was pressed at this Mac since the session's prompt was last submitted. Absent: false. */
   noKeySincePrompt?(sessionId: string): boolean;
@@ -213,13 +195,14 @@ export const defaultGuiOps: GuiOps = {
 };
 
 export const defaultTypeOps: TypeOps = {
-  pty: (socketPath, token, pid, text, force) => typeIntoPty(socketPath, token, pid, text, { force }),
+  pty: (socketPath, token, pid, text) => typeIntoPty(socketPath, token, pid, text),
   tmuxScreen,
   tmux: tmuxType,
   tmuxPaneTty,
   paneScreen,
   paneType: (target, text) => paneType(target, text, splitAttachmentPaths),
   paneEnter,
+  paneStash,
   paneInfo,
   routes: (t) => platform.typing.routes(t),
   ttyOf,
@@ -230,14 +213,16 @@ export const defaultTypeOps: TypeOps = {
   inFront: claudeInFront,
   enterPty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "enter" }),
   tmuxEnter,
+  tmuxStash,
   enter: (route, tty) => platform.typing.key(route, tty, "enter"),
+  stash: (route, tty) => platform.typing.key(route, tty, "stash"),
   sleep: (ms) => Bun.sleep(ms),
   noKeySincePrompt: (sessionId) => noKeySincePrompt(sessionId, platform.typing.keyIdleSeconds?.() ?? null),
 };
 
 /**
- * Delivers free text from the phone into a session: its own terminal (throws WaitForPause rather than mix into typing),
- * then the desktop app, then the inbox socket. The text is cleaned first; Relay presses Enter itself.
+ * Delivers free text from the phone into a session: its own terminal (at once, whatever is in the prompt), then the
+ * desktop app, then the inbox socket. The text is cleaned first; Relay presses Enter itself.
  */
 export async function deliver(
   session: SessionRecord,
@@ -254,6 +239,8 @@ export async function deliver(
     return { via: "headless" };
   }
   let noPanel = false;
+  // macOS hides the desktop app's and the editor's windows while the Mac is locked, so they can't be typed into.
+  let hidden = false;
   if (opts.preferTyping) {
     await settleAfterEscape(session.id, ops);
     const typed = await typeIntoTerminal(session, text, opts, ops);
@@ -271,32 +258,35 @@ export async function deliver(
     }
     const gui = ops.gui ?? defaultGuiOps;
     if (await gui.desktopReady(session.id)) {
-      if (opts.locked) throw new WaitForUnlock("the Mac is locked");
-      const result = await gui.sendToDesktop(session.id, text, transcriptPathFor(session));
-      log.info("desktop route", { sessionId: session.id, result });
-      if (result === "sent") return { via: "desktop" };
-      if (result === "unconfirmed") return { via: "desktop", submitted: false };
-      if (result === "locked") throw new WaitForUnlock("the Mac is locked");
-      // A draft in the composer, no unique sidebar row, or anything unexpected: the inbox, below.
+      if (opts.locked) hidden = true;
+      else {
+        const result = await gui.sendToDesktop(session.id, text, transcriptPathFor(session));
+        log.info("desktop route", { sessionId: session.id, result });
+        if (result === "sent") return { via: "desktop" };
+        if (result === "unconfirmed") return { via: "desktop", submitted: false };
+        hidden = result === "locked";
+        // A draft in the composer, no unique sidebar row, or anything unexpected: the inbox, below.
+      }
     }
     const transcript = transcriptPathFor(session);
     if (gui.isIdeSession(transcript)) {
       if (!gui.axAllowed()) {
         const asked = askForAccessibility();
         if (asked !== "skipped") log.info("accessibility", { result: asked, for: session.id });
-      } else {
-        if (opts.locked) throw new WaitForUnlock("the Mac is locked");
+      } else if (opts.locked) hidden = true;
+      else {
         const result = await gui.sendToIde(session.id, text, transcript, opts.userTypingNow);
         log.info("ide route", { sessionId: session.id, result });
         if (result === "sent") return { via: "ide" };
         if (result === "unconfirmed") return { via: "ide", submitted: false };
-        if (result === "locked") throw new WaitForUnlock("the Mac is locked");
+        hidden = hidden || result === "locked";
         noPanel = result === "not-found";
         // Someone's draft, the editor in use, the tab not open, or anything unexpected: the inbox, below.
       }
     }
   }
   if (!session.socketPath) {
+    if (hidden) throw new DeliveryError("Unlock your Mac to send to the Claude app");
     if (opts.preferTyping && noPanel) throw new OpenEditorPanel();
     throw new DeliveryError("this session has no inbox socket Relay can reach");
   }
@@ -398,7 +388,9 @@ function plainOpts(sessionId: string, route: { plainText?: boolean }, ops: TypeO
   if (!route.plainText) return {};
   const seen = suggestionSeenOf(sessionId);
   const known = suggestionKnownOf(sessionId);
+  const typed = draftKept.get(sessionId);
   return {
+    ...(typed === undefined ? {} : { typed }),
     noKeySincePrompt: ops.noKeySincePrompt?.(sessionId) === true,
     ...(seen === undefined ? {} : { seen }),
     ...(known === undefined ? {} : { known }),
@@ -475,22 +467,20 @@ export async function confirmModelSwitch(
 const MODEL_QUESTION_WAIT_MS = 3000;
 const MODEL_QUESTION_POLL_MS = 250;
 
-/** Types into the session's own terminal; null when none is reachable. Throws WaitForPause rather than mix into typing. */
+/**
+ * Types into the session's own terminal at once; null when none is reachable. A draft the person typed is stashed
+ * first (Claude Code brings it back by itself when the message is sent); a route that can't stash types after it.
+ */
 async function typeIntoTerminal(
   session: SessionRecord,
   text: string,
   opts: DeliverOptions,
   ops: TypeOps,
 ): Promise<{ route: TerminalRoute; partial?: true } | null> {
-  const anyway = opts.typeAnyway === true;
-  const active = opts.idleSeconds !== null && opts.idleSeconds < PAUSE_SECONDS;
-  const retryInMs =
-    opts.idleSeconds === null ? undefined : Math.ceil(Math.max(0, PAUSE_SECONDS - opts.idleSeconds) * 1000);
   for (const route of routesFor(session, typeWire(ops))) {
     const ready = await route.probe();
     if (!ready) continue;
     const draft = ready.screen === null ? null : promptDraft(ready.screen, plainOpts(session.id, route, ops));
-    if (!anyway && ready.front && active) throw new WaitForPause(route.kind, "typing", retryInMs);
     // The same message sent again while its unsent copy sits there: press Enter for that copy, don't type another.
     // On a plain-text tab only text we left counts: Enter doesn't submit Claude's suggestion.
     const shown = route.plainText
@@ -501,8 +491,15 @@ async function typeIntoTerminal(
     if (shown && isThisMessage(shown, text) && (await ready.key("enter").catch(() => false))) {
       return { route: route.kind };
     }
-    if (!anyway && draft) throw new WaitForPause(route.kind, "draft");
-    const outcome = await ready.type(draft ? afterBreak(text) : text, anyway);
+    if (draft && opts.terminalOnly) throw new DraftInPrompt("there is text in the prompt");
+    let body = text;
+    if (draft) {
+      if (await stashed(session, route, ready, ops)) {
+        if (route.plainText) draftKept.set(session.id, draft.replace(/\s+/g, " ").trim());
+      } else body = afterBreak(text);
+    }
+    if (route.plainText) phoneTyped.set(session.id, text.replace(/\s+/g, " ").trim());
+    const outcome = await ready.type(body);
     if (outcome === "sent") return { route: route.kind };
     if (outcome === "partial") return { route: route.kind, partial: true };
     log.info("typing failed", { sessionId: session.id, route: route.kind });
@@ -510,7 +507,46 @@ async function typeIntoTerminal(
   return null;
 }
 
-type KeyName = "enter" | "escape";
+/**
+ * Presses the stash key and checks that the prompt is empty after it (a Claude Code without the key, or a lost key,
+ * leaves the draft there, and the message would run into it). A route with no screen to read is taken at its word.
+ */
+async function stashed(
+  session: SessionRecord,
+  route: ReplyRoute,
+  ready: ReplyReady,
+  ops: TypeOps,
+): Promise<boolean> {
+  if (!(await ready.key("stash").catch(() => false))) return false;
+  await (ops.sleep ?? Bun.sleep)(STASH_SETTLE_MS);
+  const after = await route.read().catch(() => null);
+  if (after?.screen == null) return true;
+  return promptDraft(after.screen, plainOpts(session.id, route, ops)) === null;
+}
+
+/** Claude Code takes the stash key before the keys that follow it. */
+const STASH_SETTLE_MS = 150;
+
+/** Per session, the draft a stash put back in a tab that can't tell it from a suggestion: it is typed text. */
+const draftKept = new Map<string, string>();
+
+export function clearDraftKept(sessionId: string): void {
+  draftKept.delete(sessionId);
+  phoneTyped.delete(sessionId);
+}
+
+/** Per session, the last message the phone typed into a tab; its own submit must not forget the kept draft. */
+const phoneTyped = new Map<string, string>();
+
+/** Any submit but the phone's own sends or replaces the person's draft: it is no longer typed text to tell apart. */
+export function draftSubmitted(sessionId: string, prompt: string): void {
+  const sent = prompt.replace(/\s+/g, " ").trim();
+  const own = phoneTyped.get(sessionId) === sent;
+  phoneTyped.delete(sessionId);
+  if (!own) draftKept.delete(sessionId);
+}
+
+type KeyName = "enter" | "escape" | "stash";
 
 /** What a route does with a message: typed whole, typed in part (text went in, then a step failed), or not at all. */
 type TypeOutcome = "sent" | "partial" | "failed";
@@ -519,9 +555,7 @@ type TypeOutcome = "sent" | "partial" | "failed";
 interface ReplyReady {
   /** The prompt's screen; null when it can't be read. */
   screen: string | null;
-  /** Whether a person may be typing in it right now (tmux and panes: always asked about; tabs: only when the tab is in front). */
-  front: boolean;
-  type(text: string, force: boolean): Promise<TypeOutcome>;
+  type(text: string): Promise<TypeOutcome>;
   key(key: KeyName): Promise<boolean>;
 }
 
@@ -572,22 +606,29 @@ function typeWire(ops: TypeOps): Wire {
     tmuxScreen: (socket, pane) => ops.tmuxScreen(socket, pane, seen),
     tmuxType: ops.tmux,
     tmuxKey: async (socket, pane, key) => {
-      if (key !== "enter" || !ops.tmuxEnter) throw new DeliveryError("no such key");
-      await ops.tmuxEnter(socket, pane);
+      const press = key === "enter" ? ops.tmuxEnter : key === "stash" ? ops.tmuxStash : undefined;
+      if (!press) throw new DeliveryError("no such key");
+      await press(socket, pane);
     },
     tmuxPaneTty:
       ops.tmuxPaneTty && ((socket, pane) => ops.tmuxPaneTty?.(socket, pane, seen) ?? Promise.resolve(null)),
     paneScreen: ops.paneScreen,
     paneType: ops.paneType,
     paneKey: async (target, key) => {
-      if (key !== "enter" || !ops.paneEnter) throw new DeliveryError("no such key");
-      await ops.paneEnter(target);
+      const press = key === "enter" ? ops.paneEnter : key === "stash" ? ops.paneStash : undefined;
+      if (!press) throw new DeliveryError("no such key");
+      await press(target);
     },
     paneInfo: ops.paneInfo,
     tabRoutes: ops.routes,
     tabPeek: ops.peek,
     tabType: ops.type,
-    tabKey: async (route, tty, key) => (key === "enter" && ops.enter ? ops.enter(route, tty) : false),
+    tabKey: async (route, tty, key) =>
+      key === "enter" && ops.enter
+        ? ops.enter(route, tty)
+        : key === "stash" && ops.stash
+          ? ops.stash(route, tty)
+          : false,
     ttyOf: (pid) => ops.ttyOf(pid, procs),
     viewerTtyOf:
       ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
@@ -643,20 +684,15 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
           ? null
           : {
               screen: null,
-              front: false,
-              type: async (text, force) => {
+              type: async (text) => {
                 let reply: TypeReply | null = null;
                 try {
-                  reply = (await wire.ptyType?.(socketPath, token, pid, text, force)) ?? null;
+                  reply = (await wire.ptyType?.(socketPath, token, pid, text)) ?? null;
                 } catch {
                   // the tab is gone; try the next route
                 }
                 if (reply?.ok) return "sent";
                 if (reply && !reply.ok && reply.reason === "typed_not_sent") return "partial";
-                // `relay shell` waited for a quiet moment in that tab and none came, or its prompt holds a draft. One from
-                // before `force` keeps refusing while you type; after TYPE_ANYWAY_MS that one gives way to the next route.
-                if (reply && !reply.ok && (reply.reason === "typing" || reply.reason === "draft") && !force)
-                  throw new WaitForPause("pty", reply.reason);
                 return "failed";
               },
               // A `relay shell` from before key requests answers bad_request (no text): the next route.
@@ -681,7 +717,6 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
         if (!(await claudeIsInFrontInPane(session, wire))) return null;
         return {
           screen,
-          front: true,
           type: async (text) => {
             try {
               await wire.tmuxType?.(socket, pane, text);
@@ -716,7 +751,6 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
         if (!(await claudeIsInPaneTerminal(session, target, wire))) return null;
         return {
           screen,
-          front: true,
           type: async (text) => {
             if (!wire.paneType) return "failed";
             try {
@@ -788,7 +822,6 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
         }
         return {
           screen: first.tab.screen,
-          front: first.tab.front,
           type: async (text) => ((await wire.tabType?.(app, first.tty, text)) === true ? "sent" : "failed"),
           // A key that doesn't land goes to the next tab in front, as the earlier tabs may be stale.
           key: async (key) => {
@@ -1042,15 +1075,15 @@ function pressed(session: SessionRecord, route: EscapeRoute): EscapeRoute {
   return route;
 }
 
-/** Asks `relay shell` to type `text`; it waits up to 15 s for a pause and refuses a draft unless `force`. */
+/** Asks `relay shell` to type `text` at once; a draft in its prompt is stashed first. */
 export function typeIntoPty(
   socketPath: string,
   token: string,
   pid: number,
   text: string,
-  opts: { force?: boolean; timeoutMs?: number } = {},
+  opts: { timeoutMs?: number } = {},
 ): Promise<TypeReply> {
-  return requestPty(socketPath, { token, text, pid, ...(opts.force ? { force: true } : {}) }, opts.timeoutMs);
+  return requestPty(socketPath, { token, text, pid, force: true }, opts.timeoutMs);
 }
 
 function requestPty(socketPath: string, req: TypeRequest, timeoutMs = 20_000): Promise<TypeReply> {
@@ -1334,6 +1367,18 @@ export async function tmuxType(socket: string, pane: string, text: string): Prom
 async function tmuxEnter(socket: string, pane: string): Promise<void> {
   await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "Enter"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const code = await proc.exited;
+  if (code !== 0) throw new DeliveryError(`tmux send-keys failed (${code})`);
+}
+
+async function tmuxStash(socket: string, pane: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
+  const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "C-s"], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

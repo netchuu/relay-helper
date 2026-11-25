@@ -49,7 +49,7 @@ function terminals(init: { tabs: string[]; ttys?: Record<number, string | null>;
   return { ops, peeks, typed };
 }
 
-const opts: DeliverOptions = { idleSeconds: 600, userTypingNow: false, preferTyping: true };
+const opts: DeliverOptions = { userTypingNow: false, preferTyping: true };
 const ITERM: HookEnv = { termProgram: "iTerm.app", claudePid: 4242 };
 
 function registryWith() {

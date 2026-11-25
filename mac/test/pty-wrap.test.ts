@@ -172,23 +172,17 @@ describe("relay wrap", () => {
     await w.proc.exited;
   });
 
-  test("typing waits for a pause while the person types, and never lands on a draft", async () => {
+  test("a message typed while the person has a draft stashes it first, and goes in at once", async () => {
     const t = setup();
     const w = t.start([]);
     expect(await t.waitFor(() => t.route() !== null)).toBe(true);
     w.type("my own draft");
     expect(await t.waitFor(() => t.keys() === "my own draft")).toBe(true);
     const asked = Date.now();
-    // A pause long enough passed, but the prompt holds a draft.
-    const waited = await t.ask({ text: "from the phone", pid: 1 });
-    expect(Date.now() - asked).toBeGreaterThanOrEqual(1500);
-    expect(waited).toEqual({ ok: false, reason: "draft" });
-    expect(t.keys()).toBe("my own draft");
-    w.type("\x15");
-    expect(await t.waitFor(() => t.keys().endsWith("\x15"))).toBe(true);
-    w.type("\x1b[I\x1b[?62c");
-    expect(await t.ask({ text: "from the phone", pid: 1 })).toEqual({ ok: true });
-    expect(await t.waitFor(() => t.keys().endsWith("\x1b[200~from the phone\x1b[201~\r"))).toBe(true);
+    expect(await t.ask({ text: "from the phone", pid: 1 })).toEqual({ ok: true, ...{} });
+    expect(Date.now() - asked).toBeLessThan(1500);
+    expect(await t.waitFor(() => t.keys().endsWith("\x13\x1b[200~from the phone\x1b[201~\r"))).toBe(true);
+    expect(t.keys().startsWith("my own draft")).toBe(true);
     w.type("/exit\r");
     await w.proc.exited;
   }, 20_000);
