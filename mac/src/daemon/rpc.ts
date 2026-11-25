@@ -62,6 +62,7 @@ import { slashCommandsFor } from "./slashCommands.ts";
 import { StartError, sessionDirectories, startSession } from "./startSession.ts";
 import { liveStep, parseStepsJson } from "./steps.ts";
 import { StopError, type TurnStopper } from "./stop.ts";
+import type { SuggestionWatcher } from "./suggestion.ts";
 import type { TerminalLauncher } from "./terminalHost.ts";
 import { withoutOutput } from "./timeline.ts";
 import {
@@ -101,6 +102,8 @@ export interface RpcDeps {
   headless?: HeadlessSessions;
   /** Whether a session's conversation is still on disk, so it can be resumed; tests replace the check. */
   hasTranscript?: (session: SessionRecord) => boolean;
+  /** Claude Code's suggested next message per session; a message sent from the phone drops it. */
+  suggestions?: SuggestionWatcher;
 }
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
@@ -699,6 +702,8 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       }
       try {
         const res = await sendNow(now, text, sendId);
+        // The hook that follows drops the suggestion too; this closes the gap before it arrives.
+        if (!res.heldAtMac && d.suggestions?.clear(sessionId)) d.registry.publish(sessionId);
         if (files > 0 && res.via === "socket")
           d.events.emit({
             type: "session.notice",
