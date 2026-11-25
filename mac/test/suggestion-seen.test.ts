@@ -1,17 +1,20 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { readSuggestion, type TypeOps } from "../src/daemon/inject.ts";
-import { noKeySince, promptDraft } from "../src/daemon/promptLine.ts";
+import { readPromptHoldsText, readSuggestion, type TypeOps } from "../src/daemon/inject.ts";
+import { noKeySince, promptDraft, promptHoldsText } from "../src/daemon/promptLine.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { createRpc, type RpcDeps } from "../src/daemon/rpc.ts";
 import { SuggestionWatcher, suggestionOf } from "../src/daemon/suggestion.ts";
 import {
   bindSuggestionSeen,
+  clearSuggestionSeen,
+  forgetSuggestionKnown,
   noteSuggestionSeen,
   noteTurnEnded,
   noteTypedDuringTurn,
   resetSuggestionSeen,
+  suggestionKnownOf,
   suggestionSeenOf,
   untypedStopAt,
 } from "../src/daemon/suggestionSeen.ts";
@@ -251,6 +254,16 @@ describe("a grey suggestion is not a draft", () => {
     expect(h.typed).toEqual([]);
   });
 
+  test("the watcher's own read passes the seen suggestion as known", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    const known = suggestionKnownOf("seen1");
+    expect(await readPromptHoldsText(h.session(), h.ops, known)).toBe(false);
+    typeAfterStop(h, "fix the login");
+    expect(await readPromptHoldsText(h.session(), h.ops, known)).toBe(true);
+  });
+
   test("the watcher notes text in a working session's prompt, and not after the turn ends", async () => {
     const h = helper();
     let holds: boolean | undefined = false;
@@ -356,5 +369,96 @@ describe("a grey suggestion is not a draft", () => {
         seen: SUGGESTION,
       }),
     ).toBeNull();
+  });
+});
+
+describe("the suggestion the helper read stays a suggestion", () => {
+  /** A turn Claude Code starts itself (a notification, a wakeup): nobody submitted a prompt, background shells run. */
+  const selfStartedTurn = (h: ReturnType<typeof helper>) => {
+    clearSuggestionSeen("seen1");
+    noteTypedDuringTurn("seen1");
+    h.state.clock += 120_000;
+    h.state.lastKey = h.state.clock - 30_000;
+    h.state.tab = { front: false, screen: screen(SUGGESTION) };
+  };
+
+  test("after a self-started turn the phone's message is typed at once", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    expect(await readSuggestion(h.session(), h.ops)).toBe(SUGGESTION);
+    selfStartedTurn(h);
+    h.endTurn(30_000);
+    expect(await pick(h)).toEqual({ result: { via: "iterm" } });
+    expect(h.typed).toEqual(["iterm:/model fable"]);
+  });
+
+  test("a phone message equal to the suggestion is typed at once", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    selfStartedTurn(h);
+    expect(await h.rpc("session.send", { sessionId: "seen1", text: SUGGESTION }, "phone")).not.toMatchObject(
+      DRAFT_ERROR,
+    );
+    expect(h.typed).toEqual([`iterm:${SUGGESTION}`]);
+  });
+
+  test("a typed draft that differs from the suggestion still holds", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    selfStartedTurn(h);
+    h.state.tab = { front: false, screen: screen("fix the login") };
+    expect(await pick(h)).toMatchObject(DRAFT_ERROR);
+    expect(h.typed).toEqual([]);
+  });
+
+  test("the old suggestion on screen during a self-started turn is not typing, so the next one is read", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    clearSuggestionSeen("seen1");
+    const watcher = new SuggestionWatcher({
+      registry: {
+        get: () => ({ ...h.session(), status: "working", canReceive: true }),
+        list: () => [],
+        publish() {},
+      } as never,
+      holdsText: async (_s, _o, known) => promptHoldsText(h.state.tab.screen as string, known),
+      read: async () => undefined,
+      sleep: async () => {},
+      phoneConnected: () => false,
+    });
+    watcher.duringTurn("seen1");
+    await Bun.sleep(10);
+    h.state.clock += 120_000;
+    h.state.lastKey = h.state.clock - 30_000;
+    h.endTurn(30_000);
+    expect(untypedStopAt("seen1")).toBeDefined();
+    h.state.tab = { front: false, screen: screen("run the tests") };
+    expect(await readSuggestion(h.session(), h.ops)).toBe("run the tests");
+    expect(await pick(h)).toEqual({ result: { via: "iterm" } });
+  });
+
+  test("the known suggestion survives a restart during a self-started turn", async () => {
+    const h = helper();
+    bindSuggestionSeen(h.db);
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    selfStartedTurn(h);
+    resetSuggestionSeen();
+    bindSuggestionSeen(h.db);
+    h.endTurn(30_000);
+    expect(await pick(h)).toEqual({ result: { via: "iterm" } });
+    expect(h.typed).toEqual(["iterm:/model fable"]);
+  });
+
+  test("a submitted prompt uses the suggestion up", async () => {
+    const h = helper();
+    h.endTurn(30_000);
+    await readSuggestion(h.session(), h.ops);
+    forgetSuggestionKnown("seen1");
+    selfStartedTurn(h);
+    expect(await pick(h)).toMatchObject(DRAFT_ERROR);
   });
 });

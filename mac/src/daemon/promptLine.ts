@@ -89,6 +89,8 @@ export interface PromptOptions {
   noKeySincePrompt?: boolean;
   /** What the prompt showed when the session went idle (see suggestionSeen.ts): the same text is the suggestion. */
   seen?: string;
+  /** The last suggestion the helper read for the session: the same text is that suggestion, whatever the keys. */
+  known?: string;
 }
 
 const squash = (t: string) => t.replace(/\s+/g, " ").trim();
@@ -99,10 +101,15 @@ export function promptTextRead(screen: string): string | undefined {
   return read ? squash(read.text) : undefined;
 }
 
-/** Whether the prompt line holds text (not the empty box or the placeholder); undefined when there's no prompt to read. */
-export function promptHoldsText(screen: string): boolean | undefined {
+/**
+ * Whether the prompt line holds typed text (not the empty box, the placeholder or the `known` suggestion);
+ * undefined when there's no prompt to read.
+ */
+export function promptHoldsText(screen: string, known?: string): boolean | undefined {
   const read = readPrompt(screen, {});
-  return read ? !read.placeholder && squash(read.text) !== "" : undefined;
+  if (!read) return undefined;
+  const text = squash(read.text);
+  return !read.placeholder && text !== "" && text !== known;
 }
 
 /**
@@ -175,6 +182,7 @@ function readPrompt(screen: string, opts: PromptOptions): PromptRead | null {
   const suggestion =
     opts.noKeySincePrompt === true ||
     (opts.seen !== undefined && opts.seen !== "" && squash(text) === opts.seen) ||
+    (opts.known !== undefined && opts.known !== "" && squash(text) === opts.known) ||
     allDim(styled.slice(top + 1, bottom));
   return { text, suggestion, placeholder: false };
 }

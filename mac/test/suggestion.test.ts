@@ -13,6 +13,7 @@ import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { promptSuggestion, promptSuggestionRead } from "../src/daemon/promptLine.ts";
 import { Registry, type SessionRecord } from "../src/daemon/registry.ts";
 import { cleanSuggestion, SuggestionWatcher, suggestionOf } from "../src/daemon/suggestion.ts";
+import { forgetSuggestionKnown } from "../src/daemon/suggestionSeen.ts";
 
 const RULE = "─".repeat(100);
 const dim = (s: string) => `\u001b[2m${s}\u001b[22m`;
@@ -92,6 +93,7 @@ test("readSuggestion reads tmux with its attributes, and iTerm2 by the no-key ru
       noKeySincePrompt: () => noKey,
     });
   expect(await readSuggestion(tab, iterm(true))).toBe("ship it");
+  forgetSuggestionKnown(tab.id);
   expect(await readSuggestion(tab, iterm(false))).toBeNull();
 });
 

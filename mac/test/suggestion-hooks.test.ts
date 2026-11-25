@@ -8,7 +8,12 @@ import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { promptHoldsText } from "../src/daemon/promptLine.ts";
 import { Registry } from "../src/daemon/registry.ts";
 import { SuggestionWatcher } from "../src/daemon/suggestion.ts";
-import { resetSuggestionSeen, untypedStopAt } from "../src/daemon/suggestionSeen.ts";
+import {
+  noteSuggestionKnown,
+  resetSuggestionSeen,
+  suggestionKnownOf,
+  untypedStopAt,
+} from "../src/daemon/suggestionSeen.ts";
 
 const RULE = "─".repeat(80);
 const screen = (...lines: string[]) => [RULE, ...lines, RULE].join("\n");
@@ -26,10 +31,10 @@ function setup(
   let stopped = false;
   const suggestions = new SuggestionWatcher({
     registry,
-    holdsText: async () => {
-      if (!stopped) return promptHoldsText(tab.screen);
+    holdsText: async (_s, _o, known) => {
+      if (!stopped) return promptHoldsText(tab.screen, known);
       if (stopRead.delayMs) await Bun.sleep(stopRead.delayMs);
-      return stopRead.readable ? promptHoldsText(tab.screen) : undefined;
+      return stopRead.readable ? promptHoldsText(tab.screen, known) : undefined;
     },
     read: async () => undefined,
     sleep: async () => {},
@@ -104,6 +109,27 @@ test("text typed after the last tool hook is seen when the Stop arrives", async 
 test("a read that finishes after the Stop's deadline does not count: it may be the suggestion", async () => {
   const t = setup({ screen: screen("❯ fix the login test") }, { readable: true, delayMs: 700 });
   await t.hook("UserPromptSubmit", { prompt: "go" });
+  await t.hook("Stop", { last_assistant_message: "ok" });
+  expect(untypedStopAt("h1")).toBeDefined();
+  t.suggestions.clear("h1");
+});
+
+test("a system prompt keeps the known suggestion, a real submit drops it", async () => {
+  const t = setup({ screen: screen("❯") });
+  noteSuggestionKnown("h1", "run the tests");
+  await t.hook("UserPromptSubmit", { prompt: "<task-notification>done</task-notification>" });
+  expect(suggestionKnownOf("h1")).toBe("run the tests");
+  await t.hook("UserPromptSubmit", { prompt: "go" });
+  expect(suggestionKnownOf("h1")).toBeUndefined();
+  t.suggestions.clear("h1");
+});
+
+test("the known suggestion in the prompt during a turn is not typing", async () => {
+  const t = setup({ screen: screen("❯ run the tests") });
+  noteSuggestionKnown("h1", "run the tests");
+  await t.hook("UserPromptSubmit", { prompt: "<task-notification>done</task-notification>" });
+  await t.hook("PreToolUse", tool);
+  await Bun.sleep(20);
   await t.hook("Stop", { last_assistant_message: "ok" });
   expect(untypedStopAt("h1")).toBeDefined();
   t.suggestions.clear("h1");

@@ -22,6 +22,7 @@ import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
+import { forgetSuggestionKnown } from "./suggestionSeen.ts";
 import { head } from "./text.ts";
 import {
   answerOwner,
@@ -383,6 +384,7 @@ export class HookHandler {
         // Only a real submit empties the input box; a notice leaves the typed draft where it was.
         if (!system) {
           notePromptSubmitted(sessionId);
+          forgetSuggestionKnown(sessionId);
           clearLeftUnsent(sessionId);
         }
         // A new turn: the suggestion shown for the last one is gone (the status change below publishes that).

@@ -43,7 +43,13 @@ import {
   promptTextRead,
 } from "./promptLine.ts";
 import type { SessionRecord } from "./registry.ts";
-import { noteSuggestionSeen, suggestionSeenOf, untypedStopAt } from "./suggestionSeen.ts";
+import {
+  noteSuggestionKnown,
+  noteSuggestionSeen,
+  suggestionKnownOf,
+  suggestionSeenOf,
+  untypedStopAt,
+} from "./suggestionSeen.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
 export type DeliveryRoute =
@@ -391,9 +397,11 @@ async function confirmSubmitted(
 function plainOpts(sessionId: string, route: { plainText?: boolean }, ops: TypeOps): PromptOptions {
   if (!route.plainText) return {};
   const seen = suggestionSeenOf(sessionId);
+  const known = suggestionKnownOf(sessionId);
   return {
     noKeySincePrompt: ops.noKeySincePrompt?.(sessionId) === true,
     ...(seen === undefined ? {} : { seen }),
+    ...(known === undefined ? {} : { known }),
   };
 }
 
@@ -950,7 +958,9 @@ export async function readSuggestion(
         )
           noteSuggestionSeen(session.id, text, (ops.now ?? Date.now)());
       }
-      return promptSuggestionRead(read.screen, plainOpts(session.id, route, ops));
+      const suggestion = promptSuggestionRead(read.screen, plainOpts(session.id, route, ops));
+      if (suggestion) noteSuggestionKnown(session.id, suggestion);
+      return suggestion;
     }
   } catch {
     // the screen can't be read right now
@@ -962,13 +972,14 @@ export async function readSuggestion(
 export async function readPromptHoldsText(
   session: SessionRecord,
   ops: TypeOps = defaultTypeOps,
+  known?: string,
 ): Promise<boolean | undefined> {
   try {
     for (const route of routesFor(session, typeWire(ops))) {
       if (!route.plainText) return undefined;
       const read = await route.read();
       if (!read) continue;
-      return read.screen === null ? undefined : promptHoldsText(read.screen);
+      return read.screen === null ? undefined : promptHoldsText(read.screen, known);
     }
   } catch {
     // the screen can't be read right now

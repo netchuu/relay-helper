@@ -8,6 +8,7 @@ interface Seen {
 
 const KEY = "suggestion_seen";
 const STOP_KEY = "suggestion_stop";
+const KNOWN_KEY = "suggestion_known";
 const TYPED_KEY = "suggestion_typed";
 const MAX_SESSIONS = 100;
 const seen = new Map<string, Seen>();
@@ -15,6 +16,8 @@ const seen = new Map<string, Seen>();
 const stops = new Map<string, number>();
 /** Sessions whose prompt held text during the running turn: Claude Code shows no suggestion then, so it was typed. */
 const typed = new Set<string>();
+/** The last suggestion read for each session; it survives a turn Claude Code starts by itself. */
+const known = new Map<string, string>();
 let db: DB | null = null;
 
 /** Loads what was kept before a restart, and keeps every change from now on. */
@@ -23,6 +26,7 @@ export function bindSuggestionSeen(database: DB): void {
   seen.clear();
   stops.clear();
   typed.clear();
+  known.clear();
   try {
     const stored = getSetting<Record<string, Seen>>(database, KEY, {});
     for (const [id, s] of Object.entries(stored)) if (typeof s?.text === "string") seen.set(id, s);
@@ -30,6 +34,8 @@ export function bindSuggestionSeen(database: DB): void {
     for (const [id, at] of Object.entries(storedStops)) if (typeof at === "number") stops.set(id, at);
     const storedTyped = getSetting<string[]>(database, TYPED_KEY, []);
     if (Array.isArray(storedTyped)) for (const id of storedTyped) if (typeof id === "string") typed.add(id);
+    const storedKnown = getSetting<Record<string, string>>(database, KNOWN_KEY, {});
+    for (const [id, text] of Object.entries(storedKnown)) if (typeof text === "string") known.set(id, text);
   } catch {
     // unreadable: start empty
   }
@@ -52,7 +58,13 @@ function save(): void {
     if (oldest === undefined) break;
     typed.delete(oldest);
   }
+  while (known.size > MAX_SESSIONS) {
+    const oldest = known.keys().next().value;
+    if (oldest === undefined) break;
+    known.delete(oldest);
+  }
   try {
+    setSetting(db, KNOWN_KEY, Object.fromEntries(known));
     setSetting(db, KEY, Object.fromEntries(seen));
     setSetting(db, STOP_KEY, Object.fromEntries(stops));
     setSetting(db, TYPED_KEY, [...typed]);
@@ -89,6 +101,23 @@ export function suggestionSeenOf(sessionId: string): string | undefined {
 /** Claude Code draws its suggestion within about 3 s of the Stop: an empty first look gives way only to text seen that soon. */
 const LATE_MS = 3_000;
 
+export function noteSuggestionKnown(sessionId: string, text: string): void {
+  const line = text.replace(/\s+/g, " ").trim();
+  if (!line || known.get(sessionId) === line) return;
+  known.delete(sessionId);
+  known.set(sessionId, line);
+  save();
+}
+
+export function suggestionKnownOf(sessionId: string): string | undefined {
+  return known.get(sessionId);
+}
+
+/** Someone submitted a prompt: the suggestion is used up. */
+export function forgetSuggestionKnown(sessionId: string): void {
+  if (known.delete(sessionId)) save();
+}
+
 /** Keeps the first look of this idle stretch; later looks (which may show typing) don't replace it. */
 export function noteSuggestionSeen(sessionId: string, text: string, at = Date.now()): void {
   const before = seen.get(sessionId);
@@ -109,5 +138,6 @@ export function resetSuggestionSeen(): void {
   seen.clear();
   stops.clear();
   typed.clear();
+  known.clear();
   db = null;
 }

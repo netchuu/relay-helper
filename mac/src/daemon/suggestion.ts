@@ -8,7 +8,12 @@ import { errMessage, log } from "../log.ts";
 import { readPromptHoldsText, readSuggestion } from "./inject.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
-import { clearSuggestionSeen, noteTurnEnded, noteTypedDuringTurn } from "./suggestionSeen.ts";
+import {
+  clearSuggestionSeen,
+  noteTurnEnded,
+  noteTypedDuringTurn,
+  suggestionKnownOf,
+} from "./suggestionSeen.ts";
 import { head } from "./text.ts";
 
 /** Longest suggestion kept, in characters. */
@@ -98,7 +103,11 @@ export class SuggestionWatcher {
     const session = this.d.registry.get(sessionId);
     if (!session || session.status === "idle" || !session.canReceive) return;
     try {
-      const holds = await (this.d.holdsText ?? readPromptHoldsText)(session);
+      const holds = await (this.d.holdsText ?? readPromptHoldsText)(
+        session,
+        undefined,
+        suggestionKnownOf(sessionId),
+      );
       if (holds !== true || window?.open === false) return;
       // The turn may have ended while the screen was read: that text could be the suggestion.
       if (this.d.registry.get(sessionId)?.status === "idle") return;
