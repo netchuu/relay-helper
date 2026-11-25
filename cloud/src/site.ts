@@ -2,8 +2,8 @@
 
 // Published on the support and privacy pages; the App Store needs a reachable contact.
 const SUPPORT_EMAIL = "medenov.azamat.t@gmail.com";
-const UPDATED = "2 November 2026";
-const TERMS_UPDATED = "3 November 2026";
+const UPDATED = "25 November 2026";
+const TERMS_UPDATED = "25 November 2026";
 
 const PAGES: Record<string, { title: string; body: string }> = {
   "/": {
@@ -22,7 +22,7 @@ Anthropic's trademarks.</p>
     body: `
 <h1>Terms of use</h1>
 <p class="muted">Last updated ${TERMS_UPDATED}</p>
-<p class="lead">These terms cover the Relay apps for iPhone and Android, the Relay helper for macOS and Linux, and
+<p class="lead">These terms cover the Relay app for iPhone, the Relay helper for macOS and Linux, and
 the relay server. By using any of them you agree to these terms.</p>
 
 <h2>Who makes Relay</h2>
@@ -101,14 +101,22 @@ privacy policy</a>.</p>
 <h2>Notifications</h2>
 <p>While you're away from your Mac, Relay sends notifications through Apple's push service. A notification holds a
 short text, for example the session name and the question, with secrets removed, plus IDs so its buttons work.
+The text is encrypted on your Mac and only decrypted on your iPhone, so neither the relay nor Apple can read it.
 See <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.</p>
+
+<h2>Photos and voice</h2>
+<p>Photos you pick in the app are sent, encrypted, to Claude Code on your Mac, and the app asks for access to your
+photos or camera only when you use them. Dictation uses Apple's speech recognition on your iPhone: the audio stays
+on the phone, and only the text you choose to send goes out.</p>
 
 <h2>Subscriptions</h2>
 <p>Apple handles the subscription. We don't see your name, Apple ID or payment details.</p>
 
 <h2>Claude Code</h2>
-<p>Your answers and messages go into Claude Code on your Mac, which sends them to Anthropic like anything else you
-type into it. That's covered by your agreement with Anthropic.</p>
+<p>Your answers, messages, photos and dictated text go into Claude Code on your Mac, which sends them to Anthropic's
+Claude like anything else you type into it, under your own Claude account. That's covered by your agreement with
+Anthropic. The app explains this and asks you to agree once, right after pairing; you can read it again in
+Settings → What Relay Sends.</p>
 
 <h2>Children</h2>
 <p>Relay is a tool for software developers and isn't meant for children under 13.</p>
