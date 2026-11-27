@@ -241,6 +241,20 @@ export const COMPACT_FAILED = "Compacting didn't finish. Try it again, or clear 
 /** How long a `/compact` may take before its turn is given up as failed (a long chat took 80 s). */
 const COMPACT_GIVE_UP_MS = 10 * 60_000;
 
+const LINK_WINDOW_MS = 10_000;
+
+interface EndedForLink {
+  at: number;
+  pid: number;
+  pty: string | null;
+  tmux: string | null;
+}
+
+const terminalOf = (env: HookEnv) => ({
+  pty: env.pty ?? null,
+  tmux: env.tmux && env.tmuxPane ? `${env.tmux.split(",")[0]}|${env.tmuxPane}` : null,
+});
+
 export class HookHandler {
   private readonly steps: StepTracker;
   private readonly messages: MessageTracker;
@@ -253,6 +267,8 @@ export class HookHandler {
   compactGiveUpMs = COMPACT_GIVE_UP_MS;
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
   private readonly heldNotice = new Map<string, number>();
+  /** Chats that ended by /clear or /resume and wait for their successor, by session id. */
+  private readonly endedForLink = new Map<string, EndedForLink>();
   /**
    * Turns whose answer came while later prompts were still waiting (stopOwner): everything in the transcript up
    * to now is theirs, also what they did after those prompts' hooks came.
@@ -303,7 +319,9 @@ export class HookHandler {
       transcript: str("transcript_path"),
       env: envelope.env,
       name: str("session_title") ?? null,
+      keepSuccessor: event === "SessionEnd",
     });
+    if (event === "SessionStart") this.linkSuccessor(sessionId, str("source"), envelope.env);
     // The permission mode rides on every hook: the phone can be told beforehand that replies need approval.
     const modeChanged = notePermissionMode(sessionId, p.permission_mode);
     if (created || modeChanged) this.d.registry.publish(sessionId);
@@ -625,11 +643,38 @@ export class HookHandler {
               : endReasonOf(str("reason")),
         });
         sessionModels.forget(sessionId);
+        if (endedBefore?.status !== "ended") this.noteEndedForLink(sessionId, str("reason"), envelope.env);
         return NO_OUTPUT;
 
       default:
         return NO_OUTPUT;
     }
+  }
+
+  private noteEndedForLink(id: string, reason: string | undefined, env: HookEnv): void {
+    if (reason !== "clear" && reason !== "resume") return;
+    if (!env.claudePid) return;
+    const now = Date.now();
+    for (const [k, v] of this.endedForLink) if (now - v.at > LINK_WINDOW_MS) this.endedForLink.delete(k);
+    this.endedForLink.set(id, { at: now, pid: env.claudePid, ...terminalOf(env) });
+  }
+
+  /** The new chat of a /clear or /resume joins the one that just ended in the same process and terminal. */
+  private linkSuccessor(id: string, source: string | undefined, env: HookEnv): void {
+    if ((source !== "clear" && source !== "resume") || !env.claudePid) return;
+    const now = Date.now();
+    const here = terminalOf(env);
+    const match = [...this.endedForLink].filter(
+      ([oldId, v]) =>
+        oldId !== id &&
+        now - v.at <= LINK_WINDOW_MS &&
+        v.pid === env.claudePid &&
+        (v.pty || here.pty ? v.pty === here.pty : v.tmux === here.tmux),
+    );
+    const only = match.length === 1 ? match[0] : undefined;
+    if (!only) return;
+    this.endedForLink.delete(only[0]);
+    this.d.registry.link(only[0], id);
   }
 
   /** After a restart: follows the turns the database still has open, so a running turn keeps its steps and messages. */

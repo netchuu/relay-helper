@@ -56,6 +56,8 @@ interface SessionRow {
   moved_at: number | null;
   idle_stopped_at: number | null;
   end_reason: string | null;
+  replaced_by: string | null;
+  replaces: string | null;
   wezterm_pane: string | null;
   wezterm_socket: string | null;
   kitty_listen_on: string | null;
@@ -146,8 +148,8 @@ export function defaultSocketPath(pid: number | null): string | null {
 }
 
 /** A session with the pane its terminal reported (the columns are NULL for a session without one). */
-const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at, i.stopped_at AS idle_stopped_at, er.reason AS end_reason
-  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id LEFT JOIN idle_stopped_sessions i ON i.session_id = s.id LEFT JOIN session_end_reasons er ON er.session_id = s.id`;
+const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at, i.stopped_at AS idle_stopped_at, er.reason AS end_reason, sl.replaced_by, sl.replaces
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id LEFT JOIN idle_stopped_sessions i ON i.session_id = s.id LEFT JOIN session_end_reasons er ON er.session_id = s.id LEFT JOIN session_links sl ON sl.session_id = s.id`;
 
 const cleanNullable = <T extends string | null>(s: T): T => (s == null ? s : (cleanName(s) as T));
 
@@ -199,6 +201,8 @@ function toRecord(r: SessionRow): SessionRecord {
     kittyWindowId: r.kitty_window_id ?? null,
     transcript: r.transcript,
     ...(r.status === "ended" ? { endReason: r.end_reason ?? "other" } : {}),
+    ...(r.status === "ended" && r.replaced_by ? { replacedBy: r.replaced_by } : {}),
+    ...(r.replaces ? { replaces: r.replaces } : {}),
   };
 }
 
@@ -215,6 +219,8 @@ export function publicSession(s: SessionRecord): Session {
     status: atMac && s.status !== "ended" ? "waiting" : s.status,
     ...(atMac && s.status !== "ended" ? { atMac } : {}),
     ...(s.status === "ended" && s.endReason ? { endReason: s.endReason } : {}),
+    ...(s.status === "ended" && s.replacedBy ? { replacedBy: s.replacedBy } : {}),
+    ...(s.replaces ? { replaces: s.replaces } : {}),
     // Titles taken from an IDE prompt before its context was left out: what's left, or none.
     title: s.title === null ? null : withoutIdeContext(s.title) || null,
     terminal: s.terminal,
@@ -394,7 +400,15 @@ export class Registry {
   /** Creates or refreshes a session from any hook event. Returns the record and whether it is new. */
   touch(
     id: string,
-    fields: { cwd?: string; transcript?: string; env?: HookEnv; name?: string | null; kind?: SessionKind },
+    fields: {
+      cwd?: string;
+      transcript?: string;
+      env?: HookEnv;
+      name?: string | null;
+      kind?: SessionKind;
+      /** A late SessionEnd for an ended chat keeps the chat it was cleared into. */
+      keepSuccessor?: boolean;
+    },
     /** False for bookkeeping (the periodic reconcile), so "updated 20 s ago" means real activity. */
     activity = true,
   ): { session: SessionRecord; created: boolean } {
@@ -478,8 +492,11 @@ export class Registry {
         now,
         id,
       );
-    if (existing.status === "ended")
+    if (existing.status === "ended") {
       this.db.query("DELETE FROM session_end_reasons WHERE session_id = ?").run(id);
+      if (!fields.keepSuccessor)
+        this.db.query("UPDATE session_links SET replaced_by = NULL WHERE session_id = ?").run(id);
+    }
     if (newStart) this.savePidStart(id, env.claudePid ?? null);
     // A process of someone else's took the chat over.
     if (env.claudePid) this.clearKeptOpen(id);
@@ -637,12 +654,28 @@ export class Registry {
         now,
         id,
       );
-    if (status !== "ended") this.db.query("DELETE FROM session_end_reasons WHERE session_id = ?").run(id);
-    else
+    if (status !== "ended") {
+      this.db.query("DELETE FROM session_end_reasons WHERE session_id = ?").run(id);
+      this.db.query("UPDATE session_links SET replaced_by = NULL WHERE session_id = ?").run(id);
+    } else
       this.db
         .query("INSERT OR IGNORE INTO session_end_reasons (session_id, reason) VALUES (?, ?)")
         .run(id, extra?.endReason ?? "other");
     this.publish(id);
+  }
+
+  /** Joins a chat to the one that took over from it (`/clear`, `/resume`). */
+  link(oldId: string, newId: string): void {
+    const set = (id: string, col: "replaced_by" | "replaces", other: string) =>
+      this.db
+        .query(
+          `INSERT INTO session_links (session_id, ${col}) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET ${col} = excluded.${col}`,
+        )
+        .run(id, other);
+    set(oldId, "replaced_by", newId);
+    set(newId, "replaces", oldId);
+    this.publish(oldId);
+    this.publish(newId);
   }
 
   /** A phone's name for the session (null or empty clears it). Not activity: updatedAt stays. */

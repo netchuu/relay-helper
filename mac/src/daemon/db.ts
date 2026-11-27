@@ -198,6 +198,8 @@ const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS idle_stopped_sessions (session_id TEXT PRIMARY KEY, stopped_at INTEGER NOT NULL, stopped_pid INTEGER);`,
   // 23: why a session ended (SessionEnd's reason, or closed / stopped when no hook said). A table of its own, so it also runs on a database moved back to an older version.
   `CREATE TABLE IF NOT EXISTS session_end_reasons (session_id TEXT PRIMARY KEY, reason TEXT NOT NULL);`,
+  // 24: the chat that took over after /clear or /resume, and the one a chat took over from.
+  `CREATE TABLE IF NOT EXISTS session_links (session_id TEXT PRIMARY KEY, replaced_by TEXT, replaces TEXT);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */
