@@ -3,6 +3,7 @@ import type { SessionDirectory } from "../../../protocol/index.ts";
 import { CHILD_PATH } from "../config.ts";
 import { errMessage, log } from "../log.ts";
 import type { DB } from "./db.ts";
+import { detectDialog } from "./dialogs.ts";
 import { notePhoneLaunch } from "./hooks.ts";
 import { promptTextRead } from "./promptLine.ts";
 import type { Registry } from "./registry.ts";
@@ -12,6 +13,10 @@ import { head } from "./text.ts";
 /** How long a session started in a terminal may take to show its prompt. */
 export const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 200;
+/** How long a start may wait at a dialog nobody answers before Claude Code is stopped. */
+export const PARKED_MAX_MS = 24 * 60 * 60_000;
+const PARKED_POLL_MS = 2_000;
+const UNTRUSTED_LINE = /isn't trusted/;
 
 /**
  * Starting a Claude Code session from the phone: `sessions.directories` lists the folders past sessions ran in,
@@ -164,9 +169,14 @@ async function startInTerminal(
     throw new StartError("unavailable", "Claude Code couldn't be started.");
   }
   const deadline = Date.now() + (opts.readyTimeoutMs ?? READY_TIMEOUT_MS);
+  let parked = false;
   for (;;) {
     const seen = await terminal.look(pane).catch(() => null);
     if (seen && !seen.exited && promptTextRead(seen.screen) !== undefined) break;
+    if (seen && !seen.exited && detectDialog(seen.screen)) {
+      parked = true;
+      break;
+    }
     if (!seen || seen.exited) {
       launch?.abort();
       const why = seen ? firstLine(seen.screen) : "";
@@ -187,16 +197,71 @@ async function startInTerminal(
     }
     await Bun.sleep(opts.pollMs ?? READY_POLL_MS);
   }
-  await terminal.release(pane).catch(() => {});
+  // A parked start keeps its host: the exit screen is how a refused folder is told apart from a crash.
+  if (!parked) await terminal.release(pane).catch(() => {});
   launch?.done(sessionId);
   const { created } = opts.registry.touch(sessionId, {
     cwd,
     kind: "interactive",
     env: { pty: pane.socket, ptyToken: pane.token, claudePid: pane.pid },
   });
+  if (parked) {
+    opts.registry.park(sessionId);
+    opts.registry.setStatus(sessionId, "waiting");
+  }
   if (created) opts.registry.publish(sessionId);
   if (opts.name) opts.registry.rename(sessionId, opts.name);
+  if (parked)
+    void watchParked(opts, terminal, pane, sessionId).catch((err) =>
+      log.warn("session.start: parked watch failed", { err: errMessage(err) }),
+    );
   return { sessionId, name: opts.name ?? null };
+}
+
+/** Follows a start waiting at a dialog until it is answered, refused, closed, or too old. */
+async function watchParked(
+  opts: StartOptions,
+  terminal: TerminalLauncher,
+  pane: Awaited<ReturnType<TerminalLauncher["launch"]>>,
+  sessionId: string,
+): Promise<void> {
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? Bun.sleep;
+  const until = now() + (opts.parkedMaxMs ?? PARKED_MAX_MS);
+  const { registry } = opts;
+  try {
+    for (;;) {
+      if (registry.get(sessionId)?.status === "ended") {
+        await terminal.close(pane).catch(() => {});
+        return;
+      }
+      const seen = await terminal.look(pane).catch(() => null);
+      if (!seen) {
+        registry.end(sessionId, "other");
+        return;
+      }
+      if (seen.exited) {
+        await terminal.close(pane).catch(() => {});
+        if (UNTRUSTED_LINE.test(seen.screen)) {
+          const line = seen.screen.split("\n").find((l) => UNTRUSTED_LINE.test(l));
+          registry.end(sessionId, "untrusted", head((line ?? "").trim(), 200));
+        } else registry.end(sessionId, "other");
+        return;
+      }
+      if (promptTextRead(seen.screen) !== undefined) {
+        await terminal.release(pane).catch(() => {});
+        return;
+      }
+      if (now() >= until) {
+        await terminal.close(pane).catch(() => {});
+        registry.end(sessionId, "stopped");
+        return;
+      }
+      await sleep(opts.parkedPollMs ?? PARKED_POLL_MS);
+    }
+  } finally {
+    registry.unpark(sessionId);
+  }
 }
 
 interface StartOptions {
@@ -212,6 +277,11 @@ interface StartOptions {
   terminal?: TerminalLauncher | null;
   readyTimeoutMs?: number;
   pollMs?: number;
+  /** Clock, sleep and limits of the wait at a dialog, for tests. */
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+  parkedMaxMs?: number;
+  parkedPollMs?: number;
 }
 
 export async function startSession(opts: StartOptions): Promise<{ sessionId: string; name: string | null }> {

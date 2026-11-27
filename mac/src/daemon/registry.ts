@@ -590,7 +590,7 @@ export class Registry {
   /** Without `claude agents`: a session whose process is gone has ended; "working" with nothing written for half an hour was left open. */
   private sweep(): void {
     for (const s of this.list()) {
-      if (s.runsInHelper || s.idleStopped) continue;
+      if (s.runsInHelper || s.idleStopped || this.parked.has(s.id)) continue;
       if (s.pid && !sessionAlive(s)) {
         this.endDead(s);
         continue;
@@ -771,11 +771,29 @@ export class Registry {
       } else if (times.changed) this.publish(s.sessionId);
     }
     for (const s of this.list()) {
-      if (liveIds.has(s.id) || s.runsInHelper || s.idleStopped) continue;
+      if (liveIds.has(s.id) || s.runsInHelper || s.idleStopped || this.parked.has(s.id)) continue;
       // Started or resumed while the check ran: the list is older than the session.
       if (Math.max(this.touchedAt.get(s.id) ?? 0, this.workingAt.get(s.id) ?? 0) > askedAt) continue;
       this.endDead(s);
     }
+  }
+
+  private readonly parked = new Set<string>();
+
+  /** A start waiting at a dialog: not in `claude agents` yet, so reconcile must not end it. */
+  park(id: string): void {
+    this.parked.add(id);
+  }
+
+  unpark(id: string): void {
+    this.parked.delete(id);
+  }
+
+  /** Ends a session for a known reason; the notice, when given, is its error line. */
+  end(id: string, endReason: EndReason, notice?: string): void {
+    if (this.get(id)?.status === "ended") return;
+    this.setStatus(id, "ended", { endReason });
+    if (notice) this.events.emit({ type: "session.notice", sessionId: id, level: "error", text: notice });
   }
 
   /** Ends a session; a pid found dead is dropped so a later check can't take a newer process for it. */
