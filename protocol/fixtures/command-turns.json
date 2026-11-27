@@ -1,0 +1,226 @@
+{
+  "context": {
+    "id": "t_cmd_context",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/context",
+    "summary": "Context: 41k of 200k tokens used (20%)",
+    "fullLength": 38,
+    "truncated": false,
+    "stats": {
+      "durationMs": null,
+      "toolCalls": 0,
+      "filesEdited": []
+    },
+    "failed": false,
+    "startedAt": 1793619995000,
+    "endedAt": 1793619995000,
+    "command": {
+      "name": "context"
+    }
+  },
+  "contextStarted": {
+    "seq": 70,
+    "ts": 1793620000000,
+    "type": "turn.started",
+    "turnId": "t_cmd_context",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/context",
+    "startedAt": 1793619995000,
+    "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a"
+  },
+  "contextDone": {
+    "seq": 71,
+    "ts": 1793620000000,
+    "type": "turn.done",
+    "turn": {
+      "id": "t_cmd_context",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "prompt": "/context",
+      "summary": "Context: 41k of 200k tokens used (20%)",
+      "fullLength": 38,
+      "truncated": false,
+      "stats": {
+        "durationMs": null,
+        "toolCalls": 0,
+        "filesEdited": []
+      },
+      "failed": false,
+      "startedAt": 1793619995000,
+      "endedAt": 1793619995000,
+      "command": {
+        "name": "context"
+      }
+    }
+  },
+  "color": {
+    "id": "t_cmd_color",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/color blue",
+    "summary": "Ran /color blue",
+    "fullLength": 15,
+    "truncated": false,
+    "stats": {
+      "durationMs": null,
+      "toolCalls": 0,
+      "filesEdited": []
+    },
+    "failed": false,
+    "startedAt": 1793619996000,
+    "endedAt": 1793619996000,
+    "command": {
+      "name": "color",
+      "args": "blue"
+    }
+  },
+  "exit": {
+    "id": "t_cmd_exit",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/exit",
+    "summary": "Claude Code was quit.",
+    "fullLength": 21,
+    "truncated": false,
+    "stats": {
+      "durationMs": null,
+      "toolCalls": 0,
+      "filesEdited": []
+    },
+    "failed": false,
+    "startedAt": 1793619999000,
+    "endedAt": 1793619999000,
+    "command": {
+      "name": "exit"
+    }
+  },
+  "clear": {
+    "id": "t_cmd_clear",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/clear",
+    "summary": "Cleared. The conversation continues in a new chat.",
+    "fullLength": 50,
+    "truncated": false,
+    "stats": {
+      "durationMs": null,
+      "toolCalls": 0,
+      "filesEdited": []
+    },
+    "failed": false,
+    "startedAt": 1793619999000,
+    "endedAt": 1793619999000,
+    "command": {
+      "name": "clear"
+    }
+  },
+  "exitThenEnded": [
+    {
+      "seq": 72,
+      "ts": 1793620000000,
+      "type": "turn.done",
+      "turn": {
+        "id": "t_cmd_exit",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "prompt": "/exit",
+        "summary": "Claude Code was quit.",
+        "fullLength": 21,
+        "truncated": false,
+        "stats": {
+          "durationMs": null,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1793619999000,
+        "endedAt": 1793619999000,
+        "command": {
+          "name": "exit"
+        }
+      }
+    },
+    {
+      "seq": 73,
+      "ts": 1793620000000,
+      "type": "session.upsert",
+      "session": {
+        "id": "4375b77a-1111-2222-3333-444455556666",
+        "name": "web-shop",
+        "cwd": "/Users/me/Projects/web-shop",
+        "project": "web-shop",
+        "branch": "fix/cart-total",
+        "kind": "interactive",
+        "status": "ended",
+        "title": "The cart total is off by a cent sometimes",
+        "terminal": "iTerm.app",
+        "canReceive": true,
+        "replyRoute": "typed",
+        "startedAt": 1793619400000,
+        "updatedAt": 1793620000000,
+        "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+        "endReason": "exit"
+      }
+    }
+  ],
+  "clearThenEnded": [
+    {
+      "seq": 74,
+      "ts": 1793620000000,
+      "type": "turn.done",
+      "turn": {
+        "id": "t_cmd_clear",
+        "sessionId": "4375b77a-1111-2222-3333-444455556666",
+        "prompt": "/clear",
+        "summary": "Cleared. The conversation continues in a new chat.",
+        "fullLength": 50,
+        "truncated": false,
+        "stats": {
+          "durationMs": null,
+          "toolCalls": 0,
+          "filesEdited": []
+        },
+        "failed": false,
+        "startedAt": 1793619999000,
+        "endedAt": 1793619999000,
+        "command": {
+          "name": "clear"
+        }
+      }
+    },
+    {
+      "seq": 75,
+      "ts": 1793620000000,
+      "type": "session.upsert",
+      "session": {
+        "id": "4375b77a-1111-2222-3333-444455556666",
+        "name": "web-shop",
+        "cwd": "/Users/me/Projects/web-shop",
+        "project": "web-shop",
+        "branch": "fix/cart-total",
+        "kind": "interactive",
+        "status": "ended",
+        "title": "The cart total is off by a cent sometimes",
+        "terminal": "iTerm.app",
+        "canReceive": true,
+        "replyRoute": "typed",
+        "startedAt": 1793619400000,
+        "updatedAt": 1793620000000,
+        "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+        "endReason": "clear",
+        "replacedBy": "9a8b7c6d-aaaa-bbbb-cccc-111122223333"
+      }
+    }
+  ],
+  "withoutCommand": {
+    "id": "t_cmd_old",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "prompt": "/context",
+    "summary": "Context: 41k of 200k tokens used (20%)",
+    "fullLength": 38,
+    "truncated": false,
+    "stats": {
+      "durationMs": null,
+      "toolCalls": 0,
+      "filesEdited": []
+    },
+    "failed": false,
+    "startedAt": 1793619995000,
+    "endedAt": 1793619995000
+  }
+}

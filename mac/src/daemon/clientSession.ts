@@ -35,6 +35,8 @@ export class ClientSession {
   private revokedDuringUnpair = false;
   /** The phone said in `hello` it reassembles pieces: nothing is cut or left out for size. */
   private pieces = false;
+  /** The phone said in `hello` it knows dialogs (`HelloParams.dialogs`). */
+  dialogs = false;
 
   get isAuthenticated(): boolean {
     return this.device !== null;
@@ -79,6 +81,7 @@ export class ClientSession {
       const device = token ? authenticate(this.deps.db, `Bearer ${token}`) : null;
       if (!device) return this.authFailed(id, "this iPhone is no longer paired");
       this.pieces = params.pieces === true;
+      this.dialogs = params.dialogs === true;
       this.authenticated(device);
       return this.reply(id, { result: { ok: true, host: await hostInfo() } });
     }

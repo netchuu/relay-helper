@@ -1,0 +1,264 @@
+{
+  "trust": {
+    "id": "p_trust",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "question",
+    "payload": {
+      "kind": "question",
+      "questions": [
+        {
+          "question": "Do you trust the files in /Users/me/Projects/web-shop?",
+          "options": [
+            {
+              "label": "No, exit"
+            },
+            {
+              "label": "Yes, I trust this folder"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null,
+    "dialog": {
+      "kind": "trust",
+      "title": "Trust this folder?"
+    }
+  },
+  "mcpServer": {
+    "id": "p_mcp",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "question",
+    "payload": {
+      "kind": "question",
+      "questions": [
+        {
+          "question": "Use the MCP server \"docs\" from .mcp.json?",
+          "options": [
+            {
+              "label": "Use this and all future servers"
+            },
+            {
+              "label": "Use this server"
+            },
+            {
+              "label": "Don't use it"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null,
+    "dialog": {
+      "kind": "mcpServer",
+      "title": "New MCP server"
+    }
+  },
+  "rateLimit": {
+    "id": "p_limit",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "question",
+    "payload": {
+      "kind": "question",
+      "questions": [
+        {
+          "question": "You've hit your limit.",
+          "options": [
+            {
+              "label": "Stop and wait for the limit to reset"
+            },
+            {
+              "label": "Switch to another model"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null,
+    "dialog": {
+      "kind": "rateLimit",
+      "title": "Usage limit reached"
+    }
+  },
+  "unknownKind": {
+    "id": "p_new",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "question",
+    "payload": {
+      "kind": "question",
+      "questions": [
+        {
+          "question": "Pick one",
+          "options": [
+            {
+              "label": "A"
+            },
+            {
+              "label": "B"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null,
+    "dialog": {
+      "kind": "newKind",
+      "title": "Something new"
+    }
+  },
+  "opened": {
+    "seq": 80,
+    "ts": 1793620000000,
+    "type": "prompt.opened",
+    "prompt": {
+      "id": "p_trust",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "kind": "question",
+      "payload": {
+        "kind": "question",
+        "questions": [
+          {
+            "question": "Do you trust the files in /Users/me/Projects/web-shop?",
+            "options": [
+              {
+                "label": "No, exit"
+              },
+              {
+                "label": "Yes, I trust this folder"
+              }
+            ]
+          }
+        ]
+      },
+      "status": "open",
+      "resolvedBy": null,
+      "createdAt": 1793620000000,
+      "resolvedAt": null,
+      "dialog": {
+        "kind": "trust",
+        "title": "Trust this folder?"
+      }
+    }
+  },
+  "sessionAtMac": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "atMac": {
+      "id": "d_7f3a",
+      "kind": "other",
+      "title": "Choose a theme",
+      "canClose": true
+    }
+  },
+  "sessionAtMacFixed": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents.",
+    "atMac": {
+      "id": "d_7f3a",
+      "kind": "other",
+      "title": "Choose a theme",
+      "canClose": false
+    }
+  },
+  "noDialog": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+  },
+  "closeParams": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "dialogId": "d_7f3a",
+    "action": "close"
+  },
+  "closeResult": {
+    "ok": true
+  },
+  "errors": [
+    {
+      "type": "rpc",
+      "id": 90,
+      "error": {
+        "code": "conflict",
+        "message": "That question is no longer open on your computer."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 91,
+      "error": {
+        "code": "unavailable",
+        "message": "Relay can't reach this chat's terminal."
+      }
+    },
+    {
+      "type": "rpc",
+      "id": 92,
+      "error": {
+        "code": "not_found",
+        "message": "session not found"
+      }
+    }
+  ],
+  "olderHelper": {
+    "type": "rpc",
+    "id": 93,
+    "error": {
+      "code": "bad_request",
+      "message": "unknown method session.dialog"
+    }
+  },
+  "hello": {
+    "token": "t",
+    "dialogs": true
+  },
+  "helloOlder": {
+    "token": "t"
+  }
+}

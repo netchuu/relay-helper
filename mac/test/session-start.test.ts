@@ -334,6 +334,6 @@ describe("capability and fixtures", () => {
     for (const d of f.directories) SessionDirectory.parse(d);
     RpcSchemas["session.start"].parse(f.params);
     SessionStarted.parse(f.result);
-    expect(f.errors).toHaveLength(3);
+    expect(f.errors).toHaveLength(4);
   });
 });

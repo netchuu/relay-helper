@@ -22,6 +22,45 @@
     "via": "queued",
     "reason": "draft"
   },
+  "resultQueuedDialog": {
+    "via": "queued",
+    "reason": "dialog"
+  },
+  "dialogRefused": {
+    "type": "rpc",
+    "id": 72,
+    "error": {
+      "code": "conflict",
+      "message": "Claude Code is asking something on your computer: Choose a theme. Answer it, then send again."
+    }
+  },
+  "waitingDialogEvent": {
+    "seq": 53,
+    "ts": 1793620000000,
+    "type": "reply.waiting",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "reason": "dialog"
+  },
+  "outcomeEvents": [
+    {
+      "seq": 64,
+      "ts": 1793620000000,
+      "type": "reply.outcome",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a",
+      "outcome": "blocked",
+      "text": "A hook on your computer blocked this message: no secrets in prompts"
+    },
+    {
+      "seq": 65,
+      "ts": 1793620000000,
+      "type": "reply.outcome",
+      "sessionId": "4375b77a-1111-2222-3333-444455556666",
+      "sendId": "8f14e45f-ceea-467a-9575-6d0f5e1c3b2a",
+      "outcome": "lost",
+      "text": "Claude Code ended before it read this message."
+    }
+  ],
   "waitingEvents": [
     {
       "seq": 50,

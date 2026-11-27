@@ -240,7 +240,7 @@ export const SendResult = z.object({
   via: z.string(),
   repeat: z.literal(true).optional(),
   /** With `via: "queued"`: why it waits. Older helpers leave it out, and the phone then says the Mac is locked. */
-  reason: z.enum(["locked", "typing", "draft"]).optional(),
+  reason: z.enum(["locked", "typing", "draft", "dialog"]).optional(),
   /** With `via: "socket"`: Claude Code holds the message for approval at the Mac (only true); `reply.held` events follow. */
   heldAtMac: z.literal(true).optional(),
 });
@@ -277,6 +277,30 @@ export const Usage = z.object({
   sevenDay: UsageLimit.optional(),
 });
 export type Usage = z.infer<typeof Usage>;
+
+/** Why a session ended; apps read a value they don't know as `other`. */
+export const SESSION_END_REASONS = [
+  "exit",
+  "clear",
+  "resume",
+  "logout",
+  "closed",
+  "untrusted",
+  "stopped",
+  "other",
+] as const;
+export const SessionEndReason = z.enum(SESSION_END_REASONS);
+export type SessionEndReason = z.infer<typeof SessionEndReason>;
+
+/** A terminal dialog the phone can't answer, shown on the session until it goes away. */
+export const AtMacDialog = z.object({
+  id: z.string(),
+  kind: z.string(),
+  title: z.string(),
+  /** `session.dialog` with `close` can dismiss it. */
+  canClose: z.boolean(),
+});
+export type AtMacDialog = z.infer<typeof AtMacDialog>;
 
 export const Session = z.object({
   id: z.string(),
@@ -332,6 +356,14 @@ export const Session = z.object({
   heldAtMac: z.literal(true).optional(),
   /** Claude Code's permission mode from the last hook; a session that skips prompts may need approval at the Mac for inbox replies. */
   permissionMode: z.string().optional(),
+  /** Only with status `ended`: why it ended. */
+  endReason: z.string().optional(),
+  /** The session that took over after this one ended (`/clear`, `/resume`). */
+  replacedBy: z.string().optional(),
+  /** The session this one took over from. */
+  replaces: z.string().optional(),
+  /** A terminal dialog that waits at the computer and that the phone can't answer; absent when none. */
+  atMac: AtMacDialog.optional(),
 });
 export type Session = z.infer<typeof Session>;
 
@@ -358,6 +390,10 @@ export const TurnStats = z.object({
   filesEdited: z.array(z.string()),
 });
 export type TurnStats = z.infer<typeof TurnStats>;
+
+/** A slash command Claude Code ran without the model; `Turn.summary` is its output or the helper's line. */
+export const TurnCommand = z.object({ name: z.string(), args: z.string().optional() });
+export type TurnCommand = z.infer<typeof TurnCommand>;
 
 export const Turn = z.object({
   id: z.string(),
@@ -388,6 +424,8 @@ export const Turn = z.object({
   messagesMore: z.number().int().positive().optional(),
   /** Attachments whose paths are in `prompt`, in order; absent when none (`prompt` keeps the paths for older apps). */
   attachments: z.array(AttachmentRef).optional(),
+  /** Set on a turn made by a slash command Claude Code ran itself; never pushed as done. Older phones show an ordinary turn. */
+  command: TurnCommand.optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -488,6 +526,9 @@ export type PromptKind = z.infer<typeof PromptKind>;
 export const ResolvedBy = z.enum(["phone", "mac", "timeout", "superseded"]);
 export type ResolvedBy = z.infer<typeof ResolvedBy>;
 
+export const PromptDialog = z.object({ kind: z.string(), title: z.string() });
+export type PromptDialog = z.infer<typeof PromptDialog>;
+
 export const Prompt = z.object({
   id: z.string(),
   sessionId: z.string(),
@@ -501,6 +542,8 @@ export const Prompt = z.object({
   outcome: z.string().nullable().optional(),
   /** True when a long text in `payload` was cut to fit the relay's limit (each cut ends "… (N more characters)"). */
   truncated: z.boolean().optional(),
+  /** On a `question` that is a terminal dialog: `kind` is trust, mcpServer, rateLimit, exitTasks, modelSwitch, confirm or other. */
+  dialog: PromptDialog.optional(),
 });
 export type Prompt = z.infer<typeof Prompt>;
 
@@ -565,6 +608,10 @@ export const SlashCommand = z.object({
   name: z.string(),
   description: z.string(),
   source: SlashCommandSource,
+  /** With `withMenus`: what the command does when run; apps treat an unknown value as `output`. */
+  opens: z.enum(["turn", "output", "menu", "ends", "replaces"]).optional(),
+  /** With `withMenus`: the phone has its own picker for it. */
+  phone: z.enum(["model", "effort"]).optional(),
 });
 export type SlashCommand = z.infer<typeof SlashCommand>;
 
@@ -583,6 +630,19 @@ export const SessionCommands = z.object({
   route: CommandRoute.optional(),
 });
 export type SessionCommands = z.infer<typeof SessionCommands>;
+
+export const DialogResult = z.object({ ok: z.literal(true) });
+export type DialogResult = z.infer<typeof DialogResult>;
+
+/** What a phone says in `hello`; unknown fields are ignored. */
+export const HelloParams = z.object({
+  token: z.string().optional(),
+  /** The phone reassembles pieces. */
+  pieces: z.boolean().optional(),
+  /** The phone knows queued reason `dialog`, `Prompt.dialog`, `Session.atMac` and `session.dialog`. */
+  dialogs: z.boolean().optional(),
+});
+export type HelloParams = z.infer<typeof HelloParams>;
 
 export const PresenceMode = z.enum(["auto", "here", "away"]);
 export type PresenceMode = z.infer<typeof PresenceMode>;
@@ -638,7 +698,7 @@ export const EventBody = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("reply.waiting"),
     sessionId: z.string(),
-    reason: z.enum(["locked", "typing", "draft"]).nullable(),
+    reason: z.enum(["locked", "typing", "draft", "dialog"]).nullable(),
   }),
   /** A reply held at the Mac is `waiting`, then `delivered` or `expired`; `stop` marks the phone's Stop. Never pushed. */
   z.object({
@@ -648,6 +708,14 @@ export const EventBody = z.discriminatedUnion("type", [
     stop: z.literal(true).optional(),
     /** The `sendId` of the message it is about, when the phone gave one; older helpers leave it out. */
     sendId: z.string().optional(),
+  }),
+  /** A message that never ran: blocked by a UserPromptSubmit hook (`text` is its reason) or lost with its session. A dialog is no outcome: the message waits, reason `dialog`. Apps ignore an unknown `outcome`. Never pushed. */
+  z.object({
+    type: z.literal("reply.outcome"),
+    sessionId: z.string(),
+    sendId: z.string(),
+    outcome: z.enum(["blocked", "lost"]),
+    text: z.string(),
   }),
   z.object({
     type: z.literal("session.notice"),
@@ -745,7 +813,9 @@ export const RpcSchemas = {
     name: SessionNameInput.nullable(),
   }),
   /** The slash commands and skills the session can run, without ones that open a terminal dialog. Result: SessionCommands. */
-  "session.commands": z.object({ sessionId: z.string() }),
+  "session.commands": z.object({ sessionId: z.string(), withMenus: z.boolean().optional() }),
+  /** Closes a terminal dialog that waits at the computer (`Session.atMac`). Result: DialogResult. Errors: conflict, unavailable, not_found. */
+  "session.dialog": z.object({ sessionId: z.string(), dialogId: z.string(), action: z.literal("close") }),
   /** Pin the session to the top of the Sessions list, or unpin it. Pinning a pinned session keeps its time. */
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),
   /** Stops Claude's current turn, as Esc does. Result: InterruptResult. Errors: not_found, conflict (nothing running), unavailable. */

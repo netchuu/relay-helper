@@ -29,5 +29,10 @@
     "counter": 0,
     "text": "{\"id\":1,\"method\":\"hello\",\"params\":{\"token\":\"t\"}}",
     "frame": "A9sgKN5XldEURUNOB1lDX7EWVnl-mKDSvq0n7_7NU4PY8e8Xp0zCmyoNfpiCAJAId45YBMTkgq2sOOQQ-PTpFOg"
+  },
+  "phoneFrameDialogs": {
+    "counter": 1,
+    "text": "{\"id\":2,\"method\":\"hello\",\"params\":{\"token\":\"t\",\"dialogs\":true}}",
+    "frame": "Axj_Ul7aRRNI4GJ7rLLSvjTS5CSyhasrmweOHbYMxmmdp9CP5WqMP4FO0kqLXkrQtvAlN79hrOebjuB4JencdHmAqKDt5j8Tf2SPrsKJ1YU"
   }
 }

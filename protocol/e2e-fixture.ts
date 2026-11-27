@@ -46,6 +46,14 @@ const fixture = {
     text: '{"id":1,"method":"hello","params":{"token":"t"}}',
     frame: b64url(seal(keys.phoneToMac, 0n, text('{"id":1,"method":"hello","params":{"token":"t"}}'))),
   },
+  // A phone that knows dialogs says so in `hello`, counter 1.
+  phoneFrameDialogs: {
+    counter: 1,
+    text: '{"id":2,"method":"hello","params":{"token":"t","dialogs":true}}',
+    frame: b64url(
+      seal(keys.phoneToMac, 1n, text('{"id":2,"method":"hello","params":{"token":"t","dialogs":true}}')),
+    ),
+  },
 };
 writeFileSync(join(import.meta.dir, "fixtures", "e2e.json"), `${JSON.stringify(fixture, null, 2)}\n`);
 console.log("wrote protocol/fixtures/e2e.json");

@@ -561,6 +561,11 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       } satisfies SessionCommands;
     },
 
+    "session.dialog": ({ sessionId }) => {
+      if (!d.registry.get(sessionId)) throw new RpcFailure("not_found", "session not found");
+      throw new RpcFailure("conflict", "That question is no longer open on your computer.");
+    },
+
     "session.pin": ({ sessionId, pinned }, actor) => {
       // Ended sessions too: they keep the pin, and a resumed session comes back pinned.
       const updated = d.registry.pin(sessionId, pinned);

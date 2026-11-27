@@ -12,6 +12,8 @@ import {
   AttachmentUpload,
   BackgroundTask,
   DeliveryCheck,
+  DialogResult,
+  HelloParams,
   HostInfo,
   InterruptResult,
   ModelResult,
@@ -687,6 +689,46 @@ const sends = {
   resultQueuedLocked: SendResult.parse({ via: "queued", reason: "locked" }),
   resultQueuedTyping: SendResult.parse({ via: "queued", reason: "typing" }),
   resultQueuedDraft: SendResult.parse({ via: "queued", reason: "draft" }),
+  // Only to phones that said `dialogs: true` in `hello`: a dialog waits at the computer.
+  resultQueuedDialog: SendResult.parse({ via: "queued", reason: "dialog" }),
+  // To any other phone the send is refused with the sentence.
+  dialogRefused: {
+    type: "rpc",
+    id: 72,
+    error: {
+      code: "conflict",
+      message:
+        "Claude Code is asking something on your computer: Choose a theme. Answer it, then send again.",
+    },
+  },
+  waitingDialogEvent: RelayEvent.parse({
+    seq: 53,
+    ts: now,
+    type: "reply.waiting",
+    sessionId: session.id,
+    reason: "dialog",
+  }),
+  // A message that never ran (a hook stopped it, or its session ended first); apps ignore an outcome they don't know. Never pushed.
+  outcomeEvents: z.array(RelayEvent).parse([
+    {
+      seq: 64,
+      ts: now,
+      type: "reply.outcome",
+      sessionId: session.id,
+      sendId,
+      outcome: "blocked",
+      text: "A hook on your computer blocked this message: no secrets in prompts",
+    },
+    {
+      seq: 65,
+      ts: now,
+      type: "reply.outcome",
+      sessionId: session.id,
+      sendId,
+      outcome: "lost",
+      text: "Claude Code ended before it read this message.",
+    },
+  ]),
   // The reason changing while it waits, then nothing waiting: the draft was sent at the Mac.
   waitingEvents: z.array(RelayEvent).parse([
     { seq: 50, ts: now, type: "reply.waiting", sessionId: session.id, reason: "draft" },
@@ -736,6 +778,21 @@ const sends = {
   },
 };
 
+const dialogQuestion = (id: string, kind: string, title: string, text: string, options: string[]) =>
+  Prompt.parse({
+    id,
+    sessionId: session.id,
+    kind: "question",
+    payload: {
+      kind: "question",
+      questions: [{ question: text, options: options.map((label) => ({ label })) }],
+    },
+    status: "open",
+    resolvedBy: null,
+    createdAt: now,
+    resolvedAt: null,
+    dialog: { kind, title },
+  });
 // Starting a session from the phone: the folders of past chats, then a first message, or none, in one of them.
 const start = {
   // `hello` and `pair` say the helper can start sessions; an older helper leaves the field out.
@@ -780,7 +837,23 @@ const start = {
       id: 82,
       error: { code: "bad_request", message: "Write a first message to start a session." },
     },
+    {
+      type: "rpc",
+      id: 84,
+      error: { code: "unavailable", message: "You didn't trust this folder, so the chat didn't start." },
+    },
   ],
+  // The chat's first screen is a dialog: the call returns once it shows, and the session waits.
+  resultDialog: SessionStarted.parse({ sessionId: "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff" }),
+  // The trust screen is a question with a dialog kind, never `atMac`: Esc there quits Claude Code, so no Close It.
+  sessionDialog: Session.parse({ ...session, status: "waiting" }),
+  sessionDialogQuestion: dialogQuestion(
+    "p_start_trust",
+    "trust",
+    "Trust this folder?",
+    "Do you trust the files in /Users/me/Projects/web-shop?",
+    ["No, exit", "Yes, I trust this folder"],
+  ),
   // An older helper: the phone hides the entry point, and a call that went out anyway gets this.
   olderHelper: {
     type: "rpc",
@@ -954,6 +1027,236 @@ const commands = {
   sessionNote: Session.parse({ ...session, replyRoute: "labelled", commandsRun: false }),
 };
 
+// Slash commands Claude Code ran without the model: the turn carries `command`, `summary` is the output or the helper's line.
+const commandTurn = (id: string, name: string, args: string | undefined, summary: string, at: number) =>
+  Turn.parse({
+    id,
+    sessionId: session.id,
+    prompt: args ? `/${name} ${args}` : `/${name}`,
+    summary,
+    fullLength: summary.length,
+    truncated: false,
+    stats: { durationMs: null, toolCalls: 0, filesEdited: [] },
+    failed: false,
+    startedAt: at,
+    endedAt: at,
+    command: args ? { name, args } : { name },
+  });
+const commandTurns = {
+  // `/context` with its output, started from the phone: the `sendId` settles the bubble.
+  context: commandTurn(
+    "t_cmd_context",
+    "context",
+    undefined,
+    "Context: 41k of 200k tokens used (20%)",
+    now - 5000,
+  ),
+  contextStarted: RelayEvent.parse({
+    seq: 70,
+    ts: now,
+    type: "turn.started",
+    turnId: "t_cmd_context",
+    sessionId: session.id,
+    prompt: "/context",
+    startedAt: now - 5000,
+    sendId,
+  }),
+  contextDone: RelayEvent.parse({
+    seq: 71,
+    ts: now,
+    type: "turn.done",
+    turn: commandTurn(
+      "t_cmd_context",
+      "context",
+      undefined,
+      "Context: 41k of 200k tokens used (20%)",
+      now - 5000,
+    ),
+  }),
+  // `/color` prints nothing: the helper's own line.
+  color: commandTurn("t_cmd_color", "color", "blue", "Ran /color blue", now - 4000),
+  // `/exit` and `/clear` come before the ended upsert.
+  exit: commandTurn("t_cmd_exit", "exit", undefined, "Claude Code was quit.", now - 1000),
+  clear: commandTurn(
+    "t_cmd_clear",
+    "clear",
+    undefined,
+    "Cleared. The conversation continues in a new chat.",
+    now - 1000,
+  ),
+  exitThenEnded: z.array(RelayEvent).parse([
+    {
+      seq: 72,
+      ts: now,
+      type: "turn.done",
+      turn: commandTurn("t_cmd_exit", "exit", undefined, "Claude Code was quit.", now - 1000),
+    },
+    {
+      seq: 73,
+      ts: now,
+      type: "session.upsert",
+      session: Session.parse({ ...session, status: "ended", endReason: "exit" }),
+    },
+  ]),
+  clearThenEnded: z.array(RelayEvent).parse([
+    {
+      seq: 74,
+      ts: now,
+      type: "turn.done",
+      turn: commandTurn(
+        "t_cmd_clear",
+        "clear",
+        undefined,
+        "Cleared. The conversation continues in a new chat.",
+        now - 1000,
+      ),
+    },
+    {
+      seq: 75,
+      ts: now,
+      type: "session.upsert",
+      session: Session.parse({
+        ...session,
+        status: "ended",
+        endReason: "clear",
+        replacedBy: "9a8b7c6d-aaaa-bbbb-cccc-111122223333",
+      }),
+    },
+  ]),
+  // A phone that doesn't know `command` decodes it as an ordinary turn.
+  withoutCommand: Turn.parse({
+    ...commandTurn("t_cmd_old", "context", undefined, "Context: 41k of 200k tokens used (20%)", now - 5000),
+    command: undefined,
+  }),
+};
+
+// How a session ended, and which session took over.
+const endedSession = (endReason: string, extra: Record<string, unknown> = {}) =>
+  Session.parse({ ...session, status: "ended", canReceive: false, endReason, ...extra });
+const sessionEnds = {
+  exit: endedSession("exit"),
+  clear: endedSession("clear", { replacedBy: "9a8b7c6d-aaaa-bbbb-cccc-111122223333" }),
+  clearedInto: Session.parse({
+    ...session,
+    id: "9a8b7c6d-aaaa-bbbb-cccc-111122223333",
+    replaces: session.id,
+  }),
+  resume: endedSession("resume", { replacedBy: "5e4d3c2b-aaaa-bbbb-cccc-444455556666" }),
+  logout: endedSession("logout"),
+  closed: endedSession("closed"),
+  untrusted: endedSession("untrusted"),
+  stopped: endedSession("stopped"),
+  other: endedSession("other"),
+  // A reason a newer helper may send: apps read it as `other`.
+  unknownReason: endedSession("quota"),
+  // Older helpers leave the reason out.
+  noReason: Session.parse({ ...session, status: "ended", canReceive: false }),
+};
+
+// Terminal dialogs: answerable ones are questions with `dialog`, the rest wait at the computer (`atMac`).
+const atMac = { id: "d_7f3a", kind: "other", title: "Choose a theme", canClose: true };
+const dialogs = {
+  trust: dialogQuestion(
+    "p_trust",
+    "trust",
+    "Trust this folder?",
+    "Do you trust the files in /Users/me/Projects/web-shop?",
+    ["No, exit", "Yes, I trust this folder"],
+  ),
+  mcpServer: dialogQuestion(
+    "p_mcp",
+    "mcpServer",
+    "New MCP server",
+    'Use the MCP server "docs" from .mcp.json?',
+    ["Use this and all future servers", "Use this server", "Don't use it"],
+  ),
+  rateLimit: dialogQuestion("p_limit", "rateLimit", "Usage limit reached", "You've hit your limit.", [
+    "Stop and wait for the limit to reset",
+    "Switch to another model",
+  ]),
+  // A kind this phone doesn't know reads as a plain question.
+  unknownKind: dialogQuestion("p_new", "newKind", "Something new", "Pick one", ["A", "B"]),
+  opened: RelayEvent.parse({
+    seq: 80,
+    ts: now,
+    type: "prompt.opened",
+    prompt: dialogQuestion(
+      "p_trust",
+      "trust",
+      "Trust this folder?",
+      "Do you trust the files in /Users/me/Projects/web-shop?",
+      ["No, exit", "Yes, I trust this folder"],
+    ),
+  }),
+  // A dialog the phone can't answer: the session waits at the computer.
+  sessionAtMac: Session.parse({ ...session, status: "waiting", atMac }),
+  sessionAtMacFixed: Session.parse({ ...session, status: "waiting", atMac: { ...atMac, canClose: false } }),
+  noDialog: session,
+  closeParams: RpcSchemas["session.dialog"].parse({
+    sessionId: session.id,
+    dialogId: atMac.id,
+    action: "close",
+  }),
+  closeResult: DialogResult.parse({ ok: true }),
+  errors: [
+    {
+      type: "rpc",
+      id: 90,
+      error: { code: "conflict", message: "That question is no longer open on your computer." },
+    },
+    {
+      type: "rpc",
+      id: 91,
+      error: { code: "unavailable", message: "Relay can't reach this chat's terminal." },
+    },
+    { type: "rpc", id: 92, error: { code: "not_found", message: "session not found" } },
+  ],
+  // An older helper: no `session.dialog`.
+  olderHelper: {
+    type: "rpc",
+    id: 93,
+    error: { code: "bad_request", message: "unknown method session.dialog" },
+  },
+  hello: HelloParams.parse({ token: "t", dialogs: true }),
+  helloOlder: HelloParams.parse({ token: "t" }),
+};
+
+const commandsWithMenus = {
+  ...commands,
+  paramsWithMenus: RpcSchemas["session.commands"].parse({ sessionId: session.id, withMenus: true }),
+  // With `withMenus` every entry says what it does; without it the list is unchanged.
+  resultWithMenus: SessionCommands.parse({
+    commands: [
+      {
+        name: "compact",
+        description: "Summarize the conversation to free up context",
+        source: "builtin",
+        opens: "turn",
+      },
+      { name: "context", description: "Show how full the context is", source: "builtin", opens: "output" },
+      { name: "model", description: "Switch the model", source: "builtin", opens: "menu", phone: "model" },
+      {
+        name: "effort",
+        description: "Set the effort level",
+        source: "builtin",
+        opens: "menu",
+        phone: "effort",
+      },
+      { name: "config", description: "Open settings", source: "builtin", opens: "menu" },
+      { name: "exit", description: "End the chat", source: "builtin", opens: "ends" },
+      { name: "clear", description: "Start a new chat", source: "builtin", opens: "replaces" },
+      {
+        name: "ship-it",
+        description: "Run the checks, then push the branch",
+        source: "project",
+        opens: "turn",
+      },
+    ],
+    run: true,
+    route: "terminal",
+  }),
+};
+
 const dir = join(import.meta.dir, "fixtures");
 mkdirSync(dir, { recursive: true });
 const write = (name: string, value: unknown) =>
@@ -984,7 +1287,10 @@ write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);
 write("model.json", model);
-write("commands.json", commands);
+write("commands.json", { ...commandsWithMenus });
+write("command-turns.json", commandTurns);
+write("session-ends.json", sessionEnds);
+write("dialogs.json", dialogs);
 write("start.json", start);
 write("resume.json", resume);
 write("moved.json", moved);

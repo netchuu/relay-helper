@@ -60,8 +60,64 @@
         "code": "bad_request",
         "message": "Write a first message to start a session."
       }
+    },
+    {
+      "type": "rpc",
+      "id": 84,
+      "error": {
+        "code": "unavailable",
+        "message": "You didn't trust this folder, so the chat didn't start."
+      }
     }
   ],
+  "resultDialog": {
+    "sessionId": "7c1d2e3f-aaaa-bbbb-cccc-ddddeeeeffff"
+  },
+  "sessionDialog": {
+    "id": "4375b77a-1111-2222-3333-444455556666",
+    "name": "web-shop",
+    "cwd": "/Users/me/Projects/web-shop",
+    "project": "web-shop",
+    "branch": "fix/cart-total",
+    "kind": "interactive",
+    "status": "waiting",
+    "title": "The cart total is off by a cent sometimes",
+    "terminal": "iTerm.app",
+    "canReceive": true,
+    "replyRoute": "typed",
+    "startedAt": 1793619400000,
+    "updatedAt": 1793620000000,
+    "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+  },
+  "sessionDialogQuestion": {
+    "id": "p_start_trust",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "question",
+    "payload": {
+      "kind": "question",
+      "questions": [
+        {
+          "question": "Do you trust the files in /Users/me/Projects/web-shop?",
+          "options": [
+            {
+              "label": "No, exit"
+            },
+            {
+              "label": "Yes, I trust this folder"
+            }
+          ]
+        }
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null,
+    "dialog": {
+      "kind": "trust",
+      "title": "Trust this folder?"
+    }
+  },
   "olderHelper": {
     "type": "rpc",
     "id": 83,

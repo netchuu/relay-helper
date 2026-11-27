@@ -70,5 +70,65 @@
     "startedAt": 1793619400000,
     "updatedAt": 1793620000000,
     "lastSummary": "Fixed the rounding. Totals are now summed in cents."
+  },
+  "paramsWithMenus": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "withMenus": true
+  },
+  "resultWithMenus": {
+    "commands": [
+      {
+        "name": "compact",
+        "description": "Summarize the conversation to free up context",
+        "source": "builtin",
+        "opens": "turn"
+      },
+      {
+        "name": "context",
+        "description": "Show how full the context is",
+        "source": "builtin",
+        "opens": "output"
+      },
+      {
+        "name": "model",
+        "description": "Switch the model",
+        "source": "builtin",
+        "opens": "menu",
+        "phone": "model"
+      },
+      {
+        "name": "effort",
+        "description": "Set the effort level",
+        "source": "builtin",
+        "opens": "menu",
+        "phone": "effort"
+      },
+      {
+        "name": "config",
+        "description": "Open settings",
+        "source": "builtin",
+        "opens": "menu"
+      },
+      {
+        "name": "exit",
+        "description": "End the chat",
+        "source": "builtin",
+        "opens": "ends"
+      },
+      {
+        "name": "clear",
+        "description": "Start a new chat",
+        "source": "builtin",
+        "opens": "replaces"
+      },
+      {
+        "name": "ship-it",
+        "description": "Run the checks, then push the branch",
+        "source": "project",
+        "opens": "turn"
+      }
+    ],
+    "run": true,
+    "route": "terminal"
   }
 }

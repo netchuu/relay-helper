@@ -36,6 +36,14 @@ describe("formatEvent", () => {
     );
   });
 
+  test("a message that never ran shows its outcome, not its text", () => {
+    const line = formatEvent(
+      ev({ type: "reply.outcome", sessionId: ID, sendId: "s1", outcome: "blocked", text: "secret reason" }),
+    );
+    expect(line).toBe(`${time} #7 ⏳ 01234567 message blocked`);
+    expect(line).not.toContain("secret reason");
+  });
+
   test("a removed session", () => {
     expect(formatEvent(ev({ type: "session.removed", sessionId: ID }))).toBe(
       `${time} #7 session 01234567 removed`,
