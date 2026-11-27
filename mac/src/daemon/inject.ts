@@ -87,6 +87,13 @@ export class OpenEditorPanel extends DeliveryError {
   }
 }
 
+/** A terminal dialog is on the screen: typing now would answer it, so nothing is typed. */
+export class DialogOpen extends DeliveryError {
+  constructor(readonly title: string) {
+    super(`Claude Code is asking something on your computer: ${title}. Answer it, then send again.`);
+  }
+}
+
 /** A command for the session itself (`/model`) can't go in while the prompt holds text the person typed. */
 export class DraftInPrompt extends DeliveryError {}
 
@@ -496,6 +503,15 @@ async function typeIntoTerminal(
   for (const route of routesFor(session, typeWire(ops))) {
     const ready = await route.probe();
     if (!ready) continue;
+    // The pty probe has no screen of its own: read it for this check.
+    const seen =
+      ready.screen ??
+      (route.kind === "pty" ? ((await route.read().catch(() => null))?.screen ?? null) : null);
+    const dialog = seen === null ? null : detectDialog(seen);
+    if (dialog) throw new DialogOpen(dialog.title);
+    if (seen !== null && seen.trim() !== "" && promptTextRead(seen) === undefined) {
+      throw new DialogOpen("Claude Code's prompt isn't showing");
+    }
     const draft = ready.screen === null ? null : promptDraft(ready.screen, plainOpts(session.id, route, ops));
     // The same message sent again while its unsent copy sits there: press Enter for that copy, don't type another.
     // On a plain-text tab only text we left counts: Enter doesn't submit Claude's suggestion.

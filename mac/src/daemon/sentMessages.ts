@@ -49,7 +49,7 @@ export class SentMessages {
     entry.result = send.then(
       (result) => {
         this.persist(sessionId, sendId, result.via, entry.at);
-        return { via: result.via };
+        return result.reason ? { via: result.via, reason: result.reason } : { via: result.via };
       },
       (err) => {
         if (this.sends.get(k) === entry) this.sends.delete(k);

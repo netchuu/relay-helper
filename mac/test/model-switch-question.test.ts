@@ -102,10 +102,11 @@ describe("the model question at the computer", () => {
       "❯ say ok",
       "⏺ ok",
       "❯ /model opus",
+      EMPTY,
     ].join("\n");
     const { rpc, log } = setup(
       [history, history, history, history, `${history}\n${QUESTION.replaceAll("Sonnet 5.5", "Opus 5.5")}`],
-      history.split("\n").slice(0, 4).join("\n"),
+      [...history.split("\n").slice(0, 4), EMPTY].join("\n"),
     );
     expect(await rpc("session.model", { sessionId: "s1", model: "opus" }, "phone")).toEqual({
       result: { via: "iterm" },

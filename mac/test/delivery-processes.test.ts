@@ -107,7 +107,7 @@ describe("processes started for one reply", () => {
   });
 
   test("relay shell: the helper starts nothing; the shell asks ps once per check", async () => {
-    const pty: TypeOps = { ...ops, pty: async () => ({ ok: true }) };
+    const pty: TypeOps = { ...ops, pty: async () => ({ ok: true }), ptyScreen: async () => EMPTY };
     const env: HookEnv = {
       termProgram: "zed",
       claudePid: 4242,

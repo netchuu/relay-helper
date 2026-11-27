@@ -1,6 +1,6 @@
 /**
- * Replies a helper from before left waiting (for the Mac to unlock, or for a pause in typing at it). Nothing is added
- * to the queue now: a phone message is typed in at once. What is left is delivered at the next tick, oldest first per
+ * Replies waiting to be typed: for the Mac to unlock, for a pause in typing at it, or for a terminal dialog to close.
+ * A phone message is otherwise typed in at once. What waits is delivered at the next tick, oldest first per
  * session, through the normal routes; one session's reply doesn't hold another back. Kept in the database so a helper
  * restart doesn't lose them.
  */
@@ -12,6 +12,7 @@ import type { HeldReplies } from "./held.ts";
 import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } from "./hooks.ts";
 import {
   DeliveryError,
+  DialogOpen,
   deliver,
   type HeadlessRoute,
   OpenEditorPanel,
@@ -24,7 +25,7 @@ import type { Registry, SessionRecord } from "./registry.ts";
 export const QUEUE_MAX_AGE_MS = 24 * 3_600_000;
 
 /** What a reply waited for, as the database keeps it. */
-export type WaitsFor = "unlock" | "pause";
+export type WaitsFor = "unlock" | "pause" | "dialog";
 
 export interface QueuedReply {
   id: number;
@@ -87,7 +88,7 @@ export class ReplyQueue {
       sessionId: r.session_id,
       text: r.text,
       createdAt: r.created_at,
-      waitsFor: r.waits_for === "pause" ? "pause" : "unlock",
+      waitsFor: r.waits_for === "pause" || r.waits_for === "dialog" ? r.waits_for : "unlock",
       ...(r.send_id ? { sendId: r.send_id } : {}),
     }));
   }
@@ -132,9 +133,10 @@ export class ReplyQueue {
       try {
         await deliver(session, reply.text, reply);
         this.remove(reply.id);
+        this.settled(reply);
       } catch (err) {
         // A question is open: stop here and keep the order.
-        if (err instanceof PromptOpen) return;
+        if (err instanceof PromptOpen || err instanceof DialogOpen) return;
         log.warn("queued reply couldn't be delivered", {
           sessionId: reply.sessionId,
           err: errMessage(err),
@@ -155,8 +157,16 @@ export class ReplyQueue {
     this.db.query("DELETE FROM queued_replies WHERE id = ?").run(id);
   }
 
+  /** The last reply held for a dialog is gone: the phone stops showing that something waits. */
+  private settled(reply: QueuedReply): void {
+    if (reply.waitsFor !== "dialog") return;
+    if (this.list(reply.sessionId).some((r) => r.waitsFor === "dialog")) return;
+    this.events.emit({ type: "reply.waiting", sessionId: reply.sessionId, reason: null });
+  }
+
   private drop(reply: QueuedReply, reason: string): void {
     this.remove(reply.id);
+    this.settled(reply);
     const session = this.registry.get(reply.sessionId);
     const name = session?.name ?? session?.project ?? "the session";
     this.events.emit({

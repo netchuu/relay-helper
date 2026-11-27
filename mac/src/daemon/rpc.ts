@@ -38,6 +38,7 @@ import { dropPhoneTyped, notePhoneTyped, phoneTypeDelivered, phoneTypePending } 
 import {
   confirmModelSwitch,
   DeliveryError,
+  DialogOpen,
   DraftInPrompt,
   deliver,
   modelResultsOnScreen,
@@ -114,8 +115,9 @@ export type RpcOutcome = { result: unknown } | { error: RpcError };
 /**
  * `overRelay`: the reply goes in one relay frame, so long prompt texts in it are cut. Direct callers pass none.
  * `pieces`: the phone reassembles pieces, so a reply of any size is sent whole and nothing is cut.
+ * `dialogs`: the phone knows the queued reason `dialog`; any other is refused while a dialog is open.
  */
-export type RpcOpts = { overRelay?: boolean; pieces?: boolean };
+export type RpcOpts = { overRelay?: boolean; pieces?: boolean; dialogs?: boolean };
 
 type Handler<M extends RpcMethod> = (
   params: z.infer<(typeof RpcSchemas)[M]>,
@@ -434,7 +436,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       return { turns: page(Buffer.byteLength(JSON.stringify(live)) + 32), live };
     },
 
-    "session.send": async ({ sessionId, text: message, attachments: ids, sendId }, actor) => {
+    "session.send": async ({ sessionId, text: message, attachments: ids, sendId }, actor, opts) => {
       // A retried message gets the first answer, never typed twice; a failed one is sent again.
       if (sendId) {
         for (;;) {
@@ -446,12 +448,13 @@ export function createRpc(d: RpcDeps): DaemonRpc {
           const held = first.via === "socket" && d.held?.isHeld(sessionId);
           return {
             via: first.via,
+            ...(first.reason ? { reason: first.reason } : {}),
             ...(held ? { heldAtMac: true as const } : {}),
             repeat: true,
           } satisfies SendResult;
         }
       }
-      const sending = send(sessionId, message, ids, actor, sendId);
+      const sending = send(sessionId, message, ids, actor, sendId, opts.dialogs === true);
       return await (sendId ? sent.track(sessionId, sendId, sending) : sending);
     },
 
@@ -667,6 +670,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     ids: string[] | undefined,
     actor: string,
     sendId?: string,
+    dialogs = false,
   ): Promise<SendResult> {
     const withFiles = (ids?.length ?? 0) > 0;
     if (!withFiles && !message) throw new RpcFailure("bad_request", words.empty);
@@ -710,7 +714,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         for (const id of ids ?? []) held.set(id, done);
       }
       try {
-        const res = await sendNow(now, text, sendId);
+        const res = await sendNow(now, text, sendId, dialogs);
         // The hook that follows drops the suggestion too; this closes the gap before it arrives.
         if (!res.heldAtMac && d.suggestions?.clear(sessionId)) d.registry.publish(sessionId);
         if (files > 0 && res.via === "socket")
@@ -767,7 +771,8 @@ export function createRpc(d: RpcDeps): DaemonRpc {
     session: SessionRecord,
     text: string,
     sendId?: string,
-  ): Promise<{ via: string; heldAtMac?: true }> {
+    dialogs = false,
+  ): Promise<{ via: string; heldAtMac?: true; reason?: "dialog" }> {
     const sessionId = session.id;
     // A session the helper runs itself: no terminal to wait for, the message goes straight to its process.
     if (d.headless?.has(sessionId)) {
@@ -789,6 +794,16 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         throw err;
       }
     }
+    // The text waits for the prompt to come back (a phone that knows the reason), or the send is refused.
+    const holdForDialog = (err: DialogOpen): { via: "queued"; reason: "dialog" } => {
+      if (!dialogs || !d.replies) throw new RpcFailure("conflict", err.message);
+      d.replies.add(sessionId, text, Date.now(), "dialog", sendId);
+      d.events.emit({ type: "reply.waiting", sessionId, reason: "dialog" });
+      return { via: "queued", reason: "dialog" };
+    };
+    // Earlier messages still wait for the dialog: this one goes behind them.
+    if (dialogs && d.replies?.list(sessionId).some((r) => r.waitsFor === "dialog"))
+      return holdForDialog(new DialogOpen(""));
     // Fresh reading, not the 5 s presence poll: the lock decides whether the desktop app can be typed into.
     const { idleSeconds, locked } = await platform.presence.read({
       tmuxSockets: session.tmuxSocket ? [session.tmuxSocket] : [],
@@ -827,10 +842,11 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       watch?.cancel();
       // Nothing was typed: a prompt the person types at the Mac next must not match this message.
       dropPhoneTyped(sessionId, text);
+      if (err instanceof DialogOpen) return holdForDialog(err);
       // The chat moved to the person's terminal while this was typing into the one Relay ran: send it there.
       const moved = d.registry.get(sessionId);
       if (session.ptySocket && moved && moved.ptySocket !== session.ptySocket && moved.status !== "ended")
-        return sendNow(moved, text, sendId);
+        return sendNow(moved, text, sendId, dialogs);
       throw err;
     }
   }
@@ -871,6 +887,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         }
         return delivered;
       } catch (err) {
+        if (err instanceof DialogOpen) throw new RpcFailure("conflict", err.message);
         if (err instanceof DraftInPrompt)
           throw new RpcFailure(
             "conflict",

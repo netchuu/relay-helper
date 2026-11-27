@@ -96,6 +96,7 @@ export class ClientSession {
         await this.deps.rpc(req.method, req.params, `device:${this.device.id}`, {
           overRelay: true,
           pieces: this.pieces,
+          dialogs: this.dialogs,
         }),
         req.method,
       );

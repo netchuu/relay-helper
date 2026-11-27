@@ -78,7 +78,11 @@ describe("a session that left its tmux pane", () => {
   test("a session still in its pane is typed into, and gets Esc", async () => {
     const registry = registryWith();
     registry.touch("s", { cwd: "/p", env: TMUX_ENV });
-    const t = fakeOps({ tmuxScreen: "❯ \n", paneTty: "/dev/ttys003", ttys: { 4242: "/dev/ttys003" } });
+    const t = fakeOps({
+      tmuxScreen: `${"─".repeat(80)}\n❯ \n${"─".repeat(80)}`,
+      paneTty: "/dev/ttys003",
+      ttys: { 4242: "/dev/ttys003" },
+    });
     expect(await deliver(registry.get("s") as SessionRecord, "hi", opts, t.ops)).toEqual({ via: "tmux" });
     expect(t.typed).toEqual(["tmux %3:hi"]);
   });
