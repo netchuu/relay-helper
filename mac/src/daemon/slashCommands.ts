@@ -18,6 +18,75 @@ export const BUILTIN_COMMANDS: readonly { name: string; description: string }[] 
   { name: "security-review", description: "Review the pending changes for security problems" },
 ];
 
+type Opens = NonNullable<SlashCommand["opens"]>;
+
+/** What each built-in does when run, for `withMenus`; a name not listed here prints. */
+const OPENS: Record<string, Opens> = {
+  clear: "replaces",
+  compact: "turn",
+  init: "turn",
+  review: "turn",
+  "security-review": "turn",
+};
+
+/** Built-ins that open a terminal menu, listed only for `withMenus` so shipped phones don't offer them. */
+export const MENU_COMMANDS: readonly {
+  name: string;
+  description: string;
+  opens: Opens;
+  phone?: "model" | "effort";
+}[] = [
+  { name: "model", description: "Switch the model", opens: "menu", phone: "model" },
+  { name: "effort", description: "Set the effort level", opens: "menu", phone: "effort" },
+  { name: "exit", description: "End this session", opens: "ends" },
+  { name: "quit", description: "End this session", opens: "ends" },
+  { name: "logout", description: "Sign out of Claude Code", opens: "ends" },
+  { name: "resume", description: "Continue an earlier conversation", opens: "replaces" },
+  { name: "config", description: "Open the settings", opens: "menu" },
+  { name: "permissions", description: "Manage what Claude may do", opens: "menu" },
+  { name: "mcp", description: "Manage MCP servers", opens: "menu" },
+  { name: "hooks", description: "Manage hooks", opens: "menu" },
+  { name: "ide", description: "Manage the editor connection", opens: "menu" },
+  { name: "memory", description: "Edit memory files", opens: "menu" },
+  { name: "theme", description: "Change the color theme", opens: "menu" },
+  { name: "status", description: "Show the status screen", opens: "menu" },
+  { name: "usage", description: "Show plan usage and limits", opens: "menu" },
+  { name: "tasks", description: "Manage background tasks", opens: "menu" },
+  { name: "diff", description: "View the changes made", opens: "menu" },
+  { name: "export", description: "Export the conversation", opens: "menu" },
+  { name: "skills", description: "List the available skills", opens: "menu" },
+  { name: "plugin", description: "Manage plugins", opens: "menu" },
+  { name: "output-style", description: "Choose the output style", opens: "menu" },
+  { name: "agents", description: "Manage subagents", opens: "menu" },
+  { name: "login", description: "Sign in to Claude Code", opens: "menu" },
+  { name: "help", description: "Show help and commands", opens: "menu" },
+  { name: "stats", description: "Show usage statistics", opens: "menu" },
+  { name: "usage-credits", description: "Show usage credits", opens: "menu" },
+  { name: "bashes", description: "Manage background tasks", opens: "menu" },
+  { name: "skill-doctor", description: "Check the installed skills", opens: "menu" },
+  { name: "advisor", description: "Choose the advisor model", opens: "menu" },
+  { name: "autocompact", description: "Set when the context compacts", opens: "menu" },
+  { name: "copy", description: "Copy a reply to the clipboard", opens: "menu" },
+  { name: "artifacts", description: "Browse the artifacts", opens: "menu" },
+  { name: "chrome", description: "Set up the Chrome connection", opens: "menu" },
+  { name: "sandbox", description: "Set up the sandbox", opens: "menu" },
+  { name: "privacy-settings", description: "Change the privacy settings", opens: "menu" },
+  { name: "remote-control", description: "Control this session remotely", opens: "menu" },
+  { name: "rc", description: "Control this session remotely", opens: "menu" },
+  { name: "remote-env", description: "Choose the remote environment", opens: "menu" },
+  { name: "release-notes", description: "Read the release notes", opens: "menu" },
+  { name: "scroll-speed", description: "Set the scroll speed", opens: "menu" },
+  { name: "workflows", description: "Manage workflows", opens: "menu" },
+  { name: "powerup", description: "Learn Claude Code features", opens: "menu" },
+  { name: "import", description: "Import settings from another tool", opens: "menu" },
+  { name: "install-github-app", description: "Set up the GitHub app", opens: "menu" },
+  { name: "setup-bedrock", description: "Set up Amazon Bedrock", opens: "menu" },
+  { name: "setup-vertex", description: "Set up Google Vertex AI", opens: "menu" },
+  { name: "bug", description: "Send feedback", opens: "menu" },
+  { name: "feedback", description: "Send feedback", opens: "menu" },
+  { name: "rate-limit-options", description: "Choose what to do at the rate limit", opens: "menu" },
+];
+
 export const SKILL_FILE = "SKILL.md";
 const MAX_COMMANDS = 500;
 const MAX_DESCRIPTION = 200;
@@ -166,12 +235,9 @@ function pluginRoots(cwd: string): { plugin: string; path: string }[] {
   return roots;
 }
 
-/**
- * What a session in `cwd` can run when its message is typed: Claude Code's non-dialog built-ins, then project,
- * user and plugin commands and skills. A name appears once, as Claude Code resolves it: skills before commands,
- * user before project (nearest folder first), and both before a built-in.
- */
-export function slashCommandsFor(cwd: string): SlashCommand[] {
+/** What a session in `cwd` can run from a typed line: built-ins, then project, user and plugin commands and skills.
+ * A name appears once, as Claude Code resolves it: skills before commands, user before project, both before a built-in. */
+export function slashCommandsFor(cwd: string, withMenus = false): SlashCommand[] {
   const userRoot = join(home(), ".claude");
   const projects = projectRoots(cwd);
   const plugins = pluginRoots(cwd);
@@ -185,6 +251,7 @@ export function slashCommandsFor(cwd: string): SlashCommand[] {
       ...fromCommands(join(path, "commands"), "plugin", `${plugin}:`),
     ]),
     ...BUILTIN_COMMANDS.map((c) => ({ ...c, source: "builtin" as const })),
+    ...(withMenus ? MENU_COMMANDS.map((c) => ({ ...c, source: "builtin" as const })) : []),
   ];
   const seen = new Set<string>();
   const out: SlashCommand[] = [];
@@ -194,7 +261,13 @@ export function slashCommandsFor(cwd: string): SlashCommand[] {
     out.push(c);
   }
   const order = { builtin: 0, project: 1, user: 2, plugin: 3 };
-  return out
+  const listed = withMenus
+    ? out.map((c) => ({
+        ...c,
+        opens: c.opens ?? (c.source === "builtin" ? (OPENS[c.name] ?? "output") : "turn"),
+      }))
+    : out;
+  return listed
     .map((c, i) => ({ c, i }))
     .sort((a, b) => order[a.c.source] - order[b.c.source] || a.c.name.localeCompare(b.c.name) || a.i - b.i)
     .map(({ c }) => c)

@@ -250,6 +250,112 @@ describe("built-ins", () => {
   });
 });
 
+describe("withMenus", () => {
+  const menus = (cwd = project) => slashCommandsFor(cwd, true);
+  const opens = (name: string) => menus().find((c) => c.name === name);
+
+  test("without it the list has no menu commands and no opens", () => {
+    const list = slashCommandsFor(project);
+    expect(list.some((c) => "opens" in c || "phone" in c)).toBe(false);
+    expect(list.map((c) => c.name)).not.toContain("config");
+    expect(slashCommandsFor(project, false)).toEqual(list);
+  });
+
+  test("adds the menu built-ins and every entry says what it does", () => {
+    put(join(project, ".claude/commands/ship-it.md"), md("Push"));
+    const list = menus();
+    expect(list.every((c) => c.opens !== undefined)).toBe(true);
+    for (const name of ["config", "permissions", "mcp", "hooks", "agents", "login", "help"])
+      expect(opens(name)?.opens).toBe("menu");
+    expect(opens("ship-it")?.opens).toBe("turn");
+    expect(opens("compact")?.opens).toBe("turn");
+    expect(opens("context")?.opens).toBe("output");
+    expect(list.length).toBeGreaterThan(slashCommandsFor(project).length);
+  });
+
+  test("every menu built-in of the coverage matrix opens a menu", () => {
+    const names = [
+      "model",
+      "config",
+      "permissions",
+      "mcp",
+      "hooks",
+      "ide",
+      "memory",
+      "theme",
+      "status",
+      "usage",
+      "stats",
+      "usage-credits",
+      "tasks",
+      "bashes",
+      "diff",
+      "export",
+      "skills",
+      "skill-doctor",
+      "plugin",
+      "output-style",
+      "advisor",
+      "autocompact",
+      "copy",
+      "artifacts",
+      "chrome",
+      "sandbox",
+      "privacy-settings",
+      "remote-control",
+      "rc",
+      "remote-env",
+      "release-notes",
+      "scroll-speed",
+      "workflows",
+      "powerup",
+      "import",
+      "install-github-app",
+      "setup-bedrock",
+      "setup-vertex",
+      "bug",
+      "feedback",
+      "help",
+      "rate-limit-options",
+      "effort",
+      "agents",
+      "login",
+    ];
+    for (const name of names) expect(opens(name)?.opens, name).toBe("menu");
+  });
+
+  test("/model and /effort name the phone's own control", () => {
+    expect(opens("model")).toMatchObject({ opens: "menu", phone: "model" });
+    expect(opens("effort")).toMatchObject({ opens: "menu", phone: "effort" });
+    expect(opens("config")).not.toHaveProperty("phone");
+  });
+
+  test("/exit, /quit and /logout end the chat; /clear and /resume replace it", () => {
+    for (const name of ["exit", "quit", "logout"]) expect(opens(name)?.opens).toBe("ends");
+    for (const name of ["clear", "resume"]) expect(opens(name)?.opens).toBe("replaces");
+  });
+
+  test("a user command of a menu built-in's name still wins", () => {
+    put(join(home, ".claude/commands/config.md"), md("Mine"));
+    expect(opens("config")).toMatchObject({ source: "user", opens: "turn" });
+  });
+
+  test("session.commands passes the flag through", async () => {
+    const db = openDb(":memory:");
+    const events = new EventLog(db);
+    const registry = new Registry(db, events);
+    const rpc = createRpc({ db, events, registry, broker: { listOpen: () => [] } } as unknown as RpcDeps);
+    registry.touch("s1", { cwd: project, env: { socket: "/i" } });
+    const run = async (params: object) => {
+      const o = await rpc("session.commands", { sessionId: "s1", ...params }, "device:a");
+      if (!("result" in o)) throw new Error("no result");
+      return SessionCommands.parse(o.result).commands;
+    };
+    expect((await run({})).some((c) => c.name === "exit")).toBe(false);
+    expect((await run({ withMenus: true })).find((c) => c.name === "exit")?.opens).toBe("ends");
+  });
+});
+
 describe("front matter", () => {
   test("quoted, folded and missing values", () => {
     expect(frontmatter('---\ndescription: "Quoted: yes"\n---\nbody').data.description).toBe("Quoted: yes");

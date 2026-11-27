@@ -556,14 +556,14 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       }
     },
 
-    "session.commands": ({ sessionId }) => {
+    "session.commands": ({ sessionId, withMenus }) => {
       const session = d.registry.get(sessionId);
       if (!session) throw new RpcFailure("not_found", "session not found");
       const route = d.headless?.has(session.id)
         ? "helper"
         : (commandRouteOf(session) ?? (canResume(session) ? "resume" : null));
       return {
-        commands: slashCommandsFor(session.cwd),
+        commands: slashCommandsFor(session.cwd, withMenus === true),
         run: route !== null && route !== "inbox",
         ...(route ? { route } : {}),
       } satisfies SessionCommands;
