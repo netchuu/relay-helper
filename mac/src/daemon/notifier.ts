@@ -76,6 +76,8 @@ export function alertFor(event: RelayEvent, sessionName: (id: string) => string)
     case "turn.done":
       // You stopped it yourself, or its process died with the terminal: nothing to tell you.
       if (event.turn.stopped || event.turn.died) return null;
+      // A command you ran yourself already showed its output.
+      if (event.turn.command) return null;
       return turnAlert(event.turn, sessionName(event.turn.sessionId));
     case "session.notice":
       if (event.level === "info") return null;

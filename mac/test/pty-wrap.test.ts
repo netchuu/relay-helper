@@ -64,9 +64,10 @@ function setup() {
       resize: (c: number, r: number) => term.resize(c, r),
     };
   };
-  /** The route Claude Code was given, as its hooks would report it. */
+  /** The route Claude Code was given, once its terminal is raw (before that, Enter arrives as a line feed). */
   const route = () => {
-    const m = /PTY (\S+) TOKEN (\S+)/.exec(log());
+    const text = log();
+    const m = text.includes("READY") ? /PTY (\S+) TOKEN (\S+)/.exec(text) : null;
     return m ? { socket: m[1] as string, token: m[2] as string } : null;
   };
   const ask = (req: Record<string, unknown>): Promise<Record<string, unknown>> =>

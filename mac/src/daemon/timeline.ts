@@ -283,6 +283,8 @@ export interface TimelineEntry {
   parentUuid?: string | null;
   agentId?: string;
   message?: { content?: unknown };
+  subtype?: string;
+  content?: unknown;
   toolUseResult?: unknown;
   isMeta?: boolean;
 }
@@ -292,10 +294,44 @@ export interface TimelineEntry {
  * failed when its `tool_result` says `is_error`) and thinking lines (one per thinking block, timed from the
  * previous main-conversation entry). `add` returns what the entry added or changed, for the live events.
  */
+/** A slash command's echo as `{name, args}` (name without the slash), or null for any other text. */
+export function parseCommandEcho(text: string): { name: string; args?: string } | null {
+  const trimmed = text.trim();
+  const name = /^<command-name>([^<]*)<\/command-name>/.exec(trimmed)?.[1]?.trim().replace(/^\//, "");
+  if (!name) return null;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(trimmed)?.[1]?.trim();
+  return args ? { name, args } : { name };
+}
+
+/** What a local command printed (its stdout or stderr entry), or null for any other text. */
+export function parseCommandPrinted(text: string): string | null {
+  const m = /^<local-command-(?:stdout|stderr)>([\s\S]*?)(?:<\/local-command-(?:stdout|stderr)>)?$/.exec(
+    text.trim(),
+  );
+  return m ? (m[1] ?? "") : null;
+}
+
+/** The text of a command echo or its output: a user entry's message, or a system `local_command` entry's content. */
+export function commandText(entry: TimelineEntry): string {
+  if (!entry || entry.isMeta || entry.isSidechain) return "";
+  if (entry.type === "user") return textOf(entry.message?.content);
+  if (entry.type === "system" && entry.subtype === "local_command") return textOf(entry.content);
+  return "";
+}
+
+/** Entries already shown as a command turn of their own: they are not a step of the next turn too. */
+const shownAsTurns = new Set<string>();
+const SHOWN_AS_TURNS_MAX = 500;
+
+export function markShownAsTurn(...uuids: (string | undefined)[]): void {
+  for (const id of uuids) if (id) shownAsTurns.add(id);
+  while (shownAsTurns.size > SHOWN_AS_TURNS_MAX)
+    shownAsTurns.delete(shownAsTurns.values().next().value as string);
+}
+
 /** A slash command's echo or printed output: it belongs to the prompt that follows it, not the turn before. */
 export function isCommandEntry(entry: TimelineEntry): boolean {
-  if (!entry || entry.type !== "user" || entry.isMeta || entry.isSidechain) return false;
-  return /^<(command-name|local-command-)/.test(textOf(entry.message?.content).trim());
+  return /^<(command-name|local-command-)/.test(commandText(entry).trim());
 }
 
 export class TimelineReader {
@@ -367,11 +403,11 @@ export class TimelineReader {
 
   /** A slash command's echo is a step named after the command; the output entry after it fills that step in. */
   private slashCommand(entry: TimelineEntry, at: number): TurnStep | null {
-    const text = textOf(entry.message?.content).trim();
-    const name = /^<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
-    if (name) {
-      const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
-      const line = `${name.startsWith("/") ? name : `/${name}`}${args ? ` ${args}` : ""}`;
+    if (typeof entry.uuid === "string" && shownAsTurns.has(entry.uuid)) return null;
+    const text = commandText(entry).trim();
+    const echo = parseCommandEcho(text);
+    if (echo) {
+      const line = `/${echo.name}${echo.args ? ` ${echo.args}` : ""}`;
       const input = { command: line };
       const base = typeof entry.uuid === "string" ? entry.uuid : `c${at}-${this.actions.length}`;
       const step: TurnStep = {
@@ -386,12 +422,11 @@ export class TimelineReader {
       this.command = step;
       return step;
     }
-    const printed =
-      /^<local-command-(?:stdout|stderr)>([\s\S]*?)(?:<\/local-command-(?:stdout|stderr)>)?$/.exec(text);
-    if (!printed) return null;
+    const printed = parseCommandPrinted(text);
+    if (printed === null) return null;
     const step = this.command;
     if (!step || step.output !== undefined) return null;
-    const shown = shownOutput(printed[1] ?? "");
+    const shown = shownOutput(printed);
     if (shown.output === undefined) return null;
     Object.assign(step, shown);
     return step;
@@ -425,7 +460,7 @@ export class TimelineReader {
     const at = Number.isNaN(ts) ? (this.lastAt ?? 0) : ts;
     const changed: TurnStep[] = [];
     const content = entry.message?.content;
-    if (entry.type === "user" && !this.sidechain && !entry.isMeta) {
+    if ((entry.type === "user" || entry.type === "system") && !this.sidechain && !entry.isMeta) {
       const step = this.slashCommand(entry, at);
       if (step) changed.push(step);
     }

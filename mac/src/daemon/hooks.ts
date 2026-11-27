@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { TURN_MESSAGES_MAX, type Turn, type TurnStats } from "../../../protocol/index.ts";
+import { TURN_MESSAGES_MAX, type Turn, type TurnCommand, type TurnStats } from "../../../protocol/index.ts";
 import type { RelayConfig } from "../config.ts";
 import { log } from "../log.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
 import { attachmentFields, attachmentIdsAtPaths, recordTurnAttachments } from "./attachments.ts";
 import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
+import { type LocalCommand, LocalCommandReader } from "./commandTurns.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import { type DialogWatcher, HOOK_DIALOGS } from "./dialogWatch.ts";
@@ -26,6 +27,7 @@ import type { TurnStopper } from "./stop.ts";
 import type { SuggestionWatcher } from "./suggestion.ts";
 import { forgetSuggestionKnown } from "./suggestionSeen.ts";
 import { head } from "./text.ts";
+import { markShownAsTurn, shownOutput } from "./timeline.ts";
 import {
   answerOwner,
   endedContextFull,
@@ -88,6 +90,8 @@ type PhoneTyped = {
 };
 /** Newest last. A terminal session keeps one; a session the helper runs keeps every message it hasn't reported yet. */
 const phoneTyped = new Map<string, PhoneTyped[]>();
+/** The running handler, told when a slash command is noted so its transcript is read from before the echo. */
+let slashNoted: ((sessionId: string) => void) | null = null;
 
 function removeTyped(sessionId: string, entry: PhoneTyped): void {
   const rest = (phoneTyped.get(sessionId) ?? []).filter((e) => e !== entry);
@@ -140,6 +144,7 @@ export function notePhoneTyped(
     ? (phoneTyped.get(sessionId) ?? []).filter((e) => Date.now() - e.notedAt < PHONE_TYPED_KEEP_MS)
     : [];
   phoneTyped.set(sessionId, [...earlier, entry]);
+  if (clean.startsWith("/")) slashNoted?.(sessionId);
 }
 
 /** The message `notePhoneTyped` stored was typed just now: its age starts here. */
@@ -240,6 +245,8 @@ export const COMPACTED = "Conversation compacted.";
 export const COMPACT_FAILED = "Compacting didn't finish. Try it again, or clear the chat.";
 /** How long a `/compact` may take before its turn is given up as failed (a long chat took 80 s). */
 const COMPACT_GIVE_UP_MS = 10 * 60_000;
+/** How long after typing a slash command the phone's send is watched for its echo. */
+const SLASH_WATCH_MS = 30_000;
 
 const LINK_WINDOW_MS = 10_000;
 
@@ -265,6 +272,9 @@ export class HookHandler {
   private readonly compacting = new Map<string, string>();
   /** Tests shorten it. */
   compactGiveUpMs = COMPACT_GIVE_UP_MS;
+  private readonly localCommands = new LocalCommandReader();
+  /** How long an echo waits for its output before it counts as a command that printed nothing; tests shorten it. */
+  commandGraceMs = 1500;
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
   private readonly heldNotice = new Map<string, number>();
   /** Chats that ended by /clear or /resume and wait for their successor, by session id. */
@@ -279,6 +289,11 @@ export class HookHandler {
     this.steps = d.steps ?? new StepTracker(d.events);
     this.messages = d.messages ?? new MessageTracker(d.events);
     this.background = d.background ?? new BackgroundTracker(d.events);
+    slashNoted = (sessionId) => {
+      const session = this.d.registry.get(sessionId);
+      const path = session ? (transcriptPathFor(session) ?? session.transcript) : null;
+      if (path) this.localCommands.open(sessionId, path);
+    };
   }
 
   /** A status line refresh (usage-left): keeps what is left of the limits and tells the phones when it changed. */
@@ -287,6 +302,7 @@ export class HookHandler {
     if (typeof sessionId !== "string") return;
     const known = this.d.registry.get(sessionId);
     if (!known || known.status === "ended") return;
+    this.scanCommands(sessionId);
     // The model and effort the status line reports: published when either changed.
     const model = payload.model as { display_name?: unknown } | undefined;
     const effort = payload.effort as { level?: unknown } | undefined;
@@ -329,6 +345,9 @@ export class HookHandler {
     // (the status change that follows publishes it).
     if ((event === "UserPromptSubmit" || event === "Stop") && !sessionModels.has(sessionId))
       sessionModels.setModel(sessionId, modelFromTranscript(session.transcript ?? str("transcript_path")));
+
+    this.scanCommands(sessionId, session.transcript ?? str("transcript_path") ?? null, session.cwd);
+    if (event === "UserPromptSubmit" || event === "PreCompact") this.flushCommands(sessionId, session.cwd);
 
     if (this.d.dialogs) {
       if (event === "Notification") {
@@ -747,6 +766,50 @@ export class HookHandler {
     return Promise.race([reply, aborted]);
   }
 
+  /** Whether a phone send starting with a slash is still waiting for Claude Code to answer it. */
+  pendingSlashSessions(): string[] {
+    const now = Date.now();
+    return [...phoneTyped]
+      .filter(([, list]) => list.some((e) => e.text.startsWith("/") && now - e.notedAt < SLASH_WATCH_MS))
+      .map(([id]) => id);
+  }
+
+  /** Looks for local slash commands the session's transcript gained since the last look. */
+  scanCommands(sessionId: string, transcript?: string | null, cwd?: string | null): void {
+    const session = this.d.registry.get(sessionId);
+    if (!session || session.status === "ended") return;
+    const path = transcript ?? transcriptPathFor(session);
+    if (!path) return;
+    const inTurn = !!this.openTurn(sessionId) || this.stopping.has(sessionId);
+    const found = this.localCommands.scan(sessionId, path, this.commandGraceMs, Date.now(), inTurn);
+    for (const command of found) this.commandTurn(sessionId, command, cwd ?? session.cwd);
+  }
+
+  /** A model turn is about to start: a command echo still held was a local command with no output. */
+  private flushCommands(sessionId: string, cwd: string | null): void {
+    for (const command of this.localCommands.flush(sessionId)) this.commandTurn(sessionId, command, cwd);
+  }
+
+  /** A command Claude Code ran without the model, outside a turn, is a turn of its own: started and done at once. */
+  private commandTurn(sessionId: string, command: LocalCommand, cwd: string | null): void {
+    // Inside a turn it stays one of that turn's steps.
+    if (this.openTurn(sessionId) || this.stopping.has(sessionId)) return;
+    const line = `/${command.name}${command.args ? ` ${command.args}` : ""}`;
+    const typed = (phoneTyped.get(sessionId) ?? []).findLast((e) => squash(e.text) === squash(line));
+    if (typed) removeTyped(sessionId, typed);
+    else if (!this.d.registry.ownedByHelper(sessionId)) this.d.presence.noteLocalActivity();
+    markShownAsTurn(...command.uuids);
+    const printed = shownOutput(command.output ?? "").output;
+    const turnId = this.beginTurn(sessionId, line, null, cwd, [], typed?.sendId);
+    const open = this.openTurn(sessionId);
+    if (!open || open.id !== turnId) return;
+    const args = command.args ? redact(command.args) : "";
+    this.finishTurn(sessionId, open, printed ?? `Ran ${line}`, false, null, cwd, undefined, {
+      name: command.name,
+      ...(args ? { args } : {}),
+    });
+  }
+
   /** Starts a turn and its live trackers (steps, messages, timeline). */
   private beginTurn(
     sessionId: string,
@@ -865,10 +928,14 @@ export class HookHandler {
     transcript: string | null,
     cwd: string | null,
     shown?: string,
+    command?: TurnCommand,
   ): Turn {
     const id = open?.id ?? newId("t");
     const full = redact(shown ?? rawText);
-    const { text: summary, truncated } = compact(full, this.d.config.previewChars);
+    // A command's output is already cut to its last lines: shown whole, not as an answer's preview.
+    const { text: summary, truncated } = command
+      ? { text: full, truncated: false }
+      : compact(full, this.d.config.previewChars);
     // A newer turn already started (a prompt queued at the computer): only this turn's part of the transcript,
     // from its prompt to the next one. Otherwise everything since the last prompt.
     const next = this.openTurn(sessionId);
@@ -946,6 +1013,10 @@ export class HookHandler {
           msgsJson,
         );
     }
+    if (command)
+      this.d.db
+        .query("INSERT OR REPLACE INTO turn_commands (turn_id, name, args) VALUES (?, ?, ?)")
+        .run(id, command.name, command.args ?? null);
     const turn: Turn = {
       id,
       sessionId,
@@ -957,6 +1028,7 @@ export class HookHandler {
       failed,
       startedAt: open?.started_at ?? null,
       endedAt,
+      ...(command ? { command } : {}),
       ...timeline,
       ...turnMessageFields(messages),
       ...attachmentFields(this.d.db, sessionId, open?.prompt, open?.id),

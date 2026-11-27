@@ -12,6 +12,7 @@ import {
   type SessionStarted,
   sessionNameLength,
   type Turn,
+  type TurnCommand,
   type TurnFullResult,
   type TurnStats,
   type TurnStep,
@@ -398,6 +399,7 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         const recorded = rows.map((r) => ({
           ...toTurn(r),
           ...attachmentFields(d.db, sessionId, r.prompt, r.id),
+          ...commandField(d.db, r.id),
         }));
         if (recorded.length >= limit) return fitReply(recorded, opts, reserve);
         // Fill older history (before Relay's hooks saw this session) from Claude Code's transcript.
@@ -1014,6 +1016,14 @@ interface TurnRow {
   ended_at: number;
   steps_json?: string | null;
   messages_json?: string | null;
+}
+
+function commandField(db: DB, turnId: string): { command?: TurnCommand } {
+  const row = db.query("SELECT name, args FROM turn_commands WHERE turn_id = ?").get(turnId) as {
+    name: string;
+    args: string | null;
+  } | null;
+  return row ? { command: { name: row.name, ...(row.args ? { args: row.args } : {}) } } : {};
 }
 
 function toTurn(r: TurnRow): Turn {

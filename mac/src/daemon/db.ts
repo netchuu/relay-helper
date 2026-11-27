@@ -202,6 +202,8 @@ const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS session_links (session_id TEXT PRIMARY KEY, replaced_by TEXT, replaces TEXT);`,
   // 25: the terminal dialog a question prompt stands for (kind and title). A table of its own, so it also runs on a database moved back to an older version.
   `CREATE TABLE IF NOT EXISTS prompt_dialogs (prompt_id TEXT PRIMARY KEY, dialog_json TEXT NOT NULL);`,
+  // 26: the slash command behind a turn Claude Code ran without the model.
+  `CREATE TABLE IF NOT EXISTS turn_commands (turn_id TEXT PRIMARY KEY, name TEXT NOT NULL, args TEXT);`,
 ];
 
 /** The schema version a fully migrated database has. Tests compare with this, not a number. */

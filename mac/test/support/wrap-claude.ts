@@ -23,6 +23,7 @@ if (args[0] === "crash") {
     process.stdout.write("continued\r\n");
   });
   process.stdin.setRawMode(true);
+  note("READY");
   let all = "";
   process.stdin.on("data", (d) => {
     const text = d.toString("utf8");

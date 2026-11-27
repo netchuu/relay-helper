@@ -220,6 +220,10 @@ export async function runDaemon(): Promise<void> {
 
   const timers = [
     setInterval(() => broker.expire(config.promptTimeoutSeconds * 1000), 60_000),
+    // A slash command typed on the phone writes no hook: its echo is looked for while the send is fresh.
+    setInterval(() => {
+      for (const id of hooks.pendingSlashSessions()) hooks.scanCommands(id);
+    }, 500),
     // Replies an older helper left waiting go out now.
     setInterval(
       () =>
