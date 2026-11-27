@@ -34,7 +34,7 @@ export function savedSettingsPath(saved: string | undefined): string | undefined
  */
 const RELAY_HOOK_COMMAND = /(^|[/\\])relay-hook(["']?)(\s|$)/;
 
-function isRelayCommand(command: string | undefined): boolean {
+export function isRelayCommand(command: string | undefined): boolean {
   return command !== undefined && RELAY_HOOK_COMMAND.test(command.trim());
 }
 

@@ -6,7 +6,7 @@ import { cleanTypedText } from "../shell/typedText.ts";
 import { attachmentFields, attachmentIdsAtPaths, recordTurnAttachments } from "./attachments.ts";
 import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
-import { type LocalCommand, LocalCommandReader } from "./commandTurns.ts";
+import { type HookTrace, type LocalCommand, LocalCommandReader } from "./commandTurns.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import { type DialogWatcher, HOOK_DIALOGS } from "./dialogWatch.ts";
@@ -144,7 +144,7 @@ export function notePhoneTyped(
     ? (phoneTyped.get(sessionId) ?? []).filter((e) => Date.now() - e.notedAt < PHONE_TYPED_KEEP_MS)
     : [];
   phoneTyped.set(sessionId, [...earlier, entry]);
-  if (clean.startsWith("/")) slashNoted?.(sessionId);
+  slashNoted?.(sessionId);
 }
 
 /** The message `notePhoneTyped` stored was typed just now: its age starts here. */
@@ -243,6 +243,7 @@ const HELD_NOTICE_MS = 2000;
 export const COMPACTED = "Conversation compacted.";
 const QUIT = "Claude Code was quit.";
 const CLEARED = "Cleared. The conversation continues in a new chat.";
+const BLOCKED_PREFIX = "A hook on your computer blocked this message";
 const LOST_TEXT = "Claude Code ended before it read this message.";
 /** What it says when nothing reported the end of a `/compact`. */
 export const COMPACT_FAILED = "Compacting didn't finish. Try it again, or clear the chat.";
@@ -276,6 +277,9 @@ export class HookHandler {
   /** Tests shorten it. */
   compactGiveUpMs = COMPACT_GIVE_UP_MS;
   private readonly localCommands = new LocalCommandReader();
+  /** The phone's `sendId` of each turn it started, for a block that comes after the turn began. */
+  private readonly turnSends = new Map<string, { sessionId: string; sendId: string; at: number }>();
+  private readonly reportedHookErrors = new Map<string, Set<string>>();
   /** How long an echo waits for its output before it counts as a command that printed nothing; tests shorten it. */
   commandGraceMs = 1500;
   /** A notice held back during a running turn, by when it arrived (HELD_NOTICE_MS). */
@@ -813,9 +817,12 @@ export class HookHandler {
   /** Whether a phone send starting with a slash is still waiting for Claude Code to answer it. */
   pendingSlashSessions(): string[] {
     const now = Date.now();
-    return [...phoneTyped]
-      .filter(([, list]) => list.some((e) => e.text.startsWith("/") && now - e.notedAt < SLASH_WATCH_MS))
-      .map(([id]) => id);
+    const ids = new Set<string>();
+    for (const [id, list] of phoneTyped) if (list.some((e) => now - e.notedAt < SLASH_WATCH_MS)) ids.add(id);
+    // The helper's own hook drops the phone's entry while another hook may still block the prompt.
+    for (const send of this.turnSends.values())
+      if (now - send.at < SLASH_WATCH_MS && this.openTurn(send.sessionId)) ids.add(send.sessionId);
+    return [...ids];
   }
 
   /** Looks for local slash commands the session's transcript gained since the last look. */
@@ -827,6 +834,39 @@ export class HookHandler {
     const inTurn = !!this.openTurn(sessionId) || this.stopping.has(sessionId);
     const found = this.localCommands.scan(sessionId, path, this.commandGraceMs, Date.now(), inTurn);
     for (const command of found) this.commandTurn(sessionId, command, cwd ?? session.cwd);
+    for (const trace of this.localCommands.takeTraces(sessionId))
+      this.hookTrace(sessionId, trace, session.cwd);
+  }
+
+  /** A hook stopped a prompt, or failed: the phone's message gets its outcome, a failure an error notice. */
+  private hookTrace(sessionId: string, trace: HookTrace, cwd: string | null): void {
+    if (trace.kind === "error") {
+      const seen = this.reportedHookErrors.get(sessionId) ?? new Set<string>();
+      const key = `${trace.event}\n${trace.detail}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      this.reportedHookErrors.set(sessionId, seen);
+      const detail = oneLine(redact(trace.detail), 300);
+      this.d.events.emit({
+        type: "session.notice",
+        sessionId,
+        level: "error",
+        text: `${trace.event} hook error${detail ? `: ${detail}` : ""}`,
+      });
+      return;
+    }
+    const text = `${BLOCKED_PREFIX}${trace.reason ? `: ${oneLine(redact(trace.reason), 500)}` : "."}`;
+    const typed = (phoneTyped.get(sessionId) ?? []).findLast((e) => matchesPhoneTyped(e, trace.prompt));
+    if (typed) removeTyped(sessionId, typed);
+    // The helper's own hook can run before the blocking one: its turn never gets a Stop.
+    const open = this.openTurn(sessionId);
+    const started = open && open.prompt === redact(trace.prompt) ? open : null;
+    const sendId = typed?.sendId ?? (started ? this.turnSends.get(started.id)?.sendId : undefined);
+    if (started) {
+      this.finishTurn(sessionId, started, text, true, null, cwd, undefined, { name: "blocked" });
+      this.d.registry.setStatus(sessionId, "idle");
+    }
+    if (sendId) this.d.events.emit({ type: "reply.outcome", sessionId, sendId, outcome: "blocked", text });
   }
 
   /** A model turn is about to start: a command echo still held was a local command with no output. */
@@ -886,6 +926,9 @@ export class HookHandler {
       .query("INSERT INTO turns (id, session_id, prompt, started_at) VALUES (?, ?, ?, ?)")
       .run(turnId, sessionId, shown, now);
     recordTurnAttachments(this.d.db, turnId, attachmentIds);
+    for (const [id, send] of this.turnSends) if (send.sessionId === sessionId) this.turnSends.delete(id);
+    this.reportedHookErrors.delete(sessionId);
+    if (sendId) this.turnSends.set(turnId, { sessionId, sendId, at: now });
     // The phone shows the prompt at once, not only when the answer is done.
     this.d.events.emit({
       type: "turn.started",
@@ -975,6 +1018,7 @@ export class HookHandler {
     command?: TurnCommand,
   ): Turn {
     const id = open?.id ?? newId("t");
+    this.turnSends.delete(id);
     const full = redact(shown ?? rawText);
     // A command's output is already cut to its last lines: shown whole, not as an answer's preview.
     const { text: summary, truncated } = command

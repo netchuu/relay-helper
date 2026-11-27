@@ -1,4 +1,5 @@
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { isRelayCommand } from "../install.ts";
 import { commandText, parseCommandEcho, parseCommandPrinted, type TimelineEntry } from "./timeline.ts";
 
 /** A slash command Claude Code ran without the model: its echo in the transcript and what it printed. */
@@ -12,12 +13,18 @@ export interface LocalCommand {
   at: number;
 }
 
+/** A hook's trace in the transcript: it stopped the prompt, or it failed without stopping anything. */
+export type HookTrace =
+  | { kind: "blocked"; reason: string; prompt: string }
+  | { kind: "error"; event: string; detail: string };
+
 interface Cursor {
   path: string;
   offset: number;
   partial: Buffer;
   /** An echo still waiting for its output. */
   echo: { command: LocalCommand; since: number; inTurn: boolean } | null;
+  traces: HookTrace[];
 }
 
 function sameFile(a: string, b: string): boolean {
@@ -27,6 +34,36 @@ function sameFile(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+const ORIGINAL_PROMPT = "\n\nOriginal prompt: ";
+
+/** A blocked prompt is a system line with the hook's reason; a hook that failed is an attachment with its stderr. */
+function hookTrace(entry: TimelineEntry): HookTrace | null {
+  const e = entry as {
+    type?: string;
+    content?: unknown;
+    promptSubmitEnding?: { ending?: { kind?: string; reason?: unknown } };
+    attachment?: { type?: string; hookEvent?: unknown; stderr?: unknown; command?: unknown };
+  };
+  if (e.type === "system" && e.promptSubmitEnding?.ending?.kind === "blocked_by_hook") {
+    const content = typeof e.content === "string" ? e.content : "";
+    const at = content.lastIndexOf(ORIGINAL_PROMPT);
+    const reason = e.promptSubmitEnding.ending.reason;
+    return {
+      kind: "blocked",
+      reason: typeof reason === "string" ? reason.trim() : "",
+      prompt: at === -1 ? "" : content.slice(at + ORIGINAL_PROMPT.length),
+    };
+  }
+  const a = e.attachment;
+  if (e.type === "attachment" && a?.type === "hook_non_blocking_error") {
+    if (typeof a.command === "string" && isRelayCommand(a.command)) return null;
+    const stderr = typeof a.stderr === "string" ? a.stderr : "";
+    const detail = stderr.replace(/^Failed with non-blocking status code:\s*/, "").trim();
+    return { kind: "error", event: typeof a.hookEvent === "string" ? a.hookEvent : "A", detail };
+  }
+  return null;
 }
 
 /** Commands that other mechanisms already answer: a model turn, a compaction, the end of the session. */
@@ -54,6 +91,11 @@ export class LocalCommandReader {
         continue;
       }
       if (!entry) continue;
+      const trace = hookTrace(entry);
+      if (trace) {
+        cursor.traces.push(trace);
+        continue;
+      }
       const text = commandText(entry);
       const echo = parseCommandEcho(text);
       const printed = echo ? null : parseCommandPrinted(text);
@@ -86,6 +128,12 @@ export class LocalCommandReader {
     return out.filter((c) => !NOT_LOCAL.has(c.name));
   }
 
+  /** The hook blocks and failures read since the last call. */
+  takeTraces(sessionId: string): HookTrace[] {
+    const cursor = this.cursors.get(sessionId);
+    return cursor ? cursor.traces.splice(0) : [];
+  }
+
   /** The echo still waiting for output, given up now (a model turn is about to begin): it printed nothing. */
   flush(sessionId: string): LocalCommand[] {
     const cursor = this.cursors.get(sessionId);
@@ -113,7 +161,7 @@ export class LocalCommandReader {
     } catch {
       // not written yet: everything in it will be new
     }
-    const cursor: Cursor = { path, offset: size, partial: Buffer.alloc(0), echo: null };
+    const cursor: Cursor = { path, offset: size, partial: Buffer.alloc(0), echo: null, traces: [] };
     this.cursors.set(sessionId, cursor);
     return cursor;
   }
