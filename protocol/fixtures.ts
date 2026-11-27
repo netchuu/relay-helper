@@ -851,7 +851,7 @@ const start = {
     "p_start_trust",
     "trust",
     "Trust this folder?",
-    "Do you trust the files in /Users/me/Projects/web-shop?",
+    "Trust this folder?\n/Users/me/Projects/web-shop\nClaude Code will be able to read, edit, and run files here.",
     ["No, exit", "Yes, I trust this folder"],
   ),
   // An older helper: the phone hides the entry point, and a call that went out anyway gets this.
@@ -1160,7 +1160,7 @@ const dialogs = {
     "p_trust",
     "trust",
     "Trust this folder?",
-    "Do you trust the files in /Users/me/Projects/web-shop?",
+    "Trust this folder?\n/Users/me/Projects/web-shop\nClaude Code will be able to read, edit, and run files here.",
     ["No, exit", "Yes, I trust this folder"],
   ),
   mcpServer: dialogQuestion(
@@ -1184,7 +1184,7 @@ const dialogs = {
       "p_trust",
       "trust",
       "Trust this folder?",
-      "Do you trust the files in /Users/me/Projects/web-shop?",
+      "Trust this folder?\n/Users/me/Projects/web-shop\nClaude Code will be able to read, edit, and run files here.",
       ["No, exit", "Yes, I trust this folder"],
     ),
   }),

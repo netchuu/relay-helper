@@ -278,6 +278,12 @@ end run`;
 /** Ctrl+S (Claude Code's stash key) for iTerm2: the byte through `write text … newline no`. */
 export const ITERM_STASH_SCRIPT = ITERM_ESCAPE_SCRIPT.replace("character id 27", "character id 19");
 
+/** An arrow key for iTerm2: ESC and the rest of its sequence, with no Enter after. */
+export const ITERM_ARROW_SCRIPTS = {
+  up: ITERM_ESCAPE_SCRIPT.replace("(character id 27)", '((character id 27) & "[A")'),
+  down: ITERM_ESCAPE_SCRIPT.replace("(character id 27)", '((character id 27) & "[B")'),
+};
+
 /** Enter alone, for a typed message that sat unsent: `write text ""` is a bare Return. */
 export const ENTER_SCRIPTS: Record<TypingRoute, string> = {
   iterm: `on run argv
@@ -302,11 +308,17 @@ end run`,
 export async function keyIntoTerminalApp(
   app: TypingRoute,
   tty: string,
-  key: "escape" | "enter" | "stash",
+  key: "escape" | "enter" | "stash" | "up" | "down",
 ): Promise<boolean> {
   if (key !== "enter" && app !== "iterm") return false;
   const script =
-    key === "enter" ? ENTER_SCRIPTS[app] : key === "stash" ? ITERM_STASH_SCRIPT : ITERM_ESCAPE_SCRIPT;
+    key === "enter"
+      ? ENTER_SCRIPTS[app]
+      : key === "stash"
+        ? ITERM_STASH_SCRIPT
+        : key === "up" || key === "down"
+          ? ITERM_ARROW_SCRIPTS[key]
+          : ITERM_ESCAPE_SCRIPT;
   const res = await run(["osascript", "-e", script, tty], { timeoutMs: 10_000 });
   noteAutomation(app, res.err, res.out === "ok");
   if (res.out !== "ok")

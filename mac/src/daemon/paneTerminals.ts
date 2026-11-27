@@ -83,6 +83,11 @@ export function paneEscapeSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\u001b", false)];
 }
 
+/** An arrow key alone. */
+export function paneArrowSteps(target: PaneTarget, key: "up" | "down"): PaneStep[] {
+  return [sendText(target, key === "up" ? "\u001b[A" : "\u001b[B", false)];
+}
+
 /**
  * The commands that type a message: the text (pasted when it holds a newline or tab, so it stays one message), each
  * attachment path pasted on its own, then Enter.
@@ -157,6 +162,10 @@ export async function paneEnter(target: PaneTarget): Promise<void> {
 
 export async function paneStash(target: PaneTarget): Promise<void> {
   await runSteps(target, paneStashSteps(target), "send-text");
+}
+
+export async function paneArrow(target: PaneTarget, key: "up" | "down"): Promise<void> {
+  await runSteps(target, paneArrowSteps(target, key), "send-text");
 }
 
 export async function paneEscape(target: PaneTarget): Promise<void> {

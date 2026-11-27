@@ -22,10 +22,12 @@ import { platform } from "../platform/index.ts";
 import type { TabView, TypingRoute } from "../platform/types.ts";
 import type { TypeReply, TypeRequest } from "../shell/ptyShell.ts";
 import { cleanTypedText } from "../shell/typedText.ts";
+import { detectDialog } from "./dialogs.ts";
 import {
   type PaneInfo,
   type PaneTarget,
   PartlyTyped,
+  paneArrow,
   paneEnter,
   paneEscape,
   paneInfo,
@@ -147,6 +149,11 @@ export interface TypeOps {
   paneType?(target: PaneTarget, text: string): Promise<void>;
   paneEnter?(target: PaneTarget): Promise<void>;
   paneStash?(target: PaneTarget): Promise<void>;
+  /** Arrow keys, to move a dialog's cursor. Absent: the route can't answer a dialog. */
+  ptyArrow?(socketPath: string, token: string, pid: number, key: "up" | "down"): Promise<TypeReply>;
+  tmuxArrow?(socket: string, pane: string, key: "up" | "down"): Promise<void>;
+  paneArrow?(target: PaneTarget, key: "up" | "down"): Promise<void>;
+  arrow?(route: TypingRoute, tty: string, key: "up" | "down"): Promise<boolean>;
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null, procs?: Procs): Promise<string | null>;
@@ -206,6 +213,7 @@ export const defaultTypeOps: TypeOps = {
   paneType: (target, text) => paneType(target, text, splitAttachmentPaths),
   paneEnter,
   paneStash,
+  paneArrow,
   paneInfo,
   routes: (t) => platform.typing.routes(t),
   ttyOf,
@@ -217,6 +225,9 @@ export const defaultTypeOps: TypeOps = {
   enterPty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "enter" }),
   tmuxEnter,
   tmuxStash,
+  ptyArrow: (socketPath, token, pid, key) => requestPty(socketPath, { token, pid, key }),
+  tmuxArrow,
+  arrow: (route, tty, key) => platform.typing.key(route, tty, key),
   enter: (route, tty) => platform.typing.key(route, tty, "enter"),
   stash: (route, tty) => platform.typing.key(route, tty, "stash"),
   sleep: (ms) => Bun.sleep(ms),
@@ -551,7 +562,7 @@ export function draftSubmitted(sessionId: string, prompt: string): void {
   if (!own) draftKept.delete(sessionId);
 }
 
-type KeyName = "enter" | "escape" | "stash";
+type KeyName = "enter" | "escape" | "stash" | "up" | "down";
 
 /** What a route does with a message: typed whole, typed in part (text went in, then a step failed), or not at all. */
 type TypeOutcome = "sent" | "partial" | "failed";
@@ -609,10 +620,17 @@ function typeWire(ops: TypeOps): Wire {
     ptyKey: (socketPath, token, pid, key) =>
       key === "enter" && ops.enterPty
         ? ops.enterPty(socketPath, token, pid)
-        : Promise.reject(new DeliveryError("no such key")),
+        : (key === "up" || key === "down") && ops.ptyArrow
+          ? ops.ptyArrow(socketPath, token, pid, key)
+          : Promise.reject(new DeliveryError("no such key")),
     tmuxScreen: (socket, pane) => ops.tmuxScreen(socket, pane, seen),
     tmuxType: ops.tmux,
     tmuxKey: async (socket, pane, key) => {
+      if (key === "up" || key === "down") {
+        if (!ops.tmuxArrow) throw new DeliveryError("no such key");
+        await ops.tmuxArrow(socket, pane, key);
+        return;
+      }
       const press = key === "enter" ? ops.tmuxEnter : key === "stash" ? ops.tmuxStash : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(socket, pane);
@@ -622,6 +640,11 @@ function typeWire(ops: TypeOps): Wire {
     paneScreen: ops.paneScreen,
     paneType: ops.paneType,
     paneKey: async (target, key) => {
+      if (key === "up" || key === "down") {
+        if (!ops.paneArrow) throw new DeliveryError("no such key");
+        await ops.paneArrow(target, key);
+        return;
+      }
       const press = key === "enter" ? ops.paneEnter : key === "stash" ? ops.paneStash : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(target);
@@ -635,7 +658,9 @@ function typeWire(ops: TypeOps): Wire {
         ? ops.enter(route, tty)
         : key === "stash" && ops.stash
           ? ops.stash(route, tty)
-          : false,
+          : (key === "up" || key === "down") && ops.arrow
+            ? ops.arrow(route, tty, key)
+            : false,
     ttyOf: (pid) => ops.ttyOf(pid, procs),
     viewerTtyOf:
       ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
@@ -979,6 +1004,53 @@ export async function typingRouteFor(
 
 /** How long after the Stop a look can still be taken as what the prompt showed when the session went idle. */
 const SEEN_WITHIN_MS = 15_000;
+
+/** Moves the cursor of the dialog on screen to `label` and presses Enter: only after reading it again at each step. */
+export async function answerScreenDialog(
+  session: SessionRecord,
+  dialogId: string,
+  label: string,
+  ops: TypeOps = defaultTypeOps,
+): Promise<boolean> {
+  const sleep = ops.sleep ?? Bun.sleep;
+  for (const route of routesFor(session, typeWire(ops))) {
+    const ready = await route.probe().catch(() => null);
+    if (!ready) continue;
+    const look = async () => {
+      const screen = (await route.read().catch(() => null))?.screen;
+      const found = typeof screen === "string" ? detectDialog(screen) : null;
+      return found?.id === dialogId ? found : null;
+    };
+    let dialog = await look();
+    if (!dialog) return false;
+    const target = dialog.options.indexOf(label);
+    if (target < 0) return false;
+    let pressed = false;
+    for (let step = 0; dialog.cursor !== target; step++) {
+      if (step > dialog.options.length) return false;
+      const at = dialog.cursor;
+      if (!(await ready.key(at < target ? "down" : "up"))) {
+        if (pressed) return false;
+        break;
+      }
+      pressed = true;
+      // The screen redraws a moment after the key.
+      await sleep(DIALOG_SETTLE_MS);
+      let next = await look();
+      if (next && next.cursor === at) {
+        await sleep(DIALOG_SETTLE_MS);
+        next = await look();
+      }
+      if (!next || next.cursor === at) return false;
+      dialog = next;
+    }
+    if (dialog.cursor !== target) continue;
+    return ready.key("enter").catch(() => false);
+  }
+  return false;
+}
+
+const DIALOG_SETTLE_MS = 120;
 
 /** The session's terminal screen, escape codes included; null or undefined when no route can read it. Quiet. */
 export async function readScreen(
@@ -1417,6 +1489,18 @@ export async function tmuxType(socket: string, pane: string, text: string): Prom
 async function tmuxEnter(socket: string, pane: string): Promise<void> {
   await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "Enter"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const code = await proc.exited;
+  if (code !== 0) throw new DeliveryError(`tmux send-keys failed (${code})`);
+}
+
+async function tmuxArrow(socket: string, pane: string, key: "up" | "down"): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
+  const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, key === "up" ? "Up" : "Down"], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

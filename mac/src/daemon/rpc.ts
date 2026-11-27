@@ -29,6 +29,7 @@ import {
 import { ensurePushKey, revokeDevice } from "./auth.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB, getSetting } from "./db.ts";
+import type { DialogWatcher } from "./dialogWatch.ts";
 import type { EventLog } from "./events.ts";
 import type { Handover } from "./handover.ts";
 import { type HeadlessSessions, ResumeError } from "./headless.ts";
@@ -104,6 +105,8 @@ export interface RpcDeps {
   hasTranscript?: (session: SessionRecord) => boolean;
   /** Claude Code's suggested next message per session; a message sent from the phone drops it. */
   suggestions?: SuggestionWatcher;
+  /** Settles a dialog question by pressing the pick into the terminal. */
+  dialogs?: DialogWatcher;
 }
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
@@ -574,8 +577,9 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       return publicSession(updated);
     },
 
-    "prompt.answer": ({ promptId, answer }, actor) => {
-      const res = d.broker.answer(promptId, answer, actor);
+    "prompt.answer": async ({ promptId, answer }, actor) => {
+      const res =
+        (await d.dialogs?.answer(promptId, answer, actor)) ?? d.broker.answer(promptId, answer, actor);
       if (!res.ok) throw new RpcFailure(res.code, res.message);
       return { ok: true };
     },

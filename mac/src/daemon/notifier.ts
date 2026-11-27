@@ -99,6 +99,14 @@ export function promptAlert(prompt: Prompt, name: string): Alert {
   };
   switch (prompt.payload.kind) {
     case "question": {
+      // Nobody trusts a folder from a lock screen: no answer buttons.
+      if (prompt.dialog?.kind === "trust")
+        return {
+          ...base,
+          title: name,
+          body: "Claude Code asks whether you trust this folder.",
+          category: Category.notice,
+        };
       const [first, ...rest] = prompt.payload.questions;
       const simple =
         prompt.payload.questions.length === 1 && first && !first.multiSelect && first.options.length <= 4;

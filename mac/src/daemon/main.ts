@@ -23,6 +23,7 @@ import { MessageTracker } from "./messages.ts";
 import { Notifier } from "./notifier.ts";
 import { Phones } from "./phones.ts";
 import { PresenceMonitor } from "./presence.ts";
+import { promptStatusSync } from "./promptStatus.ts";
 import { PushOutcomes } from "./pushOutcomes.ts";
 import { Registry, setTypingPreferred } from "./registry.ts";
 import { RelayLink } from "./relayLink.ts";
@@ -46,14 +47,9 @@ export async function runDaemon(): Promise<void> {
   setTypingPreferred(config.preferTyping);
   const registry = new Registry(db, events);
   setKnownPids(() => registry.list().flatMap((s) => (s.pid ? [s.pid] : [])));
-  const broker = new Broker(db, events, (sessionId) => {
-    // Keep the session's "waiting" status in sync with its open prompts.
-    const s = registry.get(sessionId);
-    if (!s || s.status === "ended") return;
-    if (broker.hasOpen(sessionId)) {
-      if (s.status !== "waiting") registry.setStatus(sessionId, "waiting");
-    } else if (s.status === "waiting") registry.setStatus(sessionId, "working");
-  });
+  let syncStatus = (_sessionId: string): void => {};
+  const broker = new Broker(db, events, (sessionId) => syncStatus(sessionId));
+  syncStatus = promptStatusSync(registry, broker);
   const phones = new Phones();
   const presence = new PresenceMonitor(db, events, config.idleAwaySeconds, () =>
     replies.list().some((r) => r.waitsFor === "unlock"),
@@ -152,8 +148,9 @@ export async function runDaemon(): Promise<void> {
   const dialogs = new DialogWatcher({
     registry,
     events,
+    broker,
     phoneConnected: () => phones.connected,
-    hasOpen: (id) => broker.hasOpen(id),
+    hasOpen: (id) => broker.listOpen(id).some((p) => !p.dialog),
   });
   dialogs.start();
   const handover = new Handover({

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   Answer,
   Prompt,
+  PromptDialog,
   PromptKind,
   PromptPayload,
   Question,
@@ -46,6 +47,7 @@ interface PromptRow {
   answer_json: string | null;
   created_at: number;
   resolved_at: number | null;
+  dialog_json: string | null;
 }
 
 export type AnswerResult =
@@ -63,6 +65,7 @@ function toPrompt(r: PromptRow): Prompt {
     createdAt: r.created_at,
     resolvedAt: r.resolved_at,
     outcome: outcomeOf(r.resolved_by, r.answer_json ? (JSON.parse(r.answer_json) as StoredAnswer) : null),
+    ...(r.dialog_json ? { dialog: JSON.parse(r.dialog_json) as PromptDialog } : {}),
   };
 }
 
@@ -103,9 +106,16 @@ export function outcomeOf(by: ResolvedBy | null, answer: StoredAnswer | null): s
   }
 }
 
+/** Every prompt column, and the terminal dialog it stands for (a table of its own). */
+const PROMPT_ROWS =
+  "SELECT prompts.*, (SELECT dialog_json FROM prompt_dialogs WHERE prompt_id = prompts.id) AS dialog_json FROM prompts";
+
+const DIALOG_GONE = "That question is no longer open on your computer.";
+
 /** Owns open prompts; each closes once: phone answer, Mac answer (seen via hooks), "superseded" or "timeout". */
 export class Broker {
   private readonly waiters = new Map<string, Waiter>();
+  private readonly answering = new Set<string>();
 
   constructor(
     private readonly db: DB,
@@ -146,8 +156,82 @@ export class Broker {
     return { prompt, reply };
   }
 
+  /** A terminal dialog as a question for the phone. No hook waits for it: the screen is its only way to settle. */
+  openDialog(sessionId: string, dialogId: string, dialog: PromptDialog, question: Question): Prompt {
+    const id = `p_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    this.db
+      .query(
+        `INSERT INTO prompts (id, session_id, kind, tool_name, tool_input, payload_json, status, created_at)
+         VALUES (?, ?, 'question', 'Dialog', ?, ?, 'open', ?)`,
+      )
+      .run(
+        id,
+        sessionId,
+        JSON.stringify({ dialogId }),
+        JSON.stringify({ kind: "question", questions: [redactDeep(question)] }),
+        Date.now(),
+      );
+    this.db
+      .query("INSERT INTO prompt_dialogs (prompt_id, dialog_json) VALUES (?, ?)")
+      .run(id, JSON.stringify(dialog));
+    const prompt = this.get(id) as Prompt;
+    this.events.emit({ type: "prompt.opened", prompt });
+    this.onChange(sessionId);
+    return prompt;
+  }
+
+  /** The open dialog question of the session, with the id of the dialog it stands for. */
+  openDialogOf(sessionId: string): { prompt: Prompt; dialogId: string } | null {
+    const row = this.listOpenRows(sessionId).find((r) => r.dialog_json !== null);
+    if (!row) return null;
+    const dialogId = (JSON.parse(row.tool_input) as { dialogId?: string }).dialogId ?? "";
+    return { prompt: toPrompt(row), dialogId };
+  }
+
+  /**
+   * The phone's pick on a dialog question, by label. `press` moves the terminal's cursor there and presses Enter
+   * after re-reading the screen; false means the screen changed and nothing was answered.
+   */
+  async answerDialog(
+    promptId: string,
+    answer: Answer,
+    actor: string,
+    press: (label: string, dialogId: string, sessionId: string) => Promise<boolean>,
+  ): Promise<AnswerResult> {
+    const row = this.db.query(`${PROMPT_ROWS} WHERE id = ?`).get(promptId) as PromptRow | null;
+    if (!row) return { ok: false, code: "not_found", message: "unknown prompt" };
+    if (row.status !== "open" || !row.dialog_json) return this.answer(promptId, answer, actor);
+    const payload = JSON.parse(row.payload_json) as PromptPayload;
+    if (answer.kind !== "question" || payload.kind !== "question")
+      return { ok: false, code: "bad_request", message: "this prompt takes a question answer" };
+    const given = restoreCutQuestion(payload.questions, answer.answers);
+    const answers = resolveChoices(
+      payload.questions,
+      given,
+      restoreCutChoices(payload.questions, answer.choices),
+    );
+    const problem = validateQuestionAnswer(payload.questions, answers);
+    if (problem) return { ok: false, code: "bad_request", message: problem };
+    const question = payload.questions[0];
+    const label = question ? answers[question.question] : undefined;
+    if (!question || label === undefined || !question.options.some((o) => o.label === label))
+      return { ok: false, code: "bad_request", message: "that is not one of the options" };
+    if (this.answering.has(promptId)) return { ok: false, code: "conflict", message: DIALOG_GONE };
+    this.answering.add(promptId);
+    try {
+      const dialogId = (JSON.parse(row.tool_input) as { dialogId?: string }).dialogId ?? "";
+      if (!(await press(label, dialogId, row.session_id)))
+        return { ok: false, code: "conflict", message: DIALOG_GONE };
+    } finally {
+      this.answering.delete(promptId);
+    }
+    this.close(promptId, "phone", { kind: "question", answers: { [question.question]: label } });
+    audit(this.db, actor, "prompt.answer", { promptId, kind: row.kind, action: "answered a dialog" });
+    return { ok: true };
+  }
+
   get(id: string): Prompt | null {
-    const row = this.db.query("SELECT * FROM prompts WHERE id = ?").get(id) as PromptRow | null;
+    const row = this.db.query(`${PROMPT_ROWS} WHERE id = ?`).get(id) as PromptRow | null;
     return row ? toPrompt(row) : null;
   }
 
@@ -155,9 +239,9 @@ export class Broker {
     const rows = (
       sessionId
         ? this.db
-            .query("SELECT * FROM prompts WHERE status = 'open' AND session_id = ? ORDER BY created_at")
+            .query(`${PROMPT_ROWS} WHERE status = 'open' AND session_id = ? ORDER BY created_at`)
             .all(sessionId)
-        : this.db.query("SELECT * FROM prompts WHERE status = 'open' ORDER BY created_at").all()
+        : this.db.query(`${PROMPT_ROWS} WHERE status = 'open' ORDER BY created_at`).all()
     ) as PromptRow[];
     return rows.map(toPrompt);
   }
@@ -165,7 +249,7 @@ export class Broker {
   /** Settled prompts, newest first (the Inbox history). */
   listRecent(limit: number): Prompt[] {
     const rows = this.db
-      .query("SELECT * FROM prompts WHERE status = 'closed' ORDER BY resolved_at DESC LIMIT ?")
+      .query(`${PROMPT_ROWS} WHERE status = 'closed' ORDER BY resolved_at DESC LIMIT ?`)
       .all(limit) as PromptRow[];
     return rows.map(toPrompt);
   }
@@ -178,7 +262,7 @@ export class Broker {
 
   /** Answer from a paired device. First wins, later ones get `conflict`, except a phone re-sending the same answer. */
   answer(promptId: string, answer: Answer, actor: string): AnswerResult {
-    const row = this.db.query("SELECT * FROM prompts WHERE id = ?").get(promptId) as PromptRow | null;
+    const row = this.db.query(`${PROMPT_ROWS} WHERE id = ?`).get(promptId) as PromptRow | null;
     if (!row) return { ok: false, code: "not_found", message: "unknown prompt" };
     if (row.status !== "open") {
       if (row.resolved_by === "phone" && row.answer_json) {
@@ -353,7 +437,7 @@ export class Broker {
 
   private listOpenRows(sessionId: string): PromptRow[] {
     return this.db
-      .query("SELECT * FROM prompts WHERE status = 'open' AND session_id = ?")
+      .query(`${PROMPT_ROWS} WHERE status = 'open' AND session_id = ?`)
       .all(sessionId) as PromptRow[];
   }
 }

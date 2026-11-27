@@ -1,13 +1,14 @@
 /**
  * Terminal dialogs waiting at the Mac. A screen that shows one (dialogs.ts), or a hook that says one is open, puts
  * `atMac` on the session: its status lists as `waiting`, and one attention notice carries the title. The trust
- * dialog is left out: it becomes a question for the phone.
+ * dialog is left out: it becomes a question for the phone, and its answer is pressed into the screen by label.
  */
-import type { AtMacDialog } from "../../../protocol/index.ts";
+import type { Answer, AtMacDialog, Question } from "../../../protocol/index.ts";
 import { errMessage, log } from "../log.ts";
-import { atMacOf, detectDialog } from "./dialogs.ts";
+import type { AnswerResult, Broker } from "./broker.ts";
+import { atMacOf, type Dialog, detectDialog } from "./dialogs.ts";
 import type { EventLog } from "./events.ts";
-import { readScreen } from "./inject.ts";
+import { answerScreenDialog, readScreen } from "./inject.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import { head } from "./text.ts";
@@ -21,6 +22,39 @@ export const HOOK_DIALOGS = new Set([
 
 /** Dialogs the phone answers as questions, or the helper answers itself: never shown as waiting at the Mac. */
 const NOT_AT_MAC = new Set(["trust", "modelSwitch"]);
+
+/** Dialogs that open as a question for the phone. The others only wait at the Mac. */
+const ASKED = new Set(["trust"]);
+
+const TRUST_NOTE = "Claude Code will be able to read, edit, and run files here.";
+const TRUST_EFFECT: Record<string, string> = {
+  "No, exit": "Claude Code doesn't start.",
+  "Yes, I trust this folder": "Claude Code starts and can read, edit, and run files here.",
+};
+
+/** The question the phone shows for a dialog on the screen. */
+export function questionOf(d: Dialog): { title: string; question: Question } {
+  if (d.kind === "trust") {
+    const path = d.body.split("\n").find((l) => l.trim().startsWith("/") || /^[A-Za-z]:\\|^~/.test(l.trim()));
+    return {
+      title: "Trust this folder?",
+      question: {
+        question: ["Trust this folder?", path?.trim(), TRUST_NOTE].filter(Boolean).join("\n"),
+        options: d.options.map((label) => ({
+          label,
+          ...(TRUST_EFFECT[label] ? { description: TRUST_EFFECT[label] } : {}),
+        })),
+      },
+    };
+  }
+  return {
+    title: d.title,
+    question: {
+      question: [d.title, d.body].filter(Boolean).join("\n"),
+      options: d.options.map((label) => ({ label })),
+    },
+  };
+}
 
 const LOOK_EVERY_MS = 3_000;
 const LOOK_IDLE_EVERY_MS = 30_000;
@@ -37,9 +71,12 @@ export function atMacOfSession(sessionId: string): AtMacDialog | undefined {
 
 export interface DialogDeps {
   registry: Pick<Registry, "get" | "list" | "publish">;
+  /** Opens dialog questions and settles them. Absent: dialogs only wait at the Mac. */
+  broker?: Pick<Broker, "openDialog" | "openDialogOf" | "listOpen" | "close" | "answerDialog">;
+  press?: typeof answerScreenDialog;
   events: Pick<EventLog, "emit">;
   phoneConnected?: () => boolean;
-  /** A hook prompt is open for the session: the phone shows its own question. */
+  /** A hook prompt is open for the session (a dialog question is not one): the phone shows its own question. */
   hasOpen?: (sessionId: string) => boolean;
   read?: typeof readScreen;
   now?: () => number;
@@ -48,6 +85,7 @@ export interface DialogDeps {
 export class DialogWatcher {
   private readonly source = new Map<string, "screen" | "hook">();
   private readonly missing = new Map<string, number>();
+  private readonly questionGone = new Map<string, number>();
   private readonly lastLook = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -65,6 +103,7 @@ export class DialogWatcher {
 
   /** One round: looks at each session whose turn comes. */
   async tick(): Promise<void> {
+    this.closeForEnded();
     if (this.d.phoneConnected && !this.d.phoneConnected()) return;
     const now = (this.d.now ?? Date.now)();
     for (const s of this.d.registry.list()) {
@@ -80,10 +119,22 @@ export class DialogWatcher {
     }
   }
 
+  /** A session that ended or vanished leaves no hook to close its dialog question. */
+  private closeForEnded(): void {
+    for (const p of this.d.broker?.listOpen() ?? []) {
+      if (!p.dialog) continue;
+      const s = this.d.registry.get(p.sessionId);
+      if (!s || s.status === "ended") this.closeQuestion(p.sessionId, "superseded");
+    }
+  }
+
   /** Reads the session's screen once and sets or clears what it shows. */
   async look(sessionId: string): Promise<void> {
     const session = this.d.registry.get(sessionId);
-    if (!session || session.status === "ended") return;
+    if (!session || session.status === "ended") {
+      this.closeQuestion(sessionId, "superseded");
+      return;
+    }
     if (this.d.hasOpen?.(sessionId)) {
       if (this.source.get(sessionId) === "screen") this.clear(sessionId);
       return;
@@ -93,6 +144,7 @@ export class DialogWatcher {
       // Unreadable: keep what is known.
       if (typeof screen !== "string") return;
       const found = detectDialog(screen);
+      this.syncQuestion(sessionId, found);
       if (found && !NOT_AT_MAC.has(found.kind)) {
         this.missing.delete(sessionId);
         this.set(sessionId, atMacOf(found), "screen");
@@ -107,6 +159,48 @@ export class DialogWatcher {
     } catch (err) {
       log.warn("dialog look", { sessionId, err: errMessage(err) });
     }
+  }
+
+  /** The phone's pick on a dialog question: pressed into the terminal by label, after reading the screen again. */
+  answer(promptId: string, answer: Answer, actor: string): Promise<AnswerResult> | null {
+    const broker = this.d.broker;
+    if (!broker) return null;
+    return broker.answerDialog(promptId, answer, actor, async (label, dialogId, sessionId) => {
+      const session = this.d.registry.get(sessionId);
+      if (!session || session.status === "ended") return false;
+      return (this.d.press ?? answerScreenDialog)(session, dialogId, label);
+    });
+  }
+
+  /** Opens the question for an answerable dialog, swaps it when another dialog shows, closes it when none does. */
+  private syncQuestion(sessionId: string, found: Dialog | null): void {
+    const broker = this.d.broker;
+    if (!broker) return;
+    const open = broker.openDialogOf(sessionId);
+    const askable = found && ASKED.has(found.kind) ? found : null;
+    if (open && askable?.id === open.dialogId) {
+      this.questionGone.delete(sessionId);
+      return;
+    }
+    if (open) {
+      // One read can catch a redraw.
+      const n = (this.questionGone.get(sessionId) ?? 0) + 1;
+      if (!askable && n < GONE_AFTER) {
+        this.questionGone.set(sessionId, n);
+        return;
+      }
+      this.closeQuestion(sessionId, "mac");
+    }
+    if (!askable) return;
+    const { title, question } = questionOf(askable);
+    broker.openDialog(sessionId, askable.id, { kind: askable.kind, title }, question);
+  }
+
+  private closeQuestion(sessionId: string, by: "mac" | "superseded"): void {
+    this.questionGone.delete(sessionId);
+    const open = this.d.broker?.openDialogOf(sessionId);
+    if (!open) return;
+    this.d.broker?.close(open.prompt.id, by);
   }
 
   /** A hook says a dialog is open on a route that has no screen. */
