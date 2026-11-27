@@ -228,6 +228,7 @@ export function stepFor(
 }
 
 export const THINKING_LABEL = "Thinking";
+const WAIT_LABEL = "Waiting for the usage limit";
 
 /** Keeps at most TURN_STEPS_MAX steps; the rest is a count. */
 export function capSteps(steps: TurnStep[]): { steps: TurnStep[]; stepsMore?: number } {
@@ -386,6 +387,21 @@ export class StepTracker {
     };
     this.turns.set(sessionId, state);
     this.show(sessionId, state, state.current);
+  }
+
+  /** The screen shows Claude Code waiting for the usage limit: the live step says so until the turn goes on. */
+  waitStarted(sessionId: string, label: string): void {
+    const state = this.turns.get(sessionId);
+    if (!state || state.current.label === label) return;
+    this.cancelThinking(state);
+    this.show(sessionId, state, { kind: "other", label: fitLabel(label), at: Date.now() });
+  }
+
+  waitEnded(sessionId: string): void {
+    const state = this.turns.get(sessionId);
+    if (!state || !state.current.label.startsWith(WAIT_LABEL)) return;
+    const running = [...state.running.values()].at(-1);
+    this.show(sessionId, state, running ?? { kind: "thinking", label: THINKING_LABEL, at: Date.now() });
   }
 
   toolStarted(sessionId: string, call: ToolCall): void {

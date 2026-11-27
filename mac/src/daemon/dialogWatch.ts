@@ -11,13 +11,25 @@ import type { EventLog } from "./events.ts";
 import { answerScreenDialog, type CloseDialogResult, closeScreenDialog, readScreen } from "./inject.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
+import type { StepTracker } from "./steps.ts";
 import { head } from "./text.ts";
+import { usageOf } from "./usage.ts";
+
+/** Claude Code's line while it waits for the limit to reset and then carries on by itself. */
+const AUTO_RESUME = /Continuing automatically at\s+(.+?)(?:\s+·|\s*$)/m;
+
+/** The step for a screen that shows the wait, or null. */
+export function limitWaitStep(screen: string): string | null {
+  const at = AUTO_RESUME.exec(screen)?.[1]?.trim();
+  return at ? `Waiting for the usage limit, continues at ${at}` : null;
+}
 
 /** Notification types that mean a dialog is open at the terminal. */
 export const HOOK_DIALOGS = new Set([
   "elicitation_dialog",
   "elicitation_url_dialog",
   "worker_permission_prompt",
+  "model_refusal_fallback",
 ]);
 
 /** Dialogs the phone answers as questions, or the helper answers itself: never shown as waiting at the Mac. */
@@ -81,6 +93,9 @@ export interface DialogDeps {
   phoneConnected?: () => boolean;
   /** A hook prompt is open for the session (a dialog question is not one): the phone shows its own question. */
   hasOpen?: (sessionId: string) => boolean;
+  /** Shows the usage-limit wait as the live step of the running turn. */
+  steps?: Pick<StepTracker, "waitStarted" | "waitEnded">;
+  usage?: typeof usageOf;
   read?: typeof readScreen;
   now?: () => number;
 }
@@ -90,6 +105,7 @@ export class DialogWatcher {
   private readonly missing = new Map<string, number>();
   private readonly questionGone = new Map<string, number>();
   private readonly lastLook = new Map<string, number>();
+  private readonly waiting = new Set<string>();
   private readonly closing = new Map<string, { dialogId: string; result: Promise<CloseDialogResult> }>();
   private readonly closed = new Map<string, { dialogId: string; at: number }>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -118,6 +134,7 @@ export class DialogWatcher {
     for (const s of this.d.registry.list()) {
       if (s.status === "working") {
         if (this.source.get(s.id) === "screen") this.clear(s.id);
+        await this.lookLimitWait(s, now);
         continue;
       }
       if (s.status === "ended" || !s.canReceive) continue;
@@ -125,6 +142,31 @@ export class DialogWatcher {
       if (now - (this.lastLook.get(s.id) ?? -Infinity) < every) continue;
       this.lastLook.set(s.id, now);
       await this.look(s.id);
+    }
+  }
+
+  /** A working session on a screen route, while an account limit is full: reads the screen for the auto-continue wait. */
+  private async lookLimitWait(s: ReturnType<Registry["list"]>[number], now: number): Promise<void> {
+    const steps = this.d.steps;
+    if (!steps || !s.canReceive) return;
+    const u = (this.d.usage ?? usageOf)(s.id, now);
+    const full = [u?.fiveHour, u?.sevenDay].some((l) => l && l.usedPercent >= 100);
+    if (!full) {
+      if (this.waiting.delete(s.id)) steps.waitEnded(s.id);
+      return;
+    }
+    if (now - (this.lastLook.get(s.id) ?? -Infinity) < LOOK_EVERY_MS) return;
+    this.lastLook.set(s.id, now);
+    try {
+      const screen = await (this.d.read ?? readScreen)(s);
+      if (typeof screen !== "string") return;
+      const label = limitWaitStep(screen);
+      if (label) {
+        this.waiting.add(s.id);
+        steps.waitStarted(s.id, label);
+      } else if (this.waiting.delete(s.id)) steps.waitEnded(s.id);
+    } catch (err) {
+      log.warn("limit wait look", { sessionId: s.id, err: errMessage(err) });
     }
   }
 

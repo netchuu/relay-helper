@@ -11,7 +11,7 @@ import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import { type DialogWatcher, HOOK_DIALOGS } from "./dialogWatch.ts";
 import type { EventLog } from "./events.ts";
-import { failureLine } from "./failureWords.ts";
+import { failureLine, noticeFor } from "./failureWords.ts";
 import type { Handover } from "./handover.ts";
 import { type HeldReplies, notePermissionMode } from "./held.ts";
 import { clearLeftUnsent, draftSubmitted, splitAttachmentPaths } from "./inject.ts";
@@ -641,11 +641,13 @@ export class HookHandler {
           type !== "auth_success" &&
           !(this.d.dialogs && HOOK_DIALOGS.has(type))
         ) {
+          const words = noticeFor(type);
           this.d.events.emit({
             type: "session.notice",
             sessionId,
-            level: type === "idle_prompt" || type === "agent_needs_input" ? "attention" : "info",
-            text: head(redact(str("message") ?? type), 500),
+            level:
+              words?.level ?? (type === "idle_prompt" || type === "agent_needs_input" ? "attention" : "info"),
+            text: words?.text ?? head(redact(str("message") ?? type), 500),
           });
         }
         return NO_OUTPUT;

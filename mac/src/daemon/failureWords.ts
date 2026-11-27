@@ -58,3 +58,19 @@ export function failureLine(
     return detail ? `The request was refused: ${detail}` : "The request was refused.";
   return detail ? `The turn failed: ${detail}` : "The turn failed.";
 }
+
+const WONT_CONTINUE = "Claude Code won't continue by itself. Send a message when your limit resets.";
+const NOTICES: Record<string, { text: string; level: "info" | "attention" }> = {
+  quota_auto_resume_fired: { text: "Your usage limit reset. Claude Code continued.", level: "info" },
+  quota_auto_resume_stale: { text: WONT_CONTINUE, level: "attention" },
+  quota_auto_resume_disabled: { text: WONT_CONTINUE, level: "attention" },
+  auth_storage_failure: {
+    text: "Claude Code couldn't save its sign-in on your computer.",
+    level: "attention",
+  },
+};
+
+/** The words and level of a Notification that Claude Code sends about its limit or sign-in. */
+export function noticeFor(type: string): { text: string; level: "info" | "attention" } | undefined {
+  return NOTICES[type];
+}

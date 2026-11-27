@@ -151,6 +151,7 @@ export async function runDaemon(): Promise<void> {
     broker,
     phoneConnected: () => phones.connected,
     hasOpen: (id) => broker.listOpen(id).some((p) => !p.dialog),
+    steps,
   });
   dialogs.start();
   const handover = new Handover({
