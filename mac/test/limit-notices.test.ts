@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
-import { atMacOfSession, DialogWatcher, limitWaitStep } from "../src/daemon/dialogWatch.ts";
+import { atMacOfSession, DialogWatcher, limitWaitStep, retryStep } from "../src/daemon/dialogWatch.ts";
 import { EventLog } from "../src/daemon/events.ts";
 import { HookHandler } from "../src/daemon/hooks.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
@@ -86,13 +86,11 @@ test("a screen that shows the wait makes it the live step, and it goes when the 
   expect(session.status).toBe("working");
   steps.turnStarted("ln", "t1");
   let screen = "  Continuing automatically at 3:45pm · Esc to cancel";
-  const full = { fiveHour: { usedPercent: 100, resetsAt: Date.now() + 3_600_000 } };
   let clock = 1_000_000;
   const w = new DialogWatcher({
     registry,
     events,
     steps,
-    usage: () => full,
     read: async () => screen,
     now: () => clock,
   });
@@ -104,23 +102,56 @@ test("a screen that shows the wait makes it the live step, and it goes when the 
   expect(liveStep("ln")?.label).toBe("Thinking");
 });
 
-test("no full limit: the screen of a working session isn't read", async () => {
+test("retries on the screen are the live step until the screen moves on", async () => {
   const { registry, events, hook, steps } = setup();
   await hook("SessionStart");
   await hook("UserPromptSubmit", { prompt: "go" });
   steps.turnStarted("ln", "t1");
-  let reads = 0;
-  const w = new DialogWatcher({
-    registry,
-    events,
-    steps,
-    usage: () => ({ fiveHour: { usedPercent: 40 } }),
-    read: async () => {
-      reads++;
-      return "Continuing automatically at 3:45pm";
-    },
-  });
+  let screen = "✻ Retrying in 8s · attempt 2/10";
+  let clock = 1_000_000;
+  const w = new DialogWatcher({ registry, events, steps, read: async () => screen, now: () => clock });
   await w.tick();
-  expect(reads).toBe(0);
+  expect(liveStep("ln")?.label).toBe("Retrying (attempt 2 of 10)");
+  screen = "⚠ Waiting for API response";
+  clock += 4_000;
+  await w.tick();
+  expect(liveStep("ln")?.label).toBe("Retrying");
+  screen = "✻ Thinking…";
+  clock += 4_000;
+  await w.tick();
   expect(liveStep("ln")?.label).toBe("Thinking");
+});
+
+test("retryStep reads the attempt off the spinner and the stall banner", () => {
+  expect(retryStep("Retrying in 12s · attempt 3/10")).toBe("Retrying (attempt 3 of 10)");
+  expect(retryStep("Waiting for API response")).toBe("Retrying");
+  expect(retryStep("⏺ Done.")).toBeNull();
+});
+
+test("auto-compaction mid-turn is the live step until the compaction ends", async () => {
+  const { hook } = setup();
+  await hook("SessionStart");
+  await hook("UserPromptSubmit", { prompt: "go" });
+  await hook("PreCompact", { trigger: "auto" });
+  expect(liveStep("ln")?.label).toBe("Compacting the conversation");
+  await hook("SessionStart", { source: "compact" });
+  expect(liveStep("ln")?.label).toBe("Thinking");
+});
+
+test("auto-compaction's step gives way to the next tool", async () => {
+  const { hook } = setup();
+  await hook("SessionStart");
+  await hook("UserPromptSubmit", { prompt: "go" });
+  await hook("PreCompact", { trigger: "auto" });
+  await hook("PreToolUse", { tool_name: "Bash", tool_use_id: "a", tool_input: { command: "ls" } });
+  expect(liveStep("ln")?.label).toBe("Running ls");
+  await hook("SessionStart", { source: "compact" });
+  expect(liveStep("ln")?.label).toBe("Running ls");
+});
+
+test("auto-compaction with no turn running shows nothing", async () => {
+  const { hook } = setup();
+  await hook("SessionStart");
+  await hook("PreCompact", { trigger: "auto" });
+  expect(liveStep("ln")).toBeNull();
 });

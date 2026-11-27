@@ -228,7 +228,6 @@ export function stepFor(
 }
 
 export const THINKING_LABEL = "Thinking";
-const WAIT_LABEL = "Waiting for the usage limit";
 
 /** Keeps at most TURN_STEPS_MAX steps; the rest is a count. */
 export function capSteps(steps: TurnStep[]): { steps: TurnStep[]; stepsMore?: number } {
@@ -330,6 +329,8 @@ interface TurnState {
   thinking: ReturnType<typeof setTimeout> | null;
   /** Finished steps as the hooks saw them: the list when there's no transcript. */
   done: TurnStep[];
+  /** The label of a note the screen or a hook put as the live step (a limit wait, a retry, compacting). */
+  note: string | null;
 }
 
 /**
@@ -384,22 +385,26 @@ export class StepTracker {
       trailing: null,
       thinking: null,
       done: [],
+      note: null,
     };
     this.turns.set(sessionId, state);
     this.show(sessionId, state, state.current);
   }
 
-  /** The screen shows Claude Code waiting for the usage limit: the live step says so until the turn goes on. */
+  /** A note from the screen or a hook (the usage limit wait, a retry, compacting): the live step says it until the turn goes on. */
   waitStarted(sessionId: string, label: string): void {
     const state = this.turns.get(sessionId);
-    if (!state || state.current.label === label) return;
+    const fitted = fitLabel(label);
+    if (!state || state.current.label === fitted) return;
     this.cancelThinking(state);
-    this.show(sessionId, state, { kind: "other", label: fitLabel(label), at: Date.now() });
+    state.note = fitted;
+    this.show(sessionId, state, { kind: "other", label: fitted, at: Date.now() });
   }
 
   waitEnded(sessionId: string): void {
     const state = this.turns.get(sessionId);
-    if (!state || !state.current.label.startsWith(WAIT_LABEL)) return;
+    if (!state || state.note === null || state.current.label !== state.note) return;
+    state.note = null;
     const running = [...state.running.values()].at(-1);
     this.show(sessionId, state, running ?? { kind: "thinking", label: THINKING_LABEL, at: Date.now() });
   }

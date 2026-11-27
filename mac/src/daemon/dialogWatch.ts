@@ -13,7 +13,6 @@ import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import type { StepTracker } from "./steps.ts";
 import { head } from "./text.ts";
-import { usageOf } from "./usage.ts";
 
 /** Claude Code's line while it waits for the limit to reset and then carries on by itself. */
 const AUTO_RESUME = /Continuing automatically at\s+(.+?)(?:\s+·|\s*$)/m;
@@ -22,6 +21,16 @@ const AUTO_RESUME = /Continuing automatically at\s+(.+?)(?:\s+·|\s*$)/m;
 export function limitWaitStep(screen: string): string | null {
   const at = AUTO_RESUME.exec(screen)?.[1]?.trim();
   return at ? `Waiting for the usage limit, continues at ${at}` : null;
+}
+
+const RETRY = /Retrying in\s+\d+\s*s\b.*?attempt\s+(\d+)\s*\/\s*(\d+)/;
+const API_STALL = /Waiting for API response/;
+
+/** The step for a screen that shows an API retry or the stall banner before one, or null. */
+export function retryStep(screen: string): string | null {
+  const m = RETRY.exec(screen);
+  if (m) return `Retrying (attempt ${m[1]} of ${m[2]})`;
+  return API_STALL.test(screen) ? "Retrying" : null;
 }
 
 /** Notification types that mean a dialog is open at the terminal. */
@@ -93,9 +102,8 @@ export interface DialogDeps {
   phoneConnected?: () => boolean;
   /** A hook prompt is open for the session (a dialog question is not one): the phone shows its own question. */
   hasOpen?: (sessionId: string) => boolean;
-  /** Shows the usage-limit wait as the live step of the running turn. */
+  /** Shows the usage-limit wait or an API retry as the live step of the running turn. */
   steps?: Pick<StepTracker, "waitStarted" | "waitEnded">;
-  usage?: typeof usageOf;
   read?: typeof readScreen;
   now?: () => number;
 }
@@ -145,22 +153,16 @@ export class DialogWatcher {
     }
   }
 
-  /** A working session on a screen route, while an account limit is full: reads the screen for the auto-continue wait. */
+  /** A working session on a screen route: reads the screen for the usage limit wait and for API retries. */
   private async lookLimitWait(s: ReturnType<Registry["list"]>[number], now: number): Promise<void> {
     const steps = this.d.steps;
     if (!steps || !s.canReceive) return;
-    const u = (this.d.usage ?? usageOf)(s.id, now);
-    const full = [u?.fiveHour, u?.sevenDay].some((l) => l && l.usedPercent >= 100);
-    if (!full) {
-      if (this.waiting.delete(s.id)) steps.waitEnded(s.id);
-      return;
-    }
     if (now - (this.lastLook.get(s.id) ?? -Infinity) < LOOK_EVERY_MS) return;
     this.lastLook.set(s.id, now);
     try {
       const screen = await (this.d.read ?? readScreen)(s);
       if (typeof screen !== "string") return;
-      const label = limitWaitStep(screen);
+      const label = limitWaitStep(screen) ?? retryStep(screen);
       if (label) {
         this.waiting.add(s.id);
         steps.waitStarted(s.id, label);

@@ -240,6 +240,7 @@ export function phoneTypePending(sessionId: string, text: string): boolean {
 /** A notice during a running turn belongs to it; a Stop within this time means it was the next turn (hooks raced). */
 const HELD_NOTICE_MS = 2000;
 /** What the turn of a `/compact` says once it is done. */
+const COMPACTING_LABEL = "Compacting the conversation";
 export const COMPACTED = "Conversation compacted.";
 const QUIT = "Claude Code was quit.";
 const CLEARED = "Cleared. The conversation continues in a new chat.";
@@ -373,6 +374,7 @@ export class HookHandler {
         // Compacted or cleared: the context has room again.
         const source = str("source");
         if (source === "compact" || source === "clear") noteContextFull(sessionId, false);
+        if (source === "compact") this.steps.waitEnded(sessionId);
         // The turn a `/compact` started ends here: compacting writes no answer and fires no Stop.
         let compacting = source === "compact" ? this.compacting.get(sessionId) : undefined;
         this.compacting.delete(sessionId);
@@ -398,7 +400,11 @@ export class HookHandler {
       // `/compact`, from the phone or at the Mac: a slash command submits no prompt, so its turn starts here and
       // the phone's message counts as started. Compacting by itself in the middle of a turn is part of that turn.
       case "PreCompact": {
-        if (str("trigger") !== "manual") return NO_OUTPUT;
+        if (str("trigger") !== "manual") {
+          // Compacting by itself ends with SessionStart `compact`, or the turn's next tool.
+          if (this.openTurn(sessionId)) this.steps.waitStarted(sessionId, COMPACTING_LABEL);
+          return NO_OUTPUT;
+        }
         // A Stop still being recorded ends its turn first.
         for (let i = 0; i < 30 && this.stopping.has(sessionId); i++) await Bun.sleep(100);
         const running = this.openTurn(sessionId);
