@@ -43,7 +43,7 @@ type HookGroup = { matcher?: string; hooks: HookCommand[] };
 type HooksConfig = Record<string, HookGroup[]>;
 
 /**
- * Relay's hook wiring. Only PermissionRequest blocks (it is the prompt race); everything else is async,
+ * Relay's hook wiring. Only PermissionRequest and Elicitation block (they are the prompt race); everything else is async,
  * so Relay never adds latency to Claude's turn.
  */
 export function relayHooks(hookBin: string): HooksConfig {
@@ -56,6 +56,8 @@ export function relayHooks(hookBin: string): HooksConfig {
     // The model after a switch (the phone's model pill); present in Claude Code 2.1.325.
     PostModelSwitch: asyncHook(),
     PermissionRequest: [{ hooks: [{ type: "command", command: hookBin, timeout: 86_400 }] }],
+    // An MCP server's question: the phone answers a one-field choice, anything else is left to the terminal.
+    Elicitation: [{ hooks: [{ type: "command", command: hookBin, timeout: 86_400 }] }],
     // The live step (turn-steps). Async, so it never holds the tool: checked on Claude Code 2.1.318.
     PreToolUse: asyncHook(),
     PostToolUse: asyncHook(),

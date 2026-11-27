@@ -530,7 +530,7 @@ test("PreToolUse is installed, async like the other tool hooks", () => {
     timeout: 30,
     async: true,
   });
-  expect(Object.keys(hooks)).toHaveLength(13);
+  expect(Object.keys(hooks)).toHaveLength(14);
 });
 
 test("migration 9: a version-8 database gains steps_json, and its turns have no steps", async () => {

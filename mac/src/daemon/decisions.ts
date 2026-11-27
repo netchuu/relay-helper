@@ -107,6 +107,93 @@ export function hasShortenedCd(summary: string): boolean {
 
 export class AnswerMismatchError extends Error {}
 
+export interface ElicitationInput {
+  session_id: string;
+  mcp_server_name?: string;
+  message?: string;
+  mode?: string;
+  requested_schema?: unknown;
+  url?: string;
+}
+
+/** What the phone's answer maps back to, kept in the prompt's `tool_input`. */
+export interface ElicitationAsk {
+  key: string;
+  property: string;
+  /** `value` is what the server gets; the decline option has none. */
+  values: { label: string; value?: string | boolean }[];
+}
+
+const ELICITATION_OPTIONS_MAX = 8;
+const DECLINE = "Decline";
+
+/**
+ * A form with one enum or boolean field, as a question for the phone; null for anything else (more fields,
+ * other types, URL mode), which the terminal's own dialog handles.
+ */
+export function elicitationQuestion(
+  input: ElicitationInput,
+): { question: Question; ask: ElicitationAsk } | null {
+  if (input.mode !== undefined && input.mode !== "form") return null;
+  const schema = input.requested_schema as { properties?: Record<string, unknown> } | undefined;
+  const entries = Object.entries(schema?.properties ?? {});
+  if (entries.length !== 1) return null;
+  const [property, raw] = entries[0] as [string, Record<string, unknown> | null];
+  if (!raw || typeof raw !== "object") return null;
+  let values: { label: string; value: string | boolean }[] = [];
+  if (raw.type === "boolean") {
+    values = [
+      { label: "Yes", value: true },
+      { label: "No", value: false },
+    ];
+  } else if (raw.type === "string" && Array.isArray(raw.enum)) {
+    const names = Array.isArray(raw.enumNames) ? raw.enumNames : [];
+    values = raw.enum.flatMap((v, i) =>
+      typeof v === "string"
+        ? [{ label: typeof names[i] === "string" ? (names[i] as string) : v, value: v }]
+        : [],
+    );
+    if (values.length !== raw.enum.length) return null;
+  } else if (raw.type === "string" && Array.isArray(raw.oneOf)) {
+    for (const o of raw.oneOf as { const?: unknown; title?: unknown }[]) {
+      if (typeof o?.const !== "string") return null;
+      values.push({ label: typeof o.title === "string" ? o.title : o.const, value: o.const });
+    }
+  } else return null;
+  values = values.map((v) => ({ ...v, label: redact(v.label) }));
+  if (values.length === 0 || values.length > ELICITATION_OPTIONS_MAX) return null;
+  const labels = new Set(values.map((v) => v.label));
+  if (labels.size !== values.length || labels.has(DECLINE)) return null;
+  const title = typeof raw.title === "string" ? raw.title : property;
+  const asked = redact(input.message?.trim() || title);
+  return {
+    question: {
+      question: asked,
+      header: input.mcp_server_name ? head(redact(input.mcp_server_name), 40) : "MCP server",
+      options: [...values.map((v) => ({ label: v.label })), { label: DECLINE }],
+      multiSelect: false,
+    } as Question,
+    ask: { key: asked, property, values: [...values, { label: DECLINE }] },
+  };
+}
+
+/** The Elicitation hook's stdout for the phone's pick: `accept` with the value, or `decline`. */
+export function elicitationOutput(ask: ElicitationAsk, answers: Record<string, string>): string {
+  const picked = answers[ask.key] ?? Object.values(answers)[0];
+  const match = ask.values.find((v) => v.label === picked);
+  if (!match) throw new AnswerMismatchError("not one of the options");
+  const output =
+    match.value === undefined
+      ? { hookEventName: "Elicitation", action: "decline" }
+      : { hookEventName: "Elicitation", action: "accept", content: { [ask.property]: match.value } };
+  return JSON.stringify({ hookSpecificOutput: output });
+}
+
+/** The hook's stdout for the phone's Stop on an Elicitation: the server gets `decline`. */
+export function elicitationDeclineOutput(): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: "Elicitation", action: "decline" } });
+}
+
 /** Builds the exact stdout JSON for the waiting PermissionRequest hook. */
 export function hookOutputFor(
   kind: PromptKind,
@@ -116,6 +203,8 @@ export function hookOutputFor(
   choices?: Record<string, number>,
 ): string {
   if (answer.kind !== kind) throw new AnswerMismatchError(`expected a ${kind} answer, got ${answer.kind}`);
+  const ask = toolInput.elicitation as ElicitationAsk | undefined;
+  if (ask && answer.kind === "question") return elicitationOutput(ask, answer.answers);
   let decision: Record<string, unknown>;
   switch (answer.kind) {
     case "question":

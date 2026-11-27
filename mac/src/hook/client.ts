@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const BLOCKING_EVENTS = new Set(["PermissionRequest"]);
+const BLOCKING_EVENTS = new Set(["PermissionRequest", "Elicitation"]);
 const NON_BLOCKING_TIMEOUT_MS = 5000;
 
 const STDOUT_FLUSH_TIMEOUT_MS = 10_000;

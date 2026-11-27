@@ -8,7 +8,7 @@ import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
 import { type HookTrace, type LocalCommand, LocalCommandReader } from "./commandTurns.ts";
 import type { DB } from "./db.ts";
-import type { PermissionRequestInput } from "./decisions.ts";
+import { type ElicitationInput, elicitationQuestion, type PermissionRequestInput } from "./decisions.ts";
 import { type DialogWatcher, HOOK_DIALOGS } from "./dialogWatch.ts";
 import type { EventLog } from "./events.ts";
 import { failureLine, noticeFor } from "./failureWords.ts";
@@ -526,6 +526,9 @@ export class HookHandler {
         if (this.d.registry.ownedByHelper(sessionId)) return NO_OUTPUT;
         return this.permissionRequest(p as unknown as PermissionRequestInput, signal);
 
+      case "Elicitation":
+        return this.elicitation(p as unknown as ElicitationInput, signal);
+
       case "PreToolUse": {
         const call = toolCall(p, session.cwd);
         this.steps.toolStarted(sessionId, call);
@@ -778,6 +781,30 @@ export class HookHandler {
   /** A permission request that doesn't come from a hook (a process the helper owns): the same prompt and status. */
   openPrompt(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply> {
     return this.permissionRequest(input, signal);
+  }
+
+  /** An MCP server asks the person something: a one-field choice goes to the phone when you're away, the rest stays at the Mac. */
+  private async elicitation(input: ElicitationInput, signal: AbortSignal): Promise<HookReply> {
+    if (this.d.registry.ownedByHelper(input.session_id)) return NO_OUTPUT;
+    const asked = elicitationQuestion(input);
+    if (!asked) {
+      const type = input.mode === "url" ? "elicitation_url_dialog" : "elicitation_dialog";
+      const text = input.mode === "url" ? input.message : (input.message ?? input.mcp_server_name);
+      this.d.dialogs?.fromHook(input.session_id, type, text);
+      return NO_OUTPUT;
+    }
+    // Claude Code waits for this hook before it draws its dialog, and draws it only when the hook prints nothing.
+    if (this.d.presence.get().present) return NO_OUTPUT;
+    const { prompt, reply } = this.d.broker.openElicitation(input.session_id, asked.question, asked.ask);
+    this.d.registry.setStatus(input.session_id, "waiting");
+    log.info("prompt opened", { promptId: prompt.id, kind: prompt.kind, tool: "Elicitation" });
+    const aborted = new Promise<HookReply>((resolve) =>
+      signal.addEventListener("abort", () => {
+        this.d.broker.close(prompt.id, "mac");
+        resolve(NO_OUTPUT);
+      }),
+    );
+    return Promise.race([reply, aborted]);
   }
 
   private async permissionRequest(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply> {

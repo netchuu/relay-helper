@@ -372,7 +372,7 @@ describe("install", () => {
     const once = mergeHooks(userSettings, "/h/relay-hook");
     const twice = mergeHooks(once, "/h/relay-hook");
     expect(twice).toEqual(once);
-    expect(countHooks(twice)).toBe(13);
+    expect(countHooks(twice)).toBe(14);
     expect(JSON.stringify(twice)).toContain("my-linter");
     expect(JSON.stringify(twice)).toContain("notify-me");
     expect(twice.model).toBe("opus");
@@ -396,7 +396,7 @@ describe("install", () => {
   test("a user's slack-relay-hook.sh survives install and uninstall, and isn't counted", () => {
     expect(countHooks(withSlack)).toBe(1);
     const merged = mergeHooks(withSlack, "/h/relay-hook");
-    expect(countHooks(merged)).toBe(13);
+    expect(countHooks(merged)).toBe(14);
     const stop = (merged.hooks as Record<string, { hooks: unknown[] }[]>).Stop;
     expect(stop?.[0]?.hooks).toEqual([slack]);
     const notification = (merged.hooks as Record<string, { hooks: unknown[] }[]>).Notification;
@@ -415,7 +415,7 @@ describe("install", () => {
     ]) {
       const s = { hooks: { Stop: [{ hooks: [{ type: "command", command }] }] } };
       expect(countHooks(s)).toBe(1);
-      expect(countHooks(mergeHooks(s, "/h/relay-hook"))).toBe(13);
+      expect(countHooks(mergeHooks(s, "/h/relay-hook"))).toBe(14);
       expect(removeHooks(s).hooks).toEqual({});
     }
   });

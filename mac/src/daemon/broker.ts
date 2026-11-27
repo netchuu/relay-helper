@@ -12,6 +12,8 @@ import type { DB } from "./db.ts";
 import { audit } from "./db.ts";
 import {
   AnswerMismatchError,
+  type ElicitationAsk,
+  elicitationDeclineOutput,
   hookOutputFor,
   type PermissionRequestInput,
   payloadFor,
@@ -153,6 +155,32 @@ export class Broker {
     const prompt = this.get(id) as Prompt;
     this.events.emit({ type: "prompt.opened", prompt });
     this.onChange(input.session_id);
+    return { prompt, reply };
+  }
+
+  /** An MCP server's one-field form as a question; the hook waits for the answer. */
+  openElicitation(
+    sessionId: string,
+    question: Question,
+    ask: ElicitationAsk,
+  ): { prompt: Prompt; reply: Promise<HookReply> } {
+    const id = `p_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    this.db
+      .query(
+        `INSERT INTO prompts (id, session_id, kind, tool_name, tool_input, payload_json, status, created_at)
+         VALUES (?, ?, 'question', 'Elicitation', ?, ?, 'open', ?)`,
+      )
+      .run(
+        id,
+        sessionId,
+        JSON.stringify({ elicitation: ask }),
+        JSON.stringify({ kind: "question", questions: [redactDeep(question)] }),
+        Date.now(),
+      );
+    const reply = new Promise<HookReply>((resolve) => this.waiters.set(id, { resolve }));
+    const prompt = this.get(id) as Prompt;
+    this.events.emit({ type: "prompt.opened", prompt });
+    this.onChange(sessionId);
     return { prompt, reply };
   }
 
@@ -322,6 +350,12 @@ export class Broker {
     return { ok: true };
   }
 
+  /** True when the prompt `stop` would answer is an MCP elicitation, which a hook decline doesn't interrupt. */
+  stopTargetIsElicitation(sessionId: string): boolean {
+    const rows = this.listOpenRows(sessionId).sort((a, b) => a.created_at - b.created_at);
+    return rows.find((r) => this.waiters.has(r.id))?.tool_name === "Elicitation";
+  }
+
   /** The phone's Stop on a waiting prompt: deny-and-interrupt, closed as "Stopped". Returns its ID, or null if no hook waited. */
   stop(sessionId: string, actor: string): string | null {
     const rows = this.listOpenRows(sessionId).sort((a, b) => a.created_at - b.created_at);
@@ -329,7 +363,9 @@ export class Broker {
     if (!answered) return null;
     const waiter = this.waiters.get(answered.id);
     this.close(answered.id, "phone", { kind: "stop" });
-    waiter?.resolve({ stdout: stopHookOutput() });
+    waiter?.resolve({
+      stdout: answered.tool_name === "Elicitation" ? elicitationDeclineOutput() : stopHookOutput(),
+    });
     for (const r of rows) if (r.id !== answered.id) this.close(r.id, "superseded");
     audit(this.db, actor, "prompt.stop", { promptId: answered.id, kind: answered.kind });
     return answered.id;

@@ -99,7 +99,10 @@ function setup(opts: { inboxFails?: boolean } = {}) {
     timing: { graceMs: 5, markerMs: 600, inboxMs: 300, pollMs: 20, repeatMs: 2000 },
     transcriptPath: () => transcript,
   });
-  const presence = { noteLocalActivity: () => {} } as unknown as PresenceMonitor;
+  const presence = {
+    noteLocalActivity: () => {},
+    get: () => ({ present: false }),
+  } as unknown as PresenceMonitor;
   const hooks = new HookHandler({ db, events, registry, broker, presence, config, stopper });
   const rpc = createRpc({ db, events, registry, broker, presence, config, stopper } as unknown as RpcDeps);
 
@@ -217,6 +220,37 @@ describe("session.interrupt: a prompt is open", () => {
       });
       expect(JSON.parse((await reply).stdout).hookSpecificOutput.decision.behavior).toBe("deny");
     }
+  });
+});
+
+describe("session.interrupt: an MCP elicitation is open", () => {
+  test("the hook gets decline, then the turn is stopped through the inbox", async () => {
+    const { working, rpc, hook, registry, broker, inboxSent, turnsDone, tx } = setup();
+    await working("s1", INBOX);
+    tx(partial);
+    const reply = hook(
+      "Elicitation",
+      "s1",
+      {
+        mcp_server_name: "deploy",
+        mode: "form",
+        message: "Which environment?",
+        requested_schema: {
+          type: "object",
+          properties: { env: { type: "string", enum: ["staging", "production"] } },
+        },
+      },
+      INBOX,
+    );
+    await waitFor(() => broker.hasOpen("s1"), 5000, "the elicitation prompt");
+    const pending = rpc("session.interrupt", { sessionId: "s1" }, "d");
+    expect(JSON.parse((await reply).stdout).hookSpecificOutput.action).toBe("decline");
+    await waitFor(() => inboxSent.length === 1, 30_000, "the stop message in the inbox");
+    expect(registry.get("s1")?.status).not.toBe("idle");
+    await hook("UserPromptSubmit", "s1", { prompt: STOP_MESSAGE }, INBOX);
+    const out = (await pending) as { result: { via: string } };
+    expect(out.result.via).toBe("inbox");
+    expect(turnsDone()[0]?.stopped).toBe(true);
   });
 });
 

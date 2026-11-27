@@ -171,7 +171,9 @@ export class TurnStopper {
     };
 
     // 1. A prompt with a waiting hook: Claude Code's own deny-and-interrupt, in every terminal.
-    if (this.d.broker.stop(sessionId, actor)) {
+    // An elicitation only gets `decline`: Claude goes on, so the turn is stopped the normal way below.
+    const elicitation = this.d.broker.stopTargetIsElicitation(sessionId);
+    if (this.d.broker.stop(sessionId, actor) && !elicitation) {
       await Bun.sleep(this.t.graceMs);
       const turnId = open ? this.endStopped(open.id) : null;
       if (!open) this.d.registry.setStatus(sessionId, "idle");
