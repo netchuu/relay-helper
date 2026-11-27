@@ -27,8 +27,10 @@ function setup() {
       .filter((l) => l.startsWith("KEYS "))
       .map((l) => JSON.parse(l.slice(5)) as string)
       .join("");
-  const waitFor = async (check: () => boolean, ms = 10_000) => {
+  // Starting a few Bun processes in nested terminals can take many seconds on a busy runner; the budget only ends a real hang.
+  const waitFor = async (check: () => boolean, ms = 60_000) => {
     for (const end = Date.now() + ms; Date.now() < end && !check(); ) await Bun.sleep(20);
+    if (!check()) console.error(`waitFor gave up after ${ms} ms\nstub log:\n${log()}`);
     return check();
   };
   /** Runs `relay wrap -- <args>` in a terminal of its own; `after` is shell text run once it ends. */
