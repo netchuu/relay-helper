@@ -9,6 +9,7 @@ import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
 import type { EventLog } from "./events.ts";
+import { failureLine } from "./failureWords.ts";
 import type { Handover } from "./handover.ts";
 import { type HeldReplies, notePermissionMode } from "./held.ts";
 import { clearLeftUnsent, draftSubmitted, splitAttachmentPaths } from "./inject.ts";
@@ -38,6 +39,7 @@ import {
   noteContextFull,
   noteUsageAll,
   parseUsage,
+  usageOf,
 } from "./usage.ts";
 
 /** What relay-hook sends: the hook's stdin JSON plus details only visible in its environment. */
@@ -531,6 +533,11 @@ export class HookHandler {
             str("error_details") ?? "",
           );
           const text = contextFull ? CONTEXT_FULL : said;
+          const line = contextFull
+            ? text
+            : failed
+              ? failureLine(str("error"), str("error_details") || said, usageOf(sessionId))
+              : said;
           if (contextFull || !failed) noteContextFull(sessionId, contextFull);
           // The turn this Stop ends, taken before the wait: hooks are async, so a prompt queued at the computer
           // can start the next turn meanwhile, and that one isn't finished by this Stop.
@@ -542,7 +549,7 @@ export class HookHandler {
           await Bun.sleep(400);
           await this.messages.outputsRead(sessionId);
           const ending = this.stopOwner(sessionId, picked, text, transcript, session.cwd);
-          const turn = this.finishTurn(sessionId, ending, text, failed, transcript, session.cwd);
+          const turn = this.finishTurn(sessionId, ending, text, failed, transcript, session.cwd, line);
           // Idle even with background shells still running (a dev server): the prompt waits for you. One finishing
           // starts a turn of its own.
           const next = this.openTurn(sessionId);
@@ -555,7 +562,7 @@ export class HookHandler {
               type: "session.notice",
               sessionId,
               level: "error",
-              text: head(`${str("error") ?? "error"}: ${str("error_details") ?? text}`, 500),
+              text: head(line, 500),
             });
           // A notice held back just before this Stop was the next turn after all: it starts now.
           const held = this.heldNotice.get(sessionId);
@@ -786,9 +793,10 @@ export class HookHandler {
     failed: boolean,
     transcript: string | null,
     cwd: string | null,
+    shown?: string,
   ): Turn {
     const id = open?.id ?? newId("t");
-    const full = redact(rawText);
+    const full = redact(shown ?? rawText);
     const { text: summary, truncated } = compact(full, this.d.config.previewChars);
     // A newer turn already started (a prompt queued at the computer): only this turn's part of the transcript,
     // from its prompt to the next one. Otherwise everything since the last prompt.

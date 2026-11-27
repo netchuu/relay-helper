@@ -109,9 +109,27 @@ test("another failed turn keeps its own error and its notice", async () => {
     error: "rate_limit",
     last_assistant_message: "API Error: Rate limit reached",
   });
-  expect(t.finished().at(-1)?.summary).toBe("API Error: Rate limit reached");
+  expect(t.finished().at(-1)?.summary).toBe("You've hit your usage limit.");
   expect(t.notices().length).toBe(1);
   expect(usageOf("s1")).toBeUndefined();
+});
+
+test("a rate_limit failure names the reset time the status line gave, in the turn and the notice", async () => {
+  const t = setup();
+  const resetsAt = Date.now() + 3600_000;
+  await t.hook("SessionStart");
+  t.hooks.statusLine({
+    session_id: "s1",
+    rate_limits: { five_hour: { used_percentage: 100, resets_at: Math.round(resetsAt / 1000) } },
+  });
+  await t.hook("UserPromptSubmit", { prompt: "carry on" });
+  await t.hook("StopFailure", {
+    error: "rate_limit",
+    last_assistant_message: "API Error: Rate limit reached",
+  });
+  const summary = t.finished().at(-1)?.summary ?? "";
+  expect(summary).toMatch(/^You've hit your usage limit\. It resets at .+\.$/);
+  expect(t.notices().map((n) => (n.type === "session.notice" ? n.text : ""))).toEqual([summary]);
 });
 
 test("compacting makes room: /compact is a turn that ends when the session is compacted", async () => {
@@ -321,4 +339,16 @@ test("an older error, from before this turn, says nothing about it", () => {
 
 test("install wires the hook a /compact fires", () => {
   expect(Object.keys(relayHooks("/bin/relay-hook"))).toContain("PreCompact");
+});
+
+test("an empty error_details falls back to the last message", async () => {
+  const t = setup();
+  await t.hook("SessionStart");
+  await t.hook("UserPromptSubmit", { prompt: "carry on" });
+  await t.hook("StopFailure", {
+    error: "unknown",
+    error_details: "",
+    last_assistant_message: "API Error: Connection error.",
+  });
+  expect(t.finished().at(-1)?.summary).toBe("The turn failed: API Error: Connection error.");
 });
