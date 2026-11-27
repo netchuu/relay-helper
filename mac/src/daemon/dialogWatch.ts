@@ -8,7 +8,7 @@ import { errMessage, log } from "../log.ts";
 import type { AnswerResult, Broker } from "./broker.ts";
 import { atMacOf, type Dialog, detectDialog } from "./dialogs.ts";
 import type { EventLog } from "./events.ts";
-import { answerScreenDialog, readScreen } from "./inject.ts";
+import { answerScreenDialog, type CloseDialogResult, closeScreenDialog, readScreen } from "./inject.ts";
 import { redact } from "./redact.ts";
 import type { Registry } from "./registry.ts";
 import { head } from "./text.ts";
@@ -61,6 +61,8 @@ const LOOK_IDLE_EVERY_MS = 30_000;
 const FAST_FOR_MS = 10 * 60_000;
 /** A dialog not on the screen this many reads in a row is gone: one read can catch a redraw. */
 const GONE_AFTER = 2;
+/** Claude Code redraws a beat after an Esc: until then a read still shows the dialog just closed. */
+const CLOSE_SETTLE_MS = 500;
 
 const shown = new Map<string, AtMacDialog>();
 
@@ -74,6 +76,7 @@ export interface DialogDeps {
   /** Opens dialog questions and settles them. Absent: dialogs only wait at the Mac. */
   broker?: Pick<Broker, "openDialog" | "openDialogOf" | "listOpen" | "close" | "answerDialog">;
   press?: typeof answerScreenDialog;
+  closeDialog?: typeof closeScreenDialog;
   events: Pick<EventLog, "emit">;
   phoneConnected?: () => boolean;
   /** A hook prompt is open for the session (a dialog question is not one): the phone shows its own question. */
@@ -87,9 +90,15 @@ export class DialogWatcher {
   private readonly missing = new Map<string, number>();
   private readonly questionGone = new Map<string, number>();
   private readonly lastLook = new Map<string, number>();
+  private readonly closing = new Map<string, { dialogId: string; result: Promise<CloseDialogResult> }>();
+  private readonly closed = new Map<string, { dialogId: string; at: number }>();
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly d: DialogDeps) {}
+
+  private nowMs(): number {
+    return (this.d.now ?? Date.now)();
+  }
 
   start(): void {
     this.timer = setInterval(() => void this.tick(), LOOK_EVERY_MS);
@@ -139,10 +148,14 @@ export class DialogWatcher {
       if (this.source.get(sessionId) === "screen") this.clear(sessionId);
       return;
     }
+    const readAt = this.nowMs();
     try {
       const screen = await (this.d.read ?? readScreen)(session);
       // Unreadable: keep what is known.
       if (typeof screen !== "string") return;
+      // Read before the screen settled after an Esc: the dialog it shows is the one just closed.
+      const last = this.closed.get(sessionId);
+      if (last && readAt < last.at + CLOSE_SETTLE_MS) return;
       const found = detectDialog(screen);
       this.syncQuestion(sessionId, found);
       if (found && !NOT_AT_MAC.has(found.kind)) {
@@ -170,6 +183,32 @@ export class DialogWatcher {
       if (!session || session.status === "ended") return false;
       return (this.d.press ?? answerScreenDialog)(session, dialogId, label);
     });
+  }
+
+  /** The phone's Close on a dialog waiting at the Mac: Esc after reading the screen again; the card clears at once. */
+  close(sessionId: string, dialogId: string): Promise<CloseDialogResult> {
+    const session = this.d.registry.get(sessionId);
+    if (!session || session.status === "ended") return Promise.resolve("conflict");
+    const last = this.closed.get(sessionId);
+    if (last?.dialogId === dialogId && this.nowMs() < last.at + CLOSE_SETTLE_MS)
+      return Promise.resolve("closed");
+    const running = this.closing.get(sessionId);
+    if (running) return running.dialogId === dialogId ? running.result : Promise.resolve("conflict");
+    const result = (async () => {
+      try {
+        const r = await (this.d.closeDialog ?? closeScreenDialog)(session, dialogId);
+        if (r === "closed") {
+          this.closed.set(sessionId, { dialogId, at: this.nowMs() });
+          this.closeQuestion(sessionId, "mac");
+          this.clear(sessionId);
+        }
+        return r;
+      } finally {
+        this.closing.delete(sessionId);
+      }
+    })();
+    this.closing.set(sessionId, { dialogId, result });
+    return result;
   }
 
   /** Opens the question for an answerable dialog, swaps it when another dialog shows, closes it when none does. */

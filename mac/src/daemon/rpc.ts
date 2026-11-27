@@ -569,9 +569,15 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       } satisfies SessionCommands;
     },
 
-    "session.dialog": ({ sessionId }) => {
+    "session.dialog": async ({ sessionId, dialogId }, actor) => {
       if (!d.registry.get(sessionId)) throw new RpcFailure("not_found", "session not found");
-      throw new RpcFailure("conflict", "That question is no longer open on your computer.");
+      const result = (await d.dialogs?.close(sessionId, dialogId)) ?? "conflict";
+      if (result === "conflict")
+        throw new RpcFailure("conflict", "That question is no longer open on your computer.");
+      if (result === "unavailable")
+        throw new RpcFailure("unavailable", "This can only be closed on your computer.");
+      audit(d.db, actor, "session.dialog", { sessionId, dialogId });
+      return { ok: true };
     },
 
     "session.pin": ({ sessionId, pinned }, actor) => {

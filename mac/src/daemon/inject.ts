@@ -161,6 +161,11 @@ export interface TypeOps {
   tmuxArrow?(socket: string, pane: string, key: "up" | "down"): Promise<void>;
   paneArrow?(target: PaneTarget, key: "up" | "down"): Promise<void>;
   arrow?(route: TypingRoute, tty: string, key: "up" | "down"): Promise<boolean>;
+  /** Esc, to close a dialog. Absent: the route can't close one. */
+  ptyEscape?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
+  tmuxEscape?(socket: string, pane: string): Promise<void>;
+  paneEscape?(target: PaneTarget): Promise<void>;
+  escape?(route: TypingRoute, tty: string): Promise<boolean>;
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
   routes(termProgram: string | null): TypingRoute[];
   ttyOf(pid: number | null, procs?: Procs): Promise<string | null>;
@@ -234,6 +239,10 @@ export const defaultTypeOps: TypeOps = {
   tmuxStash,
   ptyArrow: (socketPath, token, pid, key) => requestPty(socketPath, { token, pid, key }),
   tmuxArrow,
+  ptyEscape: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
+  tmuxEscape,
+  paneEscape,
+  escape: (route, tty) => platform.typing.key(route, tty, "escape"),
   arrow: (route, tty, key) => platform.typing.key(route, tty, key),
   enter: (route, tty) => platform.typing.key(route, tty, "enter"),
   stash: (route, tty) => platform.typing.key(route, tty, "stash"),
@@ -638,10 +647,17 @@ function typeWire(ops: TypeOps): Wire {
         ? ops.enterPty(socketPath, token, pid)
         : (key === "up" || key === "down") && ops.ptyArrow
           ? ops.ptyArrow(socketPath, token, pid, key)
-          : Promise.reject(new DeliveryError("no such key")),
+          : key === "escape" && ops.ptyEscape
+            ? ops.ptyEscape(socketPath, token, pid)
+            : Promise.reject(new DeliveryError("no such key")),
     tmuxScreen: (socket, pane) => ops.tmuxScreen(socket, pane, seen),
     tmuxType: ops.tmux,
     tmuxKey: async (socket, pane, key) => {
+      if (key === "escape") {
+        if (!ops.tmuxEscape) throw new DeliveryError("no such key");
+        await ops.tmuxEscape(socket, pane);
+        return;
+      }
       if (key === "up" || key === "down") {
         if (!ops.tmuxArrow) throw new DeliveryError("no such key");
         await ops.tmuxArrow(socket, pane, key);
@@ -656,6 +672,11 @@ function typeWire(ops: TypeOps): Wire {
     paneScreen: ops.paneScreen,
     paneType: ops.paneType,
     paneKey: async (target, key) => {
+      if (key === "escape") {
+        if (!ops.paneEscape) throw new DeliveryError("no such key");
+        await ops.paneEscape(target);
+        return;
+      }
       if (key === "up" || key === "down") {
         if (!ops.paneArrow) throw new DeliveryError("no such key");
         await ops.paneArrow(target, key);
@@ -674,9 +695,11 @@ function typeWire(ops: TypeOps): Wire {
         ? ops.enter(route, tty)
         : key === "stash" && ops.stash
           ? ops.stash(route, tty)
-          : (key === "up" || key === "down") && ops.arrow
-            ? ops.arrow(route, tty, key)
-            : false,
+          : key === "escape" && ops.escape
+            ? ops.escape(route, tty)
+            : (key === "up" || key === "down") && ops.arrow
+              ? ops.arrow(route, tty, key)
+              : false,
     ttyOf: (pid) => ops.ttyOf(pid, procs),
     viewerTtyOf:
       ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
@@ -1067,6 +1090,29 @@ export async function answerScreenDialog(
 }
 
 const DIALOG_SETTLE_MS = 120;
+
+export type CloseDialogResult = "closed" | "conflict" | "unavailable";
+
+/** Presses Esc on the dialog on screen: only after reading it again, and only when it is the same one and can be closed. */
+export async function closeScreenDialog(
+  session: SessionRecord,
+  dialogId: string,
+  ops: TypeOps = defaultTypeOps,
+): Promise<CloseDialogResult> {
+  let readable = false;
+  for (const route of routesFor(session, typeWire(ops))) {
+    const ready = await route.probe().catch(() => null);
+    if (!ready) continue;
+    const screen = (await route.read().catch(() => null))?.screen;
+    if (typeof screen !== "string") continue;
+    readable = true;
+    const found = detectDialog(screen);
+    if (found?.id !== dialogId) return "conflict";
+    if (!found.canClose) return "unavailable";
+    return (await ready.key("escape").catch(() => false)) ? "closed" : "unavailable";
+  }
+  return readable ? "conflict" : "unavailable";
+}
 
 /** The session's terminal screen, escape codes included; null or undefined when no route can read it. Quiet. */
 export async function readScreen(
