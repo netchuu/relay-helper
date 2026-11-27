@@ -135,6 +135,8 @@ export type PaneTtys = Map<string, string | null>;
 
 export interface TypeOps {
   pty(socketPath: string, token: string, pid: number, text: string): Promise<TypeReply>;
+  /** The screen of a chat in a Relay host or `relay wrap`; null when it can't be read (an older `relay shell`). */
+  ptyScreen?(socketPath: string, token: string): Promise<string | null>;
   /** The pane's visible text; null when the pane can't be read (it's gone). */
   tmuxScreen(socket: string, pane: string, seen?: PaneTtys): Promise<string | null>;
   tmux(socket: string, pane: string, text: string): Promise<void>;
@@ -196,6 +198,7 @@ export const defaultGuiOps: GuiOps = {
 
 export const defaultTypeOps: TypeOps = {
   pty: (socketPath, token, pid, text) => typeIntoPty(socketPath, token, pid, text),
+  ptyScreen: (socketPath, token) => ptyScreenOf(socketPath, token),
   tmuxScreen,
   tmux: tmuxType,
   tmuxPaneTty,
@@ -330,11 +333,11 @@ async function promptAfterTyping(
   route: TerminalRoute,
   ops: TypeOps,
 ): Promise<string | null | undefined> {
-  if (route === "pty") return undefined;
   const read = await routesFor(session, typeWire(ops))
     .find((r) => r.kind === route)
     ?.read();
-  return read?.screen == null ? null : promptDraft(read.screen);
+  if (read?.screen == null) return route === "pty" ? undefined : null;
+  return promptDraft(read.screen);
 }
 
 async function pressEnter(session: SessionRecord, route: TerminalRoute, ops: TypeOps): Promise<boolean> {
@@ -366,6 +369,8 @@ async function confirmSubmitted(
     return submitted();
   };
   if (await waitFor()) return true;
+  // A command may open a menu or print and settle without a prompt hook; the send watch decides, not a second Enter.
+  if (text.startsWith("/")) return null;
   const shown = await promptAfterTyping(session, route, ops);
   // Readable and the text is gone: it went in some other way (the hook was late); nothing to press.
   if (shown !== undefined && !holdsMessage(shown, text)) return null;
@@ -574,6 +579,7 @@ interface ReplyRoute {
 interface Wire {
   ptyType?: TypeOps["pty"];
   ptyKey?(socketPath: string, token: string, pid: number, key: KeyName): Promise<TypeReply>;
+  ptyScreen?: TypeOps["ptyScreen"];
   tmuxScreen?: TypeOps["tmuxScreen"];
   tmuxType?(socket: string, pane: string, text: string): Promise<void>;
   tmuxKey?(socket: string, pane: string, key: KeyName): Promise<void>;
@@ -599,6 +605,7 @@ function typeWire(ops: TypeOps): Wire {
   const seen: PaneTtys = new Map();
   return {
     ptyType: ops.pty,
+    ptyScreen: ops.ptyScreen,
     ptyKey: (socketPath, token, pid, key) =>
       key === "enter" && ops.enterPty
         ? ops.enterPty(socketPath, token, pid)
@@ -677,7 +684,11 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
     routes.push({
       kind: "pty",
       plainText: false,
-      read: async () => null,
+      read: async () => {
+        const read = wire.ptyScreen;
+        const screen = read && token ? await guarded(() => read(socketPath, token), null) : null;
+        return screen === null ? null : { screen };
+      },
       // `relay shell` checks for itself that Claude Code is in front of its terminal.
       probe: async () =>
         !session.ptyToken || !session.pid
@@ -1086,7 +1097,29 @@ export function typeIntoPty(
   return requestPty(socketPath, { token, text, pid, force: true }, opts.timeoutMs);
 }
 
+/** The screen text of a Relay host or `relay wrap`; null when the socket doesn't answer the screen request. */
+export async function ptyScreenOf(
+  socketPath: string,
+  token: string,
+  timeoutMs = 3000,
+): Promise<string | null> {
+  try {
+    const reply = await requestSocket<{ ok?: boolean; screen?: unknown }>(
+      socketPath,
+      { op: "screen", token },
+      timeoutMs,
+    );
+    return reply.ok === true && typeof reply.screen === "string" ? reply.screen : null;
+  } catch {
+    return null;
+  }
+}
+
 function requestPty(socketPath: string, req: TypeRequest, timeoutMs = 20_000): Promise<TypeReply> {
+  return requestSocket<TypeReply>(socketPath, req, timeoutMs);
+}
+
+function requestSocket<T>(socketPath: string, req: object, timeoutMs: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const sock = connect(socketPath);
     let buf = "";
@@ -1104,7 +1137,7 @@ function requestPty(socketPath: string, req: TypeRequest, timeoutMs = 20_000): P
     sock.once("close", () => {
       clearTimeout(timer);
       try {
-        resolve(JSON.parse(buf.trim()) as TypeReply);
+        resolve(JSON.parse(buf.trim()) as T);
       } catch {
         reject(new DeliveryError("no answer from the terminal"));
       }
