@@ -241,6 +241,9 @@ export function phoneTypePending(sessionId: string, text: string): boolean {
 const HELD_NOTICE_MS = 2000;
 /** What the turn of a `/compact` says once it is done. */
 export const COMPACTED = "Conversation compacted.";
+const QUIT = "Claude Code was quit.";
+const CLEARED = "Cleared. The conversation continues in a new chat.";
+const LOST_TEXT = "Claude Code ended before it read this message.";
 /** What it says when nothing reported the end of a `/compact`. */
 export const COMPACT_FAILED = "Compacting didn't finish. Try it again, or clear the chat.";
 /** How long a `/compact` may take before its turn is given up as failed (a long chat took 80 s). */
@@ -649,6 +652,7 @@ export class HookHandler {
       }
 
       case "SessionEnd":
+        if (endedBefore?.status !== "ended") this.settlePhoneSends(sessionId, str("reason"), session.cwd);
         this.d.broker.settleFromSessionEvent(sessionId, { hookEventName: event });
         this.background.clear(sessionId);
         this.steps.clear(sessionId);
@@ -668,6 +672,44 @@ export class HookHandler {
       default:
         return NO_OUTPUT;
     }
+  }
+
+  /** The phone's `/exit` or `/clear` answers as a command turn before the session ends; any other send still pending is lost. */
+  private settlePhoneSends(sessionId: string, reason: string | undefined, cwd: string | null): void {
+    const all = phoneTyped.get(sessionId) ?? [];
+    const pending = all.filter((e) => !e.delivering);
+    const ending =
+      reason === "prompt_input_exit"
+        ? /^\/(exit|quit)(\s|$)/
+        : reason === "clear"
+          ? /^\/(clear|reset|new)(\s|$)/
+          : null;
+    const typed = ending ? all.findLast((e) => ending.test(e.text)) : undefined;
+    if (ending && (reason === "clear" || typed)) {
+      const line = typed ? squash(typed.text) : reason === "clear" ? "/clear" : "/exit";
+      const name = line.slice(1).split(" ")[0] ?? "";
+      const turnId = this.beginTurn(sessionId, line, null, cwd, [], typed?.sendId);
+      const open = this.openTurn(sessionId);
+      if (open && open.id === turnId)
+        this.finishTurn(sessionId, open, reason === "clear" ? CLEARED : QUIT, false, null, cwd, undefined, {
+          name,
+        });
+      if (typed) removeTyped(sessionId, typed);
+    }
+    for (const e of pending) {
+      if (e === typed || !e.sendId) continue;
+      this.d.events.emit({
+        type: "reply.outcome",
+        sessionId,
+        sendId: e.sendId,
+        outcome: "lost",
+        text: LOST_TEXT,
+      });
+    }
+    // A message still being typed may land in the new chat; its own send reports it.
+    const still = all.filter((e) => e.delivering && e !== typed);
+    if (still.length > 0) phoneTyped.set(sessionId, still);
+    else phoneTyped.delete(sessionId);
   }
 
   private noteEndedForLink(id: string, reason: string | undefined, env: HookEnv): void {

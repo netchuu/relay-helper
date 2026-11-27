@@ -7,7 +7,7 @@ import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
 import { openDb } from "../src/daemon/db.ts";
 import { EventLog } from "../src/daemon/events.ts";
-import { HookHandler, notePhoneTyped } from "../src/daemon/hooks.ts";
+import { HookHandler, notePhoneTyped, phoneTypeDelivered } from "../src/daemon/hooks.ts";
 import { alertFor } from "../src/daemon/notifier.ts";
 import type { PresenceMonitor } from "../src/daemon/presence.ts";
 import { Registry } from "../src/daemon/registry.ts";
@@ -371,6 +371,50 @@ describe("local slash commands", () => {
       t.printed("Bye");
     }
     await t.hook("Notification");
+    expect(t.started()).toHaveLength(0);
+  });
+
+  test("a phone /exit gets its command turn before the session ends", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    notePhoneTyped("s1", "/exit", true, "send-x");
+    await t.hook("SessionEnd", { reason: "prompt_input_exit" });
+    phoneTypeDelivered("s1", "/exit");
+    expect(t.started()).toMatchObject([{ prompt: "/exit", sendId: "send-x" }]);
+    expect(t.done()).toMatchObject([{ summary: "Claude Code was quit.", command: { name: "exit" } }]);
+    const kinds = t.seen.map((e) => e.type);
+    expect(kinds.indexOf("turn.done")).toBeLessThan(kinds.lastIndexOf("session.upsert"));
+    expect(t.seen.filter((e) => e.type === "reply.outcome")).toHaveLength(0);
+  });
+
+  test("a phone /clear gets its command turn on the old session", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    notePhoneTyped("s1", "/clear", true, "send-c");
+    await t.hook("SessionEnd", { reason: "clear" });
+    phoneTypeDelivered("s1", "/clear");
+    expect(t.started()).toMatchObject([{ sessionId: "s1", sendId: "send-c" }]);
+    expect(t.done()).toMatchObject([
+      { summary: "Cleared. The conversation continues in a new chat.", command: { name: "clear" } },
+    ]);
+  });
+
+  test("a message pending behind /exit is lost", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    notePhoneTyped("s1", "/exit", false, "send-x");
+    notePhoneTyped("s1", "hello", false, "send-h", true);
+    await t.hook("SessionEnd", { reason: "prompt_input_exit" });
+    expect(t.seen.filter((e) => e.type === "reply.outcome")).toMatchObject([
+      { sessionId: "s1", sendId: "send-h", outcome: "lost" },
+    ]);
+    expect(t.started()).toHaveLength(1);
+  });
+
+  test("an exit nobody sent from the phone makes no command turn", async () => {
+    const t = setup();
+    await t.hook("SessionStart");
+    await t.hook("SessionEnd", { reason: "prompt_input_exit" });
     expect(t.started()).toHaveLength(0);
   });
 
