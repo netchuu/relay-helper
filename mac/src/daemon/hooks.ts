@@ -8,6 +8,7 @@ import { BackgroundTracker } from "./background.ts";
 import type { Broker, HookReply } from "./broker.ts";
 import type { DB } from "./db.ts";
 import type { PermissionRequestInput } from "./decisions.ts";
+import { type DialogWatcher, HOOK_DIALOGS } from "./dialogWatch.ts";
 import type { EventLog } from "./events.ts";
 import { failureLine } from "./failureWords.ts";
 import type { Handover } from "./handover.ts";
@@ -65,6 +66,8 @@ export interface HookDeps {
   background?: BackgroundTracker;
   /** Claude Code's suggested next message, read off the terminal after a turn; absent in tests that don't need it. */
   suggestions?: SuggestionWatcher;
+  /** Terminal dialogs waiting at the Mac (`Session.atMac`); absent in tests that don't need it. */
+  dialogs?: DialogWatcher;
   /** Replies Claude Code holds at the Mac (held-replies); absent in tests that don't need it. */
   held?: HeldReplies;
   /** Stops Relay's own terminal copy of a chat resumed in the person's terminal; absent in tests that don't need it. */
@@ -308,6 +311,17 @@ export class HookHandler {
     // (the status change that follows publishes it).
     if ((event === "UserPromptSubmit" || event === "Stop") && !sessionModels.has(sessionId))
       sessionModels.setModel(sessionId, modelFromTranscript(session.transcript ?? str("transcript_path")));
+
+    if (this.d.dialogs) {
+      if (event === "Notification") {
+        const type = str("notification_type");
+        if (type && HOOK_DIALOGS.has(type)) this.d.dialogs.fromHook(sessionId, type, str("message"));
+        else if (type === "elicitation_complete" || type === "elicitation_response")
+          this.d.dialogs.hookCleared(sessionId);
+      } else if (["UserPromptSubmit", "PreToolUse", "Stop", "SessionEnd"].includes(event)) {
+        this.d.dialogs.hookCleared(sessionId);
+      }
+    }
 
     switch (event) {
       case "SessionStart": {
@@ -581,7 +595,12 @@ export class HookHandler {
 
       case "Notification": {
         const type = str("notification_type");
-        if (type && type !== "permission_prompt" && type !== "auth_success") {
+        if (
+          type &&
+          type !== "permission_prompt" &&
+          type !== "auth_success" &&
+          !(this.d.dialogs && HOOK_DIALOGS.has(type))
+        ) {
           this.d.events.emit({
             type: "session.notice",
             sessionId,

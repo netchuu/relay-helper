@@ -980,6 +980,23 @@ export async function typingRouteFor(
 /** How long after the Stop a look can still be taken as what the prompt showed when the session went idle. */
 const SEEN_WITHIN_MS = 15_000;
 
+/** The session's terminal screen, escape codes included; null or undefined when no route can read it. Quiet. */
+export async function readScreen(
+  session: SessionRecord,
+  ops: TypeOps = defaultTypeOps,
+): Promise<string | null | undefined> {
+  try {
+    for (const route of routesFor(session, typeWire(ops))) {
+      const read = await route.read();
+      if (!read) continue;
+      return read.screen;
+    }
+  } catch {
+    // the screen can't be read right now
+  }
+  return undefined;
+}
+
 /** Claude Code's suggested next message on screen: null when none, undefined when the screen can't be read. Quiet. */
 export async function readSuggestion(
   session: SessionRecord,

@@ -16,6 +16,7 @@ import { errMessage, log } from "../log.ts";
 import { processState, type SavedProcess, startTimeOf } from "../platform/processIdentity.ts";
 import { backgroundOf } from "./background.ts";
 import type { DB } from "./db.ts";
+import { atMacOfSession } from "./dialogWatch.ts";
 import type { EventLog } from "./events.ts";
 import { heldField, permissionModeField } from "./held.ts";
 import { terminalRoutesOf } from "./inject.ts";
@@ -203,6 +204,7 @@ function toRecord(r: SessionRow): SessionRecord {
 
 /** The public view sent to clients: never includes socket tokens or local paths beyond cwd. */
 export function publicSession(s: SessionRecord): Session {
+  const atMac = atMacOfSession(s.id);
   return {
     id: s.id,
     name: s.name,
@@ -210,7 +212,8 @@ export function publicSession(s: SessionRecord): Session {
     project: s.project,
     branch: s.branch,
     kind: s.kind,
-    status: s.status,
+    status: atMac && s.status !== "ended" ? "waiting" : s.status,
+    ...(atMac && s.status !== "ended" ? { atMac } : {}),
     ...(s.status === "ended" && s.endReason ? { endReason: s.endReason } : {}),
     // Titles taken from an IDE prompt before its context was left out: what's left, or none.
     title: s.title === null ? null : withoutIdeContext(s.title) || null,

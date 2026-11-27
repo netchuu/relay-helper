@@ -11,6 +11,7 @@ import { AttachmentStore } from "./attachments.ts";
 import { BackgroundTracker } from "./background.ts";
 import { Broker } from "./broker.ts";
 import { getSetting, openDb, setSetting } from "./db.ts";
+import { DialogWatcher } from "./dialogWatch.ts";
 import { loadOrCreateIdentity } from "./e2e.ts";
 import { EventLog } from "./events.ts";
 import { Handover } from "./handover.ts";
@@ -148,6 +149,13 @@ export async function runDaemon(): Promise<void> {
   stopper.headless = headless;
   const suggestions = new SuggestionWatcher({ registry, phoneConnected: () => phones.connected });
   phones.onFirst(() => suggestions.lookNow());
+  const dialogs = new DialogWatcher({
+    registry,
+    events,
+    phoneConnected: () => phones.connected,
+    hasOpen: (id) => broker.hasOpen(id),
+  });
+  dialogs.start();
   const handover = new Handover({
     registry,
     terminal,
@@ -172,6 +180,7 @@ export async function runDaemon(): Promise<void> {
     attachments,
     headless,
     suggestions,
+    dialogs,
   };
   const hooks = new HookHandler(deps);
   hooks.resumeOpenTurns();
@@ -279,6 +288,7 @@ export async function runDaemon(): Promise<void> {
     updater.stop();
     for (const t of timers) clearInterval(t);
     presence.stop();
+    dialogs.stop();
     relayLink?.stop();
     // The Claude Code processes this daemon started for resumed sessions go with it.
     headless.stopAll();
