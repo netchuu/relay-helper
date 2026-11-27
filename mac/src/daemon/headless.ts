@@ -551,7 +551,8 @@ export class HeadlessSessions {
     // The session ended with its process; the list says so (and stops saying it runs here).
     const s = this.d.registry.get(id);
     if (keepStatus || this.handingOver.has(id)) this.d.registry.publish(id);
-    else if (s && s.status !== "ended") this.d.registry.setStatus(id, "ended");
+    else if (s && s.status !== "ended")
+      this.d.registry.setStatus(id, "ended", { endReason: exited ? "closed" : "stopped" });
     else this.d.registry.publish(id);
   }
 }

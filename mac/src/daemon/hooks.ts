@@ -18,7 +18,7 @@ import { modelFromTranscript, sessionModels } from "./model.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { notePromptSubmitted } from "./promptLine.ts";
 import { redact } from "./redact.ts";
-import type { HookEnv, Registry } from "./registry.ts";
+import { type EndReason, endReasonOf, type HookEnv, type Registry } from "./registry.ts";
 import { compact, turnFromTranscript, withoutIdeContext } from "./render.ts";
 import { StepTracker, stepsJsonOf, type ToolCall, timelineFields } from "./steps.ts";
 import type { TurnStopper } from "./stop.ts";
@@ -293,6 +293,8 @@ export class HookHandler {
     if (this.d.registry.fromStoppedProcess(sessionId, envelope.env.claudePid, event)) return NO_OUTPUT;
     if (event === "SessionStart" && str("source") === "resume")
       await this.d.handover?.resumed(sessionId, envelope.env);
+    // The touch below wakes an ended session; a SessionEnd that follows a stop or an earlier end keeps that reason.
+    const endedBefore = event === "SessionEnd" ? this.d.registry.get(sessionId) : undefined;
     const { session, created } = this.d.registry.touch(sessionId, {
       cwd: str("cwd"),
       transcript: str("transcript_path"),
@@ -597,7 +599,12 @@ export class HookHandler {
         this.messages.clear(sessionId);
         forgetUsage(sessionId);
         this.d.suggestions?.clear(sessionId);
-        this.d.registry.setStatus(sessionId, "ended");
+        this.d.registry.setStatus(sessionId, "ended", {
+          endReason:
+            endedBefore?.status === "ended" && endedBefore.endReason
+              ? (endedBefore.endReason as EndReason)
+              : endReasonOf(str("reason")),
+        });
         sessionModels.forget(sessionId);
         return NO_OUTPUT;
 

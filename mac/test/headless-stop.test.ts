@@ -175,6 +175,7 @@ test("a process that ignores the interrupt is ended, not left working", async ()
   expect(await headless.interrupt(ID, 150)).toBe("ended");
   expect(headless.has(ID)).toBe(false);
   expect(registry.get(ID)?.status).toBe("ended");
+  expect(registry.get(ID)?.endReason).toBe("stopped");
 });
 
 test("a turn that starts during Stop's grace keeps the session working and stoppable", async () => {

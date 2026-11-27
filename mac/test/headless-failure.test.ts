@@ -98,6 +98,7 @@ test("a process that exits by itself gives one notice with its last stderr line,
   expect(notice.length).toBeLessThanOrEqual(230);
   expect(failed).toEqual([{ turnId: TURN, text: undefined }]);
   expect(registry.get(ID)?.status).toBe("ended");
+  expect(registry.get(ID)?.endReason).toBe("closed");
 });
 
 test("a process that exits without stderr gets a plain sentence", async () => {

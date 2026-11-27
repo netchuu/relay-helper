@@ -54,6 +54,7 @@ interface SessionRow {
   pty_token: string | null;
   moved_at: number | null;
   idle_stopped_at: number | null;
+  end_reason: string | null;
   wezterm_pane: string | null;
   wezterm_socket: string | null;
   kitty_listen_on: string | null;
@@ -63,6 +64,22 @@ interface SessionRow {
   updated_at: number;
   ended_at: number | null;
   last_summary: string | null;
+}
+
+export type EndReason = "exit" | "clear" | "resume" | "logout" | "closed" | "untrusted" | "stopped" | "other";
+
+/** SessionEnd's `reason` as the phone's `endReason`; a reason this helper doesn't know is `other`. */
+export function endReasonOf(reason: string | undefined): EndReason {
+  switch (reason) {
+    case "prompt_input_exit":
+      return "exit";
+    case "clear":
+    case "resume":
+    case "logout":
+      return reason;
+    default:
+      return "other";
+  }
 }
 
 export interface SessionRecord extends Session {
@@ -128,8 +145,8 @@ export function defaultSocketPath(pid: number | null): string | null {
 }
 
 /** A session with the pane its terminal reported (the columns are NULL for a session without one). */
-const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at, i.stopped_at AS idle_stopped_at
-  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id LEFT JOIN idle_stopped_sessions i ON i.session_id = s.id`;
+const SELECT_SESSIONS = `SELECT s.*, ps.pid_start, p.wezterm_pane, p.wezterm_socket, p.kitty_listen_on, p.kitty_window_id, m.moved_at, i.stopped_at AS idle_stopped_at, er.reason AS end_reason
+  FROM sessions s LEFT JOIN session_panes p ON p.session_id = s.id LEFT JOIN session_pid_starts ps ON ps.session_id = s.id LEFT JOIN moved_sessions m ON m.session_id = s.id LEFT JOIN idle_stopped_sessions i ON i.session_id = s.id LEFT JOIN session_end_reasons er ON er.session_id = s.id`;
 
 const cleanNullable = <T extends string | null>(s: T): T => (s == null ? s : (cleanName(s) as T));
 
@@ -180,6 +197,7 @@ function toRecord(r: SessionRow): SessionRecord {
     kittyListenOn: r.kitty_listen_on ?? null,
     kittyWindowId: r.kitty_window_id ?? null,
     transcript: r.transcript,
+    ...(r.status === "ended" ? { endReason: r.end_reason ?? "other" } : {}),
   };
 }
 
@@ -193,6 +211,7 @@ export function publicSession(s: SessionRecord): Session {
     branch: s.branch,
     kind: s.kind,
     status: s.status,
+    ...(s.status === "ended" && s.endReason ? { endReason: s.endReason } : {}),
     // Titles taken from an IDE prompt before its context was left out: what's left, or none.
     title: s.title === null ? null : withoutIdeContext(s.title) || null,
     terminal: s.terminal,
@@ -456,6 +475,8 @@ export class Registry {
         now,
         id,
       );
+    if (existing.status === "ended")
+      this.db.query("DELETE FROM session_end_reasons WHERE session_id = ?").run(id);
     if (newStart) this.savePidStart(id, env.claudePid ?? null);
     // A process of someone else's took the chat over.
     if (env.claudePid) this.clearKeptOpen(id);
@@ -586,7 +607,7 @@ export class Registry {
   setStatus(
     id: string,
     status: SessionStatus,
-    extra?: { title?: string; lastSummary?: string; keepUpdatedAt?: boolean },
+    extra?: { title?: string; lastSummary?: string; keepUpdatedAt?: boolean; endReason?: EndReason },
   ): void {
     const now = Date.now();
     if (status === "working") this.workingAt.set(id, ++this.tick);
@@ -613,6 +634,11 @@ export class Registry {
         now,
         id,
       );
+    if (status !== "ended") this.db.query("DELETE FROM session_end_reasons WHERE session_id = ?").run(id);
+    else
+      this.db
+        .query("INSERT OR IGNORE INTO session_end_reasons (session_id, reason) VALUES (?, ?)")
+        .run(id, extra?.endReason ?? "other");
     this.publish(id);
   }
 
@@ -722,7 +748,7 @@ export class Registry {
       this.db.query("UPDATE sessions SET pid = NULL WHERE id = ?").run(s.id);
       this.db.query("DELETE FROM session_pid_starts WHERE session_id = ?").run(s.id);
     }
-    this.setStatus(s.id, "ended");
+    this.setStatus(s.id, "ended", { endReason: "closed" });
   }
 }
 
