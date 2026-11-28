@@ -115,7 +115,7 @@ describe("the end of the file", () => {
   test("is what the step carries, always as a cut output, and never the start", async () => {
     const s = session();
     const { step, first, changed } = await read(s.transcript, s.save("abc123def.txt", long()));
-    expect(first).toEqual([]);
+    expect(first).toHaveLength(1);
     expect(changed).toEqual([step]);
     expect(step.output?.split("\n")).toEqual([
       ...numbered(4000).slice(-(TURN_STEP_OUTPUT_LINES - 1)),
@@ -467,13 +467,13 @@ describe("live and finished", () => {
     const t = setup();
     await t.ran();
     const sent = t.actions().filter((e) => e.step.id === "b");
-    expect(sent.map((e) => e.step.output === undefined)).toEqual([true, false]);
-    const live = outputOf(sent[1]?.step);
+    expect(sent.map((e) => e.step.output === undefined)).toEqual([true, true, false]);
+    const live = outputOf(sent[2]?.step);
     expect(live.output?.endsWith(`line 4000\n${MARKER}`)).toBe(true);
     expect(live.outputCut).toBe(true);
     expect(outputOf((await t.liveActions()).find((x) => x.id === "b"))).toEqual(live);
     await t.hook("Stop", { last_assistant_message: "The tests pass." });
-    expect(t.actions().filter((e) => e.step.id === "b")).toHaveLength(2);
+    expect(t.actions().filter((e) => e.step.id === "b")).toHaveLength(3);
     expect(outputOf(t.done().turn.steps?.find((x) => x.id === "b"))).toEqual(live);
     expect(outputOf((await t.storedTurn())?.steps?.find((x) => x.id === "b"))).toEqual(live);
   });
@@ -501,7 +501,7 @@ describe("live and finished", () => {
     await u.messages.outputsRead("s1");
     u.save("abc123def.txt", long());
     await u.hook("Stop", { last_assistant_message: "Done." });
-    expect(u.actions().filter((e) => e.step.id === "b")).toHaveLength(1);
+    expect(u.actions().filter((e) => e.step.id === "b")).toHaveLength(2);
     expect(outputOf(u.done().turn.steps?.find((x) => x.id === "b"))).toEqual(outputOf(undefined));
   });
 

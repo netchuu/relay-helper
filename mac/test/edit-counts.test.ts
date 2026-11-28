@@ -208,7 +208,7 @@ describe("the timeline reader", () => {
     const r = new TimelineReader(CWD, 0);
     const [sent] = r.add(use("ok", "Edit", { file_path: FILE, old_string: "a\nb", new_string: "c" }, 10));
     expect(sent).toMatchObject({ kind: "edit", id: "ok", added: 1, removed: 2 });
-    expect(r.add(result("ok", false, 20))).toEqual([]);
+    expect(r.add(result("ok", false, 20)).map((x) => x.id)).toEqual(["ok"]);
     expect(counts(r.actions[0])).toEqual({ added: 1, removed: 2 });
 
     r.add(use("bad", "Write", { file_path: FILE, content: "a\nb" }, 30));
@@ -325,7 +325,7 @@ describe("live and finished", () => {
     const expected = [...EDITS.map(([id, , , c]) => [id, "edit", c]), ["r", "read", {}]];
     const shape = (steps: TurnStep[] | undefined) => steps?.map((x) => [x.id, x.kind, counts(x)]);
 
-    const live = t.actions().map((e) => e.step);
+    const live = [...new Map(t.actions().map((e) => [e.step.id, e.step])).values()];
     expect(shape(live)).toEqual(expected);
     expect(shape(await t.liveActions())).toEqual(expected);
 

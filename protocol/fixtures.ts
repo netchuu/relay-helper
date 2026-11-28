@@ -448,6 +448,7 @@ const edited = TurnStep.parse({
   detail: "src/cart.ts",
   added: 48,
   removed: 6,
+  durationMs: 150,
 });
 const written = TurnStep.parse({
   kind: "edit",
@@ -485,6 +486,7 @@ const running = TurnStep.parse({
 });
 const ran = TurnStep.parse({
   ...running,
+  durationMs: 420,
   output:
     "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail",
 });
@@ -496,6 +498,7 @@ const ranFailed = TurnStep.parse({
   tool: "Bash",
   detail: "bun run build",
   failed: true,
+  durationMs: 2_300,
   output: 'src/money.ts:14:3 error: Type "string" is not assignable to type "number".\nFound 1 error.',
   outputCut: true,
 });

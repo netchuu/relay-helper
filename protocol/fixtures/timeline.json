@@ -311,6 +311,7 @@
           "id": "toolu_01CountsEdit",
           "tool": "Edit",
           "detail": "src/cart.ts",
+          "durationMs": 150,
           "added": 48,
           "removed": 6
         }
@@ -358,6 +359,7 @@
           "id": "toolu_01CountsEdit",
           "tool": "Edit",
           "detail": "src/cart.ts",
+          "durationMs": 150,
           "added": 48,
           "removed": 6
         },
@@ -405,6 +407,7 @@
           "tool": "Bash",
           "title": "Run the cart tests",
           "detail": "bun test src/cart.test.ts",
+          "durationMs": 420,
           "output": "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail"
         }
       },
@@ -422,6 +425,7 @@
           "id": "toolu_01OutputBuild",
           "tool": "Bash",
           "detail": "bun run build",
+          "durationMs": 2300,
           "output": "src/money.ts:14:3 error: Type \"string\" is not assignable to type \"number\".\nFound 1 error.",
           "outputCut": true
         }
@@ -454,6 +458,7 @@
           "tool": "Bash",
           "title": "Run the cart tests",
           "detail": "bun test src/cart.test.ts",
+          "durationMs": 420,
           "output": "src/cart.test.ts:\n(pass) adds an item [0.42ms]\n(pass) totals the cart [0.11ms]\n\n 2 pass\n 0 fail"
         },
         {
@@ -464,6 +469,7 @@
           "id": "toolu_01OutputBuild",
           "tool": "Bash",
           "detail": "bun run build",
+          "durationMs": 2300,
           "output": "src/money.ts:14:3 error: Type \"string\" is not assignable to type \"number\".\nFound 1 error.",
           "outputCut": true
         }

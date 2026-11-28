@@ -264,6 +264,7 @@ describe("an agent's step from its own transcript file", () => {
     expect(Object.keys(reader.actions[0] as object).sort()).toEqual([
       "at",
       "detail",
+      "durationMs",
       "id",
       "kind",
       "label",

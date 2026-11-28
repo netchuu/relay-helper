@@ -80,7 +80,7 @@ const TurnStepBase = z.object({
     .max(TURN_STEP_DETAIL_UNITS)
     .refine((t) => graphemes(t).length <= TURN_STEP_DETAIL_MAX, `at most ${TURN_STEP_DETAIL_MAX} characters`)
     .optional(),
-  /** How long a thinking line took, or an agent ran (ms). */
+  /** How long a thinking line took, an agent ran, or a tool call took until its result (ms). */
   durationMs: z.number().nonnegative().optional(),
   /** Lines an edit put in, counted from what Claude asked for; only on `edit` steps. Never the text. */
   added: z.number().int().nonnegative().optional(),

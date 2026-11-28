@@ -136,7 +136,8 @@
                 "at": 1794218408408,
                 "id": "toolu_018WRXcmtwdpP7CuoJC6Dtbe",
                 "tool": "Bash",
-                "title": "Count and list top-level .txt files in the folder"
+                "title": "Count and list top-level .txt files in the folder",
+                "durationMs": 477
               }
             ]
           }
@@ -220,7 +221,8 @@
             "failed": true,
             "id": "toolu_01VsP8yLEysmJnsdqhPCNHCW",
             "tool": "Read",
-            "detail": "missing-file.txt"
+            "detail": "missing-file.txt",
+            "durationMs": 19
           },
           {
             "kind": "run",
@@ -229,7 +231,8 @@
             "id": "toolu_01WHRJXXW8mtVR66bRTstoom",
             "tool": "Bash",
             "title": "Search working folder for a missing-file match and list contents",
-            "detail": "find /Users/me/Projects/scratch -iname '*missing*' 2>/dev/null; ls -la /Users/me/Projects/scratch"
+            "detail": "find /Users/me/Projects/scratch -iname '*missing*' 2>/dev/null; ls -la /Users/me/Projects/scratch",
+            "durationMs": 1042
           }
         ],
         "thoughts": [

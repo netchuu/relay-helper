@@ -252,17 +252,17 @@ describe("the timeline reader", () => {
   test("Claude Code's own note about the folder is not the command's output", () => {
     const r = new TimelineReader(CWD, 0);
     r.add(bash("n", 10));
-    expect(r.add(ended("n", 20, "", `\nShell cwd was reset to ${CWD}`))).toEqual([]);
+    expect(r.add(ended("n", 20, "", `\nShell cwd was reset to ${CWD}`)).map(outputOf)).toEqual([{}]);
     r.add(bash("o", 30));
     r.add(ended("o", 40, "ok", `\nShell cwd was reset to ${CWD}`));
     expect(r.actions.map(outputOf)).toEqual([{}, { output: "ok" }]);
     expect(JSON.stringify(r.actions)).not.toContain("Shell cwd");
   });
 
-  test("a command that printed nothing gets no second event and no fields", () => {
+  test("a command that printed nothing gets a second event for its time only", () => {
     const r = new TimelineReader(CWD, 0);
     r.add(bash("q", 10));
-    expect(r.add(ended("q", 20, "", ""))).toEqual([]);
+    expect(r.add(ended("q", 20, "", "")).map(outputOf)).toEqual([{}]);
     r.add(bash("bg", 30));
     expect(r.add(ended("bg", 40, "", "", { backgroundTaskId: "bx1" }))).toEqual([]);
     expect(r.actions.map(outputOf)).toEqual([{}, {}]);
@@ -525,7 +525,7 @@ describe("live and finished", () => {
     expect((await t.storedTurn())?.steps?.map(outputOf)).toEqual([expected]);
   });
 
-  test("a command with no output is not sent again, and other tools stay as they were", async () => {
+  test("a command with no output is sent again for its time only, and other tools stay as they were", async () => {
     const t = setup();
     await t.hook("UserPromptSubmit", { prompt: "x" });
     const s = Date.now();
@@ -538,6 +538,8 @@ describe("live and finished", () => {
     await t.hook("PostToolUse", hookTool("quiet", "mkdir out"));
     expect(t.actions().map((e) => [e.step.id, outputOf(e.step)])).toEqual([
       ["quiet", {}],
+      ["quiet", {}],
+      ["r", {}],
       ["r", {}],
     ]);
     await t.hook("Stop", { last_assistant_message: "Done." });

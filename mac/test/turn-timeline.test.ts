@@ -485,7 +485,7 @@ describe("ids and order", () => {
     const r = new TimelineReader(CWD, 0);
     r.add(thinking("th", 5));
     r.add(use("a", "Bash", { command: "ls" }, 10));
-    expect(r.add(result("a", false, 20))).toEqual([]);
+    expect(r.add(result("a", false, 20)).map((s) => s.id)).toEqual(["a"]);
     expect(r.add(result("th", true, 30))).toEqual([]);
     expect(r.actions[0]?.failed).toBeUndefined();
     expect(r.thoughts[0]?.failed).toBeUndefined();
@@ -747,7 +747,7 @@ describe("live turn.action", () => {
     t.append(result("a", true, s + 3000));
     await t.poll();
     const [first, again] = t.actions().map((e) => e.step);
-    expect(again).toEqual({ ...(first as TurnStep), failed: true });
+    expect(again).toEqual({ ...(first as TurnStep), failed: true, durationMs: 3000 });
   });
 
   test("an event emitted earlier isn't changed when the action later fails (each event is a copy)", async () => {

@@ -190,6 +190,19 @@ function recordedOutput(entry: TimelineEntry, block: Block, alone: boolean): str
   return [stdout.trimEnd(), stderr].filter((part) => part.trim()).join("\n");
 }
 
+/** A shell command's result that only says it went to the background: its time is not the command's. */
+function launchedInBackground(entry: TimelineEntry, block: Block): boolean {
+  const r = entry?.toolUseResult;
+  if (
+    r &&
+    typeof r === "object" &&
+    !Array.isArray(r) &&
+    (r as { backgroundTaskId?: unknown }).backgroundTaskId !== undefined
+  )
+    return true;
+  return textOf(block.content).startsWith("Command running in background");
+}
+
 /** The file Claude Code saved a long output in, from the entry's own record, never from text the command printed. */
 function savedOutputFile(entry: TimelineEntry, block: Block, alone: boolean): string | null {
   const r = entry.toolUseResult;
@@ -521,6 +534,17 @@ export class TimelineReader {
             }
           }
           if (this.agents.result(block.tool_use_id, textOf(block.content), ts)) touched = true;
+          // A tool call's own time; an agent's is its run, set by the agent reader.
+          if (
+            step.kind !== "agent" &&
+            step.durationMs === undefined &&
+            !Number.isNaN(ts) &&
+            ts >= step.at &&
+            !launchedInBackground(entry, block)
+          ) {
+            step.durationMs = ts - step.at;
+            touched = true;
+          }
           if (touched) changed.push(step);
         }
       });
