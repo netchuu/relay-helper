@@ -265,5 +265,16 @@ export function withoutIdeContext(prompt: string): string {
     if (at === -1) return "";
     rest = rest.slice(at + close.length).trimStart();
   }
-  return rest.trim();
+  return withoutPasteTags(rest).trim();
+}
+
+/**
+ * Claude Code wraps pasted text as `<pasted_content id="…">` on its own line and `</pasted_content id="…">` (the same id) ending a line.
+ * Only such a pair loses its tags; the same tag inside a sentence or code line stays.
+ */
+export function withoutPasteTags(text: string): string {
+  return text.replace(
+    /(^|\n)<pasted_content id="([^"\n]*)">\n?([\s\S]*?)\n?<\/pasted_content id="\2">(?=\r?\n|$)/g,
+    "$1$3",
+  );
 }
