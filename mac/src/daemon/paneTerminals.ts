@@ -78,6 +78,11 @@ export function paneStashSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\u0013", false)];
 }
 
+/** Ctrl+C alone: clears the prompt's text. */
+export function paneClearSteps(target: PaneTarget): PaneStep[] {
+  return [sendText(target, "\u0003", false)];
+}
+
 /** Esc alone. */
 export function paneEscapeSteps(target: PaneTarget): PaneStep[] {
   return [sendText(target, "\u001b", false)];
@@ -162,6 +167,10 @@ export async function paneEnter(target: PaneTarget): Promise<void> {
 
 export async function paneStash(target: PaneTarget): Promise<void> {
   await runSteps(target, paneStashSteps(target), "send-text");
+}
+
+export async function paneClear(target: PaneTarget): Promise<void> {
+  await runSteps(target, paneClearSteps(target), "send-text");
 }
 
 export async function paneArrow(target: PaneTarget, key: "up" | "down"): Promise<void> {

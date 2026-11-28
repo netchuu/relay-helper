@@ -28,6 +28,7 @@ import {
   type PaneTarget,
   PartlyTyped,
   paneArrow,
+  paneClear,
   paneEnter,
   paneEscape,
   paneInfo,
@@ -156,6 +157,8 @@ export interface TypeOps {
   paneType?(target: PaneTarget, text: string): Promise<void>;
   paneEnter?(target: PaneTarget): Promise<void>;
   paneStash?(target: PaneTarget): Promise<void>;
+  /** Ctrl+C, for a prompt Claude Code put back after a Stop. */
+  paneClear?(target: PaneTarget): Promise<void>;
   /** Arrow keys, to move a dialog's cursor. Absent: the route can't answer a dialog. */
   ptyArrow?(socketPath: string, token: string, pid: number, key: "up" | "down"): Promise<TypeReply>;
   tmuxArrow?(socket: string, pane: string, key: "up" | "down"): Promise<void>;
@@ -185,7 +188,10 @@ export interface TypeOps {
   enter?(route: TypingRoute, tty: string): Promise<boolean>;
   /** Claude Code's stash key (Ctrl+S): puts the prompt's draft aside and brings it back when a message is sent. */
   tmuxStash?(socket: string, pane: string): Promise<void>;
+  tmuxClear?(socket: string, pane: string): Promise<void>;
   stash?(route: TypingRoute, tty: string): Promise<boolean>;
+  /** Clears the prompt's text (Ctrl+C), for a prompt Claude Code put back after a Stop. */
+  clear?(route: TypingRoute, tty: string): Promise<boolean>;
   sleep?(ms: number): Promise<void>;
   /** Whether no key was pressed at this Mac since the session's prompt was last submitted. Absent: false. */
   noKeySincePrompt?(sessionId: string): boolean;
@@ -227,6 +233,7 @@ export const defaultTypeOps: TypeOps = {
   paneType: (target, text) => paneType(target, text, splitAttachmentPaths),
   paneEnter,
   paneStash,
+  paneClear,
   paneArrow,
   paneInfo,
   routes: (t) => platform.typing.routes(t),
@@ -239,6 +246,7 @@ export const defaultTypeOps: TypeOps = {
   enterPty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "enter" }),
   tmuxEnter,
   tmuxStash,
+  tmuxClear,
   ptyArrow: (socketPath, token, pid, key) => requestPty(socketPath, { token, pid, key }),
   tmuxArrow,
   ptyEscape: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
@@ -249,6 +257,7 @@ export const defaultTypeOps: TypeOps = {
   arrow: (route, tty, key) => platform.typing.key(route, tty, key),
   enter: (route, tty) => platform.typing.key(route, tty, "enter"),
   stash: (route, tty) => platform.typing.key(route, tty, "stash"),
+  clear: (route, tty) => platform.typing.key(route, tty, "clear"),
   sleep: (ms) => Bun.sleep(ms),
   noKeySincePrompt: (sessionId) => noKeySincePrompt(sessionId, platform.typing.keyIdleSeconds?.() ?? null),
 };
@@ -528,7 +537,9 @@ async function typeIntoTerminal(
     // The same message sent again while its unsent copy sits there: press Enter for that copy, don't type another.
     // On a plain-text tab only text we left counts: Enter doesn't submit Claude's suggestion.
     const shown = route.plainText
-      ? ready.screen !== null && leftUnsent.get(session.id) === text
+      ? ready.screen !== null &&
+        (leftUnsent.get(session.id) === text ||
+          draftKept.get(session.id) === text.replace(/\s+/g, " ").trim())
         ? promptDraft(ready.screen)
         : null
       : draft;
@@ -537,8 +548,18 @@ async function typeIntoTerminal(
     }
     if (draft && opts.terminalOnly) throw new DraftInPrompt("there is text in the prompt");
     let body = text;
-    if (draft) {
-      if (await stashed(session, route, ready, ops)) {
+    // Claude Code's own put-back prompt is cleared, not stashed: a stash would bring it back after every message.
+    const putBackText = putBack.get(session.id);
+    if (
+      draft &&
+      putBackText !== undefined &&
+      draft.replace(/\s+/g, " ").trim() === putBackText &&
+      (await emptied(session, route, ready, ops, "clear"))
+    ) {
+      putBack.delete(session.id);
+      draftKept.delete(session.id);
+    } else if (draft) {
+      if (await emptied(session, route, ready, ops, "stash")) {
         if (route.plainText) draftKept.set(session.id, draft.replace(/\s+/g, " ").trim());
       } else body = afterBreak(text);
     }
@@ -555,13 +576,14 @@ async function typeIntoTerminal(
  * Presses the stash key and checks that the prompt is empty after it (a Claude Code without the key, or a lost key,
  * leaves the draft there, and the message would run into it). A route with no screen to read is taken at its word.
  */
-async function stashed(
+async function emptied(
   session: SessionRecord,
   route: ReplyRoute,
   ready: ReplyReady,
   ops: TypeOps,
+  key: "stash" | "clear",
 ): Promise<boolean> {
-  if (!(await ready.key("stash").catch(() => false))) return false;
+  if (!(await ready.key(key).catch(() => false))) return false;
   await (ops.sleep ?? Bun.sleep)(STASH_SETTLE_MS);
   const after = await route.read().catch(() => null);
   if (after?.screen == null) return true;
@@ -574,8 +596,20 @@ const STASH_SETTLE_MS = 150;
 /** Per session, the draft a stash put back in a tab that can't tell it from a suggestion: it is typed text. */
 const draftKept = new Map<string, string>();
 
+/** A Stop makes Claude Code put the interrupted prompt back in the box: in a plain-text tab it is typed text, not a suggestion. */
+export function notePutBack(sessionId: string, prompt: string | null): void {
+  const text = (prompt ?? "").replace(PHONE_PREFIX, "").replace(/\s+/g, " ").trim();
+  if (!text) return;
+  draftKept.set(sessionId, text);
+  putBack.set(sessionId, text);
+}
+
+/** Per session, the prompt Claude Code put back after a Stop, until it is cleared or the person submits. */
+const putBack = new Map<string, string>();
+
 export function clearDraftKept(sessionId: string): void {
   draftKept.delete(sessionId);
+  putBack.delete(sessionId);
   phoneTyped.delete(sessionId);
 }
 
@@ -587,10 +621,13 @@ export function draftSubmitted(sessionId: string, prompt: string): void {
   const sent = prompt.replace(/\s+/g, " ").trim();
   const own = phoneTyped.get(sessionId) === sent;
   phoneTyped.delete(sessionId);
-  if (!own) draftKept.delete(sessionId);
+  if (!own) {
+    draftKept.delete(sessionId);
+    putBack.delete(sessionId);
+  }
 }
 
-type KeyName = "enter" | "escape" | "stash" | "up" | "down";
+type KeyName = "enter" | "escape" | "stash" | "clear" | "up" | "down";
 
 /** What a route does with a message: typed whole, typed in part (text went in, then a step failed), or not at all. */
 type TypeOutcome = "sent" | "partial" | "failed";
@@ -666,7 +703,14 @@ function typeWire(ops: TypeOps): Wire {
         await ops.tmuxArrow(socket, pane, key);
         return;
       }
-      const press = key === "enter" ? ops.tmuxEnter : key === "stash" ? ops.tmuxStash : undefined;
+      const press =
+        key === "enter"
+          ? ops.tmuxEnter
+          : key === "stash"
+            ? ops.tmuxStash
+            : key === "clear"
+              ? ops.tmuxClear
+              : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(socket, pane);
     },
@@ -685,7 +729,14 @@ function typeWire(ops: TypeOps): Wire {
         await ops.paneArrow(target, key);
         return;
       }
-      const press = key === "enter" ? ops.paneEnter : key === "stash" ? ops.paneStash : undefined;
+      const press =
+        key === "enter"
+          ? ops.paneEnter
+          : key === "stash"
+            ? ops.paneStash
+            : key === "clear"
+              ? ops.paneClear
+              : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(target);
     },
@@ -698,11 +749,13 @@ function typeWire(ops: TypeOps): Wire {
         ? ops.enter(route, tty)
         : key === "stash" && ops.stash
           ? ops.stash(route, tty)
-          : key === "escape" && ops.escape
-            ? ops.escape(route, tty)
-            : (key === "up" || key === "down") && ops.arrow
-              ? ops.arrow(route, tty, key)
-              : false,
+          : key === "clear" && ops.clear
+            ? ops.clear(route, tty)
+            : key === "escape" && ops.escape
+              ? ops.escape(route, tty)
+              : (key === "up" || key === "down") && ops.arrow
+                ? ops.arrow(route, tty, key)
+                : false,
     ttyOf: (pid) => ops.ttyOf(pid, procs),
     viewerTtyOf:
       ops.viewerTtyOf && ((pid, cwd) => ops.viewerTtyOf?.(pid, cwd, procs) ?? Promise.resolve(null)),
@@ -713,6 +766,9 @@ function typeWire(ops: TypeOps): Wire {
 
 function keyWire(ops: KeyOps): Wire {
   return {
+    ptyScreen: ops.ptyScreen,
+    tmuxScreen: ops.tmuxScreen,
+    paneScreen: ops.paneScreen,
     ptyKey: (socketPath, token, pid, key) =>
       key === "escape" ? ops.pty(socketPath, token, pid) : Promise.reject(new DeliveryError("no such key")),
     tmuxKey: async (socket, pane, key) => {
@@ -726,6 +782,7 @@ function keyWire(ops: KeyOps): Wire {
     },
     paneInfo: ops.paneInfo,
     tabRoutes: ops.routes,
+    tabPeek: ops.peek,
     tabKey: async (route, tty, key) => (key === "escape" ? ops.app(route, tty) : false),
     ttyOf: ops.ttyOf,
     viewerTtyOf: ops.viewerTtyOf,
@@ -903,9 +960,10 @@ function routesFor(session: SessionRecord, wire: Wire): ReplyRoute[] {
           type: async (text) => ((await wire.tabType?.(app, first.tty, text)) === true ? "sent" : "failed"),
           // A key that doesn't land goes to the next tab in front, as the earlier tabs may be stale.
           key: async (key) => {
-            for (let found: typeof first | null = first; found; found = await scan(found.at + 1))
+            for (let found: typeof first | null = first; found; found = await scan(found.at + 1)) {
               if (await guarded(async () => (await wire.tabKey?.(app, found.tty, key)) === true, false))
                 return true;
+            }
             return false;
           },
         };
@@ -1195,6 +1253,10 @@ export type EscapeRoute = TerminalRoute;
 export interface KeyOps {
   pty(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmux(socket: string, pane: string): Promise<void>;
+  /** Screen reads, to see whether Esc put the stopped prompt back. */
+  tmuxScreen?(socket: string, pane: string): Promise<string | null>;
+  ptyScreen?(socketPath: string, token: string): Promise<string | null>;
+  paneScreen?(target: PaneTarget): Promise<string | null>;
   /** A WezTerm pane or kitty window. */
   pane?(target: PaneTarget): Promise<void>;
   paneInfo?(target: PaneTarget): Promise<PaneInfo | null>;
@@ -1206,11 +1268,16 @@ export interface KeyOps {
   ttyOf(pid: number | null): Promise<string | null>;
   viewerTtyOf?(pid: number, cwd: string): Promise<string | null>;
   wrapperTtysOf?(pid: number): Promise<WrapperTty[]>;
+  /** Looks at a tab, to see whether Esc put the stopped prompt back. */
+  peek?(route: TypingRoute, tty: string): Promise<TabView | null>;
 }
 
 export const defaultKeyOps: KeyOps = {
   pty: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
   tmux: tmuxEscape,
+  tmuxScreen: (socket, pane) => tmuxScreen(socket, pane),
+  ptyScreen: (socketPath, token) => ptyScreenOf(socketPath, token),
+  paneScreen,
   pane: paneEscape,
   paneInfo,
   tmuxPaneTty,
@@ -1220,7 +1287,38 @@ export const defaultKeyOps: KeyOps = {
   ttyOf,
   viewerTtyOf: (pid, cwd) => viewerTtyOf(pid, cwd),
   wrapperTtysOf: (pid) => wrapperTtysOf(pid),
+  peek: (route, tty) => platform.typing.peek(route, tty),
 };
+
+/**
+ * Whether the tab that took the session's last Esc shows `prompt` back in its box: Claude Code does that when the
+ * Esc comes right after sending, and writes no interrupt marker.
+ */
+export async function promptPutBack(
+  session: SessionRecord,
+  prompt: string | null,
+  ops: KeyOps = defaultKeyOps,
+  via?: EscapeRoute,
+): Promise<boolean> {
+  const text = (prompt ?? "").replace(PHONE_PREFIX, "").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  if (via === "pty" || via === "tmux" || via === "wezterm" || via === "kitty") {
+    for (const route of routesFor(session, keyWire(ops))) {
+      if (route.kind !== via) continue;
+      const screen = (await route.read().catch(() => null))?.screen;
+      return screen != null && promptTextRead(screen) === text;
+    }
+    return false;
+  }
+  const tty = foundTty.get(session.id);
+  if (!tty || !ops.peek) return false;
+  for (const app of ops.routes(session.terminal)) {
+    const tab = await ops.peek(app, tty).catch(() => null);
+    if (!tab?.screen) continue;
+    return promptTextRead(tab.screen) === text;
+  }
+  return false;
+}
 
 /** Presses Esc in the session's terminal; ignores `preferTyping` and the activity rules. Returns the route, or null. */
 export async function pressEscape(
@@ -1566,6 +1664,18 @@ async function tmuxEnter(socket: string, pane: string): Promise<void> {
 async function tmuxArrow(socket: string, pane: string, key: "up" | "down"): Promise<void> {
   await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, key === "up" ? "Up" : "Down"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const code = await proc.exited;
+  if (code !== 0) throw new DeliveryError(`tmux send-keys failed (${code})`);
+}
+
+async function tmuxClear(socket: string, pane: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
+  const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "C-c"], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

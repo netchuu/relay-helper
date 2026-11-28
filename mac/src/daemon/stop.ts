@@ -18,8 +18,10 @@ import {
   DeliveryError,
   defaultKeyOps,
   type KeyOps,
+  notePutBack,
   postToInbox,
   pressEscape,
+  promptPutBack,
   STOP_MESSAGE,
   STOP_TEXT,
 } from "./inject.ts";
@@ -212,7 +214,13 @@ export class TurnStopper {
     if (route) {
       const result = { via: route, turnId: null as string | null };
       this.lastEsc.set(sessionId, { at: Date.now(), result, turnId: open?.id ?? null });
-      if (open) result.turnId = await this.waitForMarker(sessionId, open);
+      if (open) {
+        const seen = await this.waitForMarker(sessionId, open);
+        // Esc right after sending writes no marker: Claude Code only puts the prompt back in the box.
+        const putBack = !seen.landed && (await promptPutBack(fresh, open.prompt, this.keys, route));
+        result.turnId = putBack ? this.endStopped(open.id) : seen.turnId;
+        if (seen.landed || putBack) notePutBack(sessionId, open.prompt);
+      }
       return done(result.via, result.turnId);
     }
 
@@ -431,7 +439,11 @@ export class TurnStopper {
     return row.id;
   }
 
-  private async waitForMarker(sessionId: string, open: OpenTurn): Promise<string | null> {
+  /** `landed` is false when the transcript shows no interrupt marker. */
+  private async waitForMarker(
+    sessionId: string,
+    open: OpenTurn,
+  ): Promise<{ landed: boolean; turnId: string | null }> {
     const end = Date.now() + this.t.markerMs;
     let unreadable = true;
     while (Date.now() < end) {
@@ -440,19 +452,19 @@ export class TurnStopper {
         ? this.transcriptInfo(sessionId, open.started_at, undefined, open.prompt)
         : null;
       if (info) unreadable = false;
-      if (info?.interrupted) return this.endStopped(open.id, info);
+      if (info?.interrupted) return { landed: true, turnId: this.endStopped(open.id, info) };
       // A Stop hook got there first: the turn finished on its own.
       const row = this.d.db.query("SELECT full_text FROM turns WHERE id = ?").get(open.id) as {
         full_text: string | null;
       } | null;
-      if (row?.full_text !== null && row?.full_text !== undefined) return null;
+      if (row?.full_text !== null && row?.full_text !== undefined) return { landed: true, turnId: null };
     }
     log.warn("no interrupt marker after Esc", {
       sessionId,
       turnId: open.id,
       transcriptUnreadable: unreadable,
     });
-    return null;
+    return { landed: false, turnId: null };
   }
 
   private transcriptStamp(sessionId: string): string | null {
