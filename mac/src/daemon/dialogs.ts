@@ -44,9 +44,11 @@ const KNOWN: Known[] = [
   { kind: "login", re: /Please run \/login|OAuth token has expired/, canClose: false },
 ];
 
-const FOOTER = /Enter to (?:confirm|select|save)|Esc to (?:cancel|exit|close)/;
+const FOOTER = /Enter to (?:confirm|select|save)|Esc to (?:cancel|exit|close|go back|reject)/;
 const OPTION = /^(\s*)(❯\s+)?(?:\d+\.\s+)?(\S.*?)\s*$/;
-const isRule = (l: string) => /^[╭╰]?─{8,}(?: [^─\n]{1,60} ─+)?[╮╯]?$/.test(l.trim());
+const isRule = (l: string) => /^(?:[╭╰]?─{8,}(?: [^─\n]{1,60} ─+)?[╮╯]?|▔{8,})$/.test(l.trim());
+/** A search box inside a dialog: not the top of it. */
+const isBox = (l: string) => /^\s*(?:[╭╰]─{8,}[╮╯]|│.*│)$/.test(l);
 /** How far above the options the title may be when no rule marks the top. */
 const LOOK_UP = 12;
 
@@ -88,7 +90,7 @@ export function detectDialog(screen: string): Dialog | null {
   const options = rows.map((i) => parseOption(lines[i] ?? "")?.label ?? "");
 
   let top = first - 1;
-  while (top >= 0 && first - top <= LOOK_UP && !isRule(lines[top] ?? "")) top--;
+  while (top >= 0 && first - top <= LOOK_UP && (isBox(lines[top] ?? "") || !isRule(lines[top] ?? ""))) top--;
   const footerAt = lines.findIndex((l, i) => i > last && FOOTER.test(l));
   // A rule under the cursor before any footer closes a prompt box, so the options are a draft.
   const ruleBelow = lines.findIndex((l, i) => i > last && isRule(l));
@@ -100,6 +102,7 @@ export function detectDialog(screen: string): Dialog | null {
 
   const above = lines
     .slice(Math.max(top + 1, first - LOOK_UP), first)
+    .filter((l) => !isBox(l))
     .map((l) => l.trim())
     .filter((l) => l !== "");
   const clean = (s: string, n: number) => head(redact(s).trim(), n);

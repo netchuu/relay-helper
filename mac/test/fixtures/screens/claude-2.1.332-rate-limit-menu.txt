@@ -1,0 +1,8 @@
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  What do you want to do?
+
+  ❯ 1. Stop and wait for limit to reset
+    2. Add funds to continue with usage credits
+    3. Upgrade your plan
+
+  Enter to confirm · Esc to cancel

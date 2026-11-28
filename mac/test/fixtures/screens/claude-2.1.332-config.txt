@@ -1,0 +1,38 @@
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Settings  Status   Config   Usage   Stats
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search settings…                                                                           │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Auto-compact                                    off
+    Idle compaction                                 on
+    Continue automatically at usage limit           on
+    Switch models when a message is flagged         Not asked yet ›
+    Show tips                                       on
+    Claude-drafted feedback                         notify
+    Reduce motion                                   off
+    Thinking mode                                   on
+    Thinking can't be turned off for Haiku 5.5
+    Prompt suggestions                              on
+    Session recap                                   off
+    Rewind code (checkpoints)                       on
+    Dynamic workflows                               on
+    Ultracode keyword trigger                       on
+    Dynamic workflow size                           medium (default)
+    Artifacts                                       on
+    Verbose output                                  off
+    Terminal progress bar                           on
+    Show turn duration                              on
+    Precompute compaction                           on
+    Time format                                     auto ›
+    Default permission mode                         Bypass Permissions
+    Worktree base ref                               fresh
+    Use auto mode during plan                       on
+    Respect .gitignore in file picker               on
+    Skip the /copy picker                           off
+    Copy on select                                  on
+    Auto-scroll                                     on
+    Open agents view by default                     off
+    ↓ 21 more
+
+  ↓ to navigate · ↑ to switch tabs · Esc to go back

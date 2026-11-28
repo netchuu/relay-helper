@@ -1,5 +1,6 @@
 // Terminal dialogs on screen: found by shape, shown as waiting at the Mac, cleared when they go.
 import { afterEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { RelayEvent } from "../../protocol/index.ts";
 import type { RelayConfig } from "../src/config.ts";
 import { Broker } from "../src/daemon/broker.ts";
@@ -52,6 +53,75 @@ test("an unknown dialog is `other`, with a title and the id of what it shows", (
   expect(d?.canClose).toBe(true);
   expect(detectDialog(THEME.replace("Light mode", "Auto"))?.id).not.toBe(d?.id);
   expect(detectDialog(THEME)?.id).toBe(d?.id);
+});
+
+// Recorded from Claude Code 2.1.332 in a scratch folder, one screen per file.
+const recorded = (name: string) =>
+  detectDialog(
+    readFileSync(new URL(`./fixtures/screens/claude-2.1.332-${name}.txt`, import.meta.url), "utf8"),
+  );
+
+test("the recorded /exit with background tasks is an exitTasks dialog", () => {
+  const d = recorded("exit-with-tasks");
+  expect(d?.kind).toBe("exitTasks");
+  expect(d?.title).toBe("Background work is running");
+  expect(d?.options).toEqual(["Exit and stop tasks", "Move to background and exit", "Stay"]);
+  expect(d?.cursor).toBe(0);
+});
+
+test("the recorded /model picker has its title, five models and the cursor on the current one", () => {
+  const d = recorded("model-picker");
+  expect(d?.kind).toBe("other");
+  expect(d?.title).toBe("Select model");
+  expect(d?.options.length).toBe(6);
+  expect(d?.options[4]).toStartWith("Haiku 5.5");
+  expect(d?.cursor).toBe(4);
+  expect(d?.canClose).toBe(true);
+});
+
+test("the recorded /resume picker is a dialog with its session", () => {
+  const d = recorded("resume-picker");
+  expect(d?.title).toBe("Resume session");
+  expect(d?.options[0]).toBe("Background sleep 600 command");
+});
+
+test("the recorded /permissions and /config screens are dialogs the phone can close", () => {
+  const p = recorded("permissions");
+  expect(p?.kind).toBe("other");
+  expect(p?.options[0]).toBe("Add a new rule…");
+  expect(p?.title).toStartWith("Permissions");
+  const c = recorded("config");
+  expect(c?.kind).toBe("other");
+  expect(c?.title).toStartWith("Settings");
+  expect(c?.options[0]).toStartWith("Auto-compact");
+  expect(p?.canClose && c?.canClose).toBe(true);
+});
+
+test("the recorded MCP approval is an mcpServer dialog with the cursor on Continue without", () => {
+  const d = recorded("mcp-approval");
+  expect(d?.kind).toBe("mcpServer");
+  expect(d?.title).toBe("New MCP server found in this project: scratch");
+  expect(d?.options).toEqual([
+    "Use this MCP server",
+    "Use this and all future MCP servers in this project",
+    "Continue without using this MCP server",
+  ]);
+  expect(d?.cursor).toBe(2);
+});
+
+test("the recorded Yes / No confirmation has its cursor on No", () => {
+  const d = recorded("add-dir-confirm");
+  expect(d?.title).toBe("Adding a new directory:");
+  expect(d?.options).toEqual(["No, leave it out", "Yes, add it"]);
+  expect(d?.cursor).toBe(0);
+});
+
+test("the recorded rate-limit menu is a rateLimit dialog", () => {
+  const d = recorded("rate-limit-menu");
+  expect(d?.kind).toBe("rateLimit");
+  expect(d?.title).toBe("What do you want to do?");
+  expect(d?.options[0]).toBe("Stop and wait for limit to reset");
+  expect(d?.options.length).toBe(3);
 });
 
 test("a prompt, a draft, output and a shell are not dialogs", () => {

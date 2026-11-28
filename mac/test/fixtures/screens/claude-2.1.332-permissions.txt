@@ -1,0 +1,20 @@
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Permissions  Recently blocked   Allow   Ask   Deny   Auto mode   Workspace
+
+  Claude Code won't ask before using allowed tools.
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search…                                                                                    │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ Add a new rule…
+    Bash(npm test:*)
+    Bash(ls:*)
+    Bash(git status:*)
+    Bash(cat:*)
+    Bash(git log:*)
+    Bash(git diff:*)
+    Bash(bun test:*)
+    Bash(bun run:*)
+    ↓ 36 more
+
+  ↓ to navigate · ←/→ to switch · / to search · Esc to close
