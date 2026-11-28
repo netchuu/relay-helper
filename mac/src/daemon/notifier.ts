@@ -101,12 +101,15 @@ export function promptAlert(prompt: Prompt, name: string): Alert {
   };
   switch (prompt.payload.kind) {
     case "question": {
-      // Nobody trusts a folder from a lock screen: no answer buttons.
-      if (prompt.dialog?.kind === "trust")
+      // Nobody trusts a folder or an MCP server from a lock screen: no answer buttons.
+      if (prompt.dialog?.kind === "trust" || prompt.dialog?.kind === "mcpServer")
         return {
           ...base,
           title: name,
-          body: "Claude Code asks whether you trust this folder.",
+          body:
+            prompt.dialog.kind === "trust"
+              ? "Claude Code asks whether you trust this folder."
+              : "Claude Code asks whether to use an MCP server.",
           category: Category.notice,
         };
       const [first, ...rest] = prompt.payload.questions;

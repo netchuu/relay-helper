@@ -42,10 +42,10 @@ export const HOOK_DIALOGS = new Set([
 ]);
 
 /** Dialogs the phone answers as questions, or the helper answers itself: never shown as waiting at the Mac. */
-const NOT_AT_MAC = new Set(["trust", "modelSwitch"]);
+/** Dialogs that open as a question for the phone: kinds whose real screen is recorded as a test. */
+const ASKED = new Set(["trust", "mcpServer", "rateLimit", "exitTasks", "confirm"]);
 
-/** Dialogs that open as a question for the phone. The others only wait at the Mac. */
-const ASKED = new Set(["trust"]);
+const NOT_AT_MAC = new Set([...ASKED, "modelSwitch"]);
 
 const TRUST_NOTE = "Claude Code will be able to read, edit, and run files here.";
 const TRUST_EFFECT: Record<string, string> = {

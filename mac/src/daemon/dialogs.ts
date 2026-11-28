@@ -106,7 +106,9 @@ export function detectDialog(screen: string): Dialog | null {
     .map((l) => l.trim())
     .filter((l) => l !== "");
   const clean = (s: string, n: number) => head(redact(s).trim(), n);
-  const kind = known?.kind ?? "other";
+  const cursor = rows.indexOf(cursorAt);
+  const confirm = options.length === 2 && /^No\b/.test(options[0] ?? "") && /^Yes\b/.test(options[1] ?? "");
+  const kind = known?.kind ?? (confirm && cursor === 0 ? "confirm" : "other");
   const title = clean(above[0] ?? "", TITLE_MAX) || "A question on your computer";
   const shown = options.slice(0, OPTIONS_MAX).map((o) => clean(o, OPTION_MAX));
   return {
@@ -114,7 +116,7 @@ export function detectDialog(screen: string): Dialog | null {
     title,
     body: clean(above.slice(1).join("\n"), BODY_MAX),
     options: shown,
-    cursor: rows.indexOf(cursorAt),
+    cursor,
     canClose: known?.canClose ?? true,
     id: dialogId(kind, title, shown),
   };
