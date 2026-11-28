@@ -37,6 +37,7 @@ const KNOWN: Known[] = [
   { kind: "trust", re: /Accessing workspace:[\s\S]*Yes, I trust this folder/, canClose: false },
   { kind: "mcpServer", re: /New MCP server found in this project/, canClose: true },
   { kind: "rateLimit", re: /Stop and wait for limit to reset/, canClose: true },
+  { kind: "tasks", re: /^\s*Background\s*$[\s\S]*x to stop/m, canClose: true },
   { kind: "exitTasks", re: /Exit and stop tasks/, canClose: true },
   { kind: "modelSwitch", re: /^\s*Switch model\?\s*$/m, canClose: true },
   { kind: "bypass", re: /WARNING: Claude Code running in Bypass Permissions mode/, canClose: false },

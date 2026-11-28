@@ -10,7 +10,7 @@ export interface TypeRequest {
   /** Text to type, then Enter. Absent in a key request. */
   text?: string;
   /** A key to press instead of typing. Carries no `text`, so an older `relay shell` answers `bad_request`. */
-  key?: "escape" | "enter" | "up" | "down" | "shiftTab";
+  key?: "escape" | "enter" | "up" | "down" | "shiftTab" | "x";
   /** The agent process the reply is for; Relay only types while it is in the foreground of this tab. */
   pid: number;
   /** Sent by every helper that types at once; one that omits it is from before and gets the same treatment. */
@@ -44,6 +44,7 @@ export const KEY_BYTES: Record<NonNullable<TypeRequest["key"]>, string> = {
   up: "\x1b[A",
   down: "\x1b[B",
   shiftTab: "\x1b[Z",
+  x: "x",
 };
 
 export interface RequestContext {

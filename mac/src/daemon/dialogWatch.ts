@@ -45,7 +45,8 @@ export const HOOK_DIALOGS = new Set([
 /** Dialogs that open as a question for the phone: kinds whose real screen is recorded as a test. */
 const ASKED = new Set(["trust", "mcpServer", "rateLimit", "exitTasks", "confirm"]);
 
-const NOT_AT_MAC = new Set([...ASKED, "modelSwitch"]);
+// The /tasks list is Relay's own tool (the phone's Stop) or the user looking: not a question.
+const NOT_AT_MAC = new Set([...ASKED, "modelSwitch", "tasks"]);
 
 const TRUST_NOTE = "Claude Code will be able to read, edit, and run files here.";
 const TRUST_EFFECT: Record<string, string> = {

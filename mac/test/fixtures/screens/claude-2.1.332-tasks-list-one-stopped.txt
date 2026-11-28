@@ -1,0 +1,21 @@
+❯ /tasks
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Background
+  4 shells
+
+  ❯ ⏺ sleep 650   running · general-purpose subagent
+    ⏺ sleep 701   running
+    ⏺ sleep 700   running
+    ⏺ sleep 700   running
+
+      Earlier in this session (0)
+
+  ↑/↓ to navigate · x to stop · Enter to view · Esc to close
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on · 4 shells
+
+  ⏺ main
+  ◯ general-purpose  waiting on 1 shell · Probe agent · since 9:49 pm

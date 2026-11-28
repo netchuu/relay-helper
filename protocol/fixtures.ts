@@ -11,6 +11,7 @@ import {
   AttachmentDiscarded,
   AttachmentRef,
   AttachmentUpload,
+  BackgroundStopResult,
   BackgroundTask,
   DeliveryCheck,
   DialogResult,
@@ -549,6 +550,20 @@ const background = {
     { seq: 42, ts: now, type: "session.background", sessionId: session.id, tasks: [] },
   ]),
   session: Session.parse({ ...session, status: "idle", background: [devServer, helperTests] }),
+  // session.stopBackground: Stop on the dev server. Three outcomes, each with the line the phone shows.
+  stopParams: RpcSchemas["session.stopBackground"].parse({ sessionId: session.id, taskId: devServer.id }),
+  stopped: BackgroundStopResult.parse({ outcome: "stopped", message: "Stopped." }),
+  finished: BackgroundStopResult.parse({ outcome: "finished", message: "It had already finished." }),
+  unreachable: BackgroundStopResult.parse({
+    outcome: "unreachable",
+    message: "Relay can't reach Claude Code's terminal. Stop it at the computer.",
+  }),
+  // An older helper doesn't know the method; its host info lacks canStopBackground.
+  olderHelper: {
+    type: "rpc",
+    id: 85,
+    error: { code: "bad_request", message: "unknown method session.stopBackground" },
+  },
 };
 
 // attachments: in a file of its own too. The upload of a photo in chunks, a message with it and a PDF, the turn and
@@ -815,6 +830,7 @@ const start = {
     name: "Ana's MacBook Pro",
     canStartSessions: true,
     canStartEmpty: true,
+    canStopBackground: true,
   }),
   hostOlder: HostInfo.parse({ os: "macos", name: "Ana's MacBook Pro" }),
   directoriesParams: RpcSchemas["sessions.directories"].parse({}),

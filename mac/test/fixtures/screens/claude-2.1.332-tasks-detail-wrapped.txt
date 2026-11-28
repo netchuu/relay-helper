@@ -1,0 +1,14 @@
+❯ /tasks
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Sleep 903 then say done in background
+  shell
+
+  Status:   running
+  Runtime:  12s
+  Command:  sleep 903 &&
+            echo done
+
+  Output
+  No output yet
+
+  ← to go back · x to stop · Enter/Space to close · Esc to close

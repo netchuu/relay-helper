@@ -1,0 +1,13 @@
+❯ /tasks
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Sleep 700 seconds in background
+  shell
+
+  Status:   running
+  Runtime:  56s
+  Command:  sleep 700
+
+  Output
+  No output yet
+
+  ← to go back · x to stop · Enter/Space to close · Esc to close

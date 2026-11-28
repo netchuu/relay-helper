@@ -3,7 +3,8 @@
     "os": "macos",
     "name": "Ana's MacBook Pro",
     "canStartSessions": true,
-    "canStartEmpty": true
+    "canStartEmpty": true,
+    "canStopBackground": true
   },
   "hostOlder": {
     "os": "macos",

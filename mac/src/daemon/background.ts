@@ -122,6 +122,16 @@ export class BackgroundTracker {
     );
   }
 
+  /** The phone stopped this task (or found it gone): it leaves the list now, ahead of any notification. */
+  remove(sessionId: string, taskId: string): void {
+    const list = lists.get(sessionId);
+    if (!list?.some((t) => t.id === taskId)) return;
+    this.set(
+      sessionId,
+      list.filter((t) => t.id !== taskId),
+    );
+  }
+
   /** A tool call inside a background agent (a hook with its `agent_id`): the agent's activity. */
   agentTool(
     sessionId: string,

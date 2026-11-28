@@ -16,7 +16,10 @@ export async function hostInfo(): Promise<HostInfo> {
     .catch(() => "")
     .then((name) => ({ os: platform.name === "linux" ? "linux" : "macos", name: name.slice(0, 80) }));
   const host = await cachedHost;
-  return canStartSessions ? { ...host, canStartSessions: true, canStartEmpty: true } : host;
+  const stops = platform.name === "linux" ? {} : { canStopBackground: true };
+  return canStartSessions
+    ? { ...host, ...stops, canStartSessions: true, canStartEmpty: true }
+    : { ...host, ...stops };
 }
 
 let canStartSessions = false;

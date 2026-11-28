@@ -71,5 +71,29 @@
         }
       }
     ]
+  },
+  "stopParams": {
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "taskId": "bonwwqtte"
+  },
+  "stopped": {
+    "outcome": "stopped",
+    "message": "Stopped."
+  },
+  "finished": {
+    "outcome": "finished",
+    "message": "It had already finished."
+  },
+  "unreachable": {
+    "outcome": "unreachable",
+    "message": "Relay can't reach Claude Code's terminal. Stop it at the computer."
+  },
+  "olderHelper": {
+    "type": "rpc",
+    "id": 85,
+    "error": {
+      "code": "bad_request",
+      "message": "unknown method session.stopBackground"
+    }
   }
 }

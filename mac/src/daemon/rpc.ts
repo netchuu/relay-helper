@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import {
+  type BackgroundStopResult,
   type DeliveryCheck,
   type ModelResult,
   type PermissionModeResult,
@@ -29,6 +30,7 @@ import {
   words,
 } from "./attachments.ts";
 import { ensurePushKey, revokeDevice } from "./auth.ts";
+import { type BackgroundTracker, backgroundOf } from "./background.ts";
 import type { Broker } from "./broker.ts";
 import { audit, type DB, getSetting } from "./db.ts";
 import type { DialogWatcher } from "./dialogWatch.ts";
@@ -46,6 +48,7 @@ import {
   deliver,
   modelResultsOnScreen,
   PHONE_PREFIX,
+  stopBackgroundShell,
   type TypeOps,
 } from "./inject.ts";
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
@@ -112,6 +115,8 @@ export interface RpcDeps {
   suggestions?: SuggestionWatcher;
   /** Settles a dialog question by pressing the pick into the terminal. */
   dialogs?: DialogWatcher;
+  /** The sessions' background tasks; Stop takes a stopped one off its list. */
+  background?: BackgroundTracker;
 }
 
 export type RpcOutcome = { result: unknown } | { error: RpcError };
@@ -531,6 +536,35 @@ export function createRpc(d: RpcDeps): DaemonRpc {
         if (err instanceof StopError) throw new RpcFailure(err.code, err.message);
         throw err;
       }
+    },
+
+    "session.stopBackground": async ({ sessionId, taskId }, actor) => {
+      const session = d.registry.get(sessionId);
+      if (!session || session.status === "ended")
+        throw new RpcFailure("not_found", "This session has ended.");
+      const task = backgroundOf(sessionId).find((t) => t.id === taskId);
+      const done = (result: BackgroundStopResult) => {
+        audit(d.db, actor, "session.stopBackground", { sessionId, taskId, outcome: result.outcome });
+        if (result.outcome !== "unreachable") d.background?.remove(sessionId, taskId);
+        return result;
+      };
+      if (!task) return done({ outcome: "finished", message: "It had already finished." });
+      if (task.kind !== "shell")
+        return done({
+          outcome: "unreachable",
+          message: "Relay can only stop shells. Stop this agent at the computer.",
+        });
+      if (session.status === "working" || session.status === "waiting")
+        return done({ outcome: "unreachable", message: "Claude is working. Try again when it finishes." });
+      const command = task.detail ?? task.title;
+      const others = backgroundOf(sessionId)
+        .filter((t) => t.kind === "shell" && t.id !== taskId)
+        .map((t) => t.detail ?? t.title);
+      return done(
+        await inOrder(sessionId, () =>
+          stopBackgroundShell(session, command, d.typeOps ?? defaultTypeOps, others),
+        ),
+      );
     },
 
     "session.model": async ({ sessionId, model, effort }, actor) => {

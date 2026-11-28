@@ -46,6 +46,8 @@ export interface HostInfo {
   canStartSessions?: boolean;
   /** Present (true) when a session can also start without a first message. */
   canStartEmpty?: boolean;
+  /** Present (true) when a background task can be stopped from the phone. */
+  canStopBackground?: boolean;
 }
 
 /** Terminal apps Relay can type into besides tmux. */

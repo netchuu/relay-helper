@@ -36,6 +36,7 @@ import {
   paneStash,
   paneTargetOf,
   paneType,
+  paneX,
 } from "./paneTerminals.ts";
 import {
   afterBreak,
@@ -54,6 +55,7 @@ import {
   suggestionSeenOf,
   untypedStopAt,
 } from "./suggestionSeen.ts";
+import { readTasksPanel, sameCommand, type TasksPanel } from "./tasksPanel.ts";
 import { transcriptPathFor } from "./transcript.ts";
 
 export type DeliveryRoute =
@@ -162,6 +164,10 @@ export interface TypeOps {
   /** Arrow keys, to move a dialog's cursor. Absent: the route can't answer a dialog. */
   ptyArrow?(socketPath: string, token: string, pid: number, key: "up" | "down"): Promise<TypeReply>;
   tmuxArrow?(socket: string, pane: string, key: "up" | "down"): Promise<void>;
+  /** The letter x alone, which stops a task in Claude Code's `/tasks` list. Absent: that route can't stop one. */
+  ptyX?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
+  tmuxX?(socket: string, pane: string): Promise<void>;
+  paneX?(target: PaneTarget): Promise<void>;
   paneArrow?(target: PaneTarget, key: "up" | "down"): Promise<void>;
   arrow?(route: TypingRoute, tty: string, key: "up" | "down"): Promise<boolean>;
   /** Shift+Tab, which cycles Claude Code's permission mode. Absent: the mode can't be switched. */
@@ -249,6 +255,9 @@ export const defaultTypeOps: TypeOps = {
   tmuxClear,
   ptyArrow: (socketPath, token, pid, key) => requestPty(socketPath, { token, pid, key }),
   tmuxArrow,
+  ptyX: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "x" }),
+  tmuxX,
+  paneX,
   ptyEscape: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
   ptyShiftTab: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "shiftTab" }),
   tmuxEscape,
@@ -627,7 +636,7 @@ export function draftSubmitted(sessionId: string, prompt: string): void {
   }
 }
 
-type KeyName = "enter" | "escape" | "stash" | "clear" | "up" | "down";
+type KeyName = "enter" | "escape" | "stash" | "clear" | "up" | "down" | "x";
 
 /** What a route does with a message: typed whole, typed in part (text went in, then a step failed), or not at all. */
 type TypeOutcome = "sent" | "partial" | "failed";
@@ -689,7 +698,9 @@ function typeWire(ops: TypeOps): Wire {
           ? ops.ptyArrow(socketPath, token, pid, key)
           : key === "escape" && ops.ptyEscape
             ? ops.ptyEscape(socketPath, token, pid)
-            : Promise.reject(new DeliveryError("no such key")),
+            : key === "x" && ops.ptyX
+              ? ops.ptyX(socketPath, token, pid)
+              : Promise.reject(new DeliveryError("no such key")),
     tmuxScreen: (socket, pane) => ops.tmuxScreen(socket, pane, seen),
     tmuxType: ops.tmux,
     tmuxKey: async (socket, pane, key) => {
@@ -710,7 +721,9 @@ function typeWire(ops: TypeOps): Wire {
             ? ops.tmuxStash
             : key === "clear"
               ? ops.tmuxClear
-              : undefined;
+              : key === "x"
+                ? ops.tmuxX
+                : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(socket, pane);
     },
@@ -736,7 +749,9 @@ function typeWire(ops: TypeOps): Wire {
             ? ops.paneStash
             : key === "clear"
               ? ops.paneClear
-              : undefined;
+              : key === "x"
+                ? ops.paneX
+                : undefined;
       if (!press) throw new DeliveryError("no such key");
       await press(target);
     },
@@ -1173,6 +1188,138 @@ export async function closeScreenDialog(
     return (await ready.key("escape").catch(() => false)) ? "closed" : "unavailable";
   }
   return readable ? "conflict" : "unavailable";
+}
+
+export interface BackgroundStopAnswer {
+  outcome: "stopped" | "finished" | "unreachable";
+  /** One plain sentence for the phone. */
+  message: string;
+}
+
+const NO_TERMINAL = "Relay can't reach Claude Code's terminal. Stop it at the computer.";
+const TASK_WORDS = {
+  stopped: "Stopped.",
+  finished: "It had already finished.",
+  covered: "Claude Code is showing a question. Answer it at the computer, then try again.",
+  draft: "There is text in Claude Code's prompt. Send or clear it, then try again.",
+  notOpened: "Claude Code's task list didn't open. Stop it at the computer.",
+  twins: "Two tasks look the same. Stop this one at the computer.",
+  notSure: "Relay can't tell which task that is. Stop it at the computer.",
+  notStopped: "Claude Code didn't stop it. Stop it at the computer.",
+};
+const TASKS_SETTLE_MS = 150;
+const TASKS_POLLS = 20;
+
+/**
+ * Stops the background shell running `command` through Claude Code's `/tasks` list: opens it, moves the cursor to the
+ * one row whose command matches (reading the screen again before every key), presses x, and closes the list. A
+ * screen it can't match to exactly one task gets no key.
+ */
+export async function stopBackgroundShell(
+  session: SessionRecord,
+  command: string,
+  ops: TypeOps = defaultTypeOps,
+  otherCommands: string[] = [],
+): Promise<BackgroundStopAnswer> {
+  const sleep = ops.sleep ?? Bun.sleep;
+  const answer = (outcome: BackgroundStopAnswer["outcome"], message: string) => ({ outcome, message });
+  for (const route of routesFor(session, typeWire(ops))) {
+    const ready = await route.probe().catch(() => null);
+    if (!ready) continue;
+    const read = async () => {
+      const screen = (await route.read().catch(() => null))?.screen;
+      return typeof screen === "string" ? screen : null;
+    };
+    const first = await read();
+    if (first === null) continue;
+    if (detectDialog(first) || readTasksPanel(first) || promptTextRead(first) === undefined)
+      return answer("unreachable", TASK_WORDS.covered);
+    if (promptDraft(first, plainOpts(session.id, route, ops))) return answer("unreachable", TASK_WORDS.draft);
+    if ((await ready.type("/tasks")) !== "sent") return answer("unreachable", TASK_WORDS.notOpened);
+    const panelNow = async () => {
+      for (let i = 0; i < TASKS_POLLS; i++) {
+        await sleep(TASKS_SETTLE_MS);
+        const screen = await read();
+        const panel = screen === null ? null : readTasksPanel(screen);
+        if (panel) return panel;
+      }
+      return null;
+    };
+    try {
+      const opened = await panelNow();
+      if (!opened) return answer("unreachable", TASK_WORDS.notOpened);
+      return await stopInPanel(opened, command, ready, read, sleep, otherCommands);
+    } finally {
+      for (let i = 0; i < 3; i++) {
+        const screen = await read();
+        if (screen === null || !readTasksPanel(screen)) break;
+        await ready.key("escape").catch(() => false);
+        await sleep(TASKS_SETTLE_MS);
+      }
+    }
+  }
+  return answer("unreachable", NO_TERMINAL);
+}
+
+async function stopInPanel(
+  opened: TasksPanel,
+  command: string,
+  ready: ReplyReady,
+  read: () => Promise<string | null>,
+  sleep: (ms: number) => Promise<void>,
+  otherCommands: string[],
+): Promise<BackgroundStopAnswer> {
+  const answer = (outcome: BackgroundStopAnswer["outcome"], message: string) => ({ outcome, message });
+  const look = async () => {
+    const screen = await read();
+    return screen === null ? null : readTasksPanel(screen);
+  };
+  const matches = (panel: TasksPanel & { kind: "list" }) =>
+    panel.rows.flatMap((r, i) => (sameCommand(r.label, command) ? [i] : []));
+  let panel: TasksPanel | null = opened;
+  if (panel.kind === "list") {
+    // The cursor walks to the row; each step re-reads, so a list that changes meanwhile never gets the wrong key.
+    for (let step = 0; ; step++) {
+      if (!panel || panel.kind !== "list") return answer("unreachable", TASK_WORDS.notSure);
+      const found = matches(panel);
+      if (found.length === 0) return answer("finished", TASK_WORDS.finished);
+      if (found.length > 1) return answer("unreachable", TASK_WORDS.twins);
+      const target = found[0] as number;
+      // A cut row may be another task the helper lists, even one that finished and left the screen.
+      const label = (panel.rows[target] as { label: string }).label;
+      if (label.endsWith("…") && otherCommands.some((o) => sameCommand(label, o)))
+        return answer("unreachable", TASK_WORDS.twins);
+      if (panel.cursor === target) break;
+      if (step > panel.rows.length + 1) return answer("unreachable", TASK_WORDS.notSure);
+      const before = panel.cursor;
+      if (!(await ready.key(panel.cursor < 0 || panel.cursor > target ? "up" : "down").catch(() => false)))
+        return answer("unreachable", TASK_WORDS.notStopped);
+      await sleep(TASKS_SETTLE_MS);
+      panel = await look();
+      if (panel?.kind === "list" && panel.cursor === before) {
+        await sleep(TASKS_SETTLE_MS);
+        panel = await look();
+      }
+    }
+  } else if (!panel.command || !sameCommand(panel.command, command)) {
+    return answer("unreachable", TASK_WORDS.notSure);
+  }
+  if (!(await ready.key("x").catch(() => false))) return answer("unreachable", TASK_WORDS.notStopped);
+  for (let i = 0; i < TASKS_POLLS; i++) {
+    await sleep(TASKS_SETTLE_MS);
+    const after = await look();
+    if (after === null) {
+      if ((await read()) === null) continue;
+      return answer("stopped", TASK_WORDS.stopped);
+    }
+    if (
+      after.kind === "list"
+        ? matches(after).length === 0
+        : !after.command || !sameCommand(after.command, command)
+    )
+      return answer("stopped", TASK_WORDS.stopped);
+  }
+  return answer("unreachable", TASK_WORDS.notStopped);
 }
 
 /** The session's terminal screen, escape codes included; null or undefined when no route can read it. Quiet. */
@@ -1652,6 +1799,18 @@ export async function tmuxType(socket: string, pane: string, text: string): Prom
 async function tmuxEnter(socket: string, pane: string): Promise<void> {
   await tmuxLeaveMode(socket, pane);
   const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "Enter"], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+    env: { PATH: CHILD_PATH },
+  });
+  const code = await proc.exited;
+  if (code !== 0) throw new DeliveryError(`tmux send-keys failed (${code})`);
+}
+
+async function tmuxX(socket: string, pane: string): Promise<void> {
+  await tmuxLeaveMode(socket, pane);
+  const proc = Bun.spawn(["tmux", "-S", socket, "send-keys", "-t", pane, "-l", "x"], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",

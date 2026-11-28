@@ -601,6 +601,8 @@ export const HostInfo = z.object({
   canStartSessions: z.boolean().optional(),
   /** True when `session.start` may leave out `text` and start an empty session. Older helpers lack it. */
   canStartEmpty: z.boolean().optional(),
+  /** True when `session.stopBackground` works here. An older helper lacks it: the phone hides Stop. */
+  canStopBackground: z.boolean().optional(),
 });
 export type HostInfo = z.infer<typeof HostInfo>;
 
@@ -657,6 +659,14 @@ export type SessionCommands = z.infer<typeof SessionCommands>;
 
 export const DialogResult = z.object({ ok: z.literal(true) });
 export type DialogResult = z.infer<typeof DialogResult>;
+
+/** What `session.stopBackground` did: "stopped", "finished" (it had ended already) or "unreachable" (nothing was pressed). */
+export const BackgroundStopResult = z.object({
+  outcome: z.enum(["stopped", "finished", "unreachable"]),
+  /** One plain sentence for the phone to show. */
+  message: z.string(),
+});
+export type BackgroundStopResult = z.infer<typeof BackgroundStopResult>;
 
 /** What a phone says in `hello`; unknown fields are ignored. */
 export const HelloParams = z.object({
@@ -844,6 +854,8 @@ export const RpcSchemas = {
   "session.pin": z.object({ sessionId: z.string(), pinned: z.boolean() }),
   /** Stops Claude's current turn, as Esc does. Result: InterruptResult. Errors: not_found, conflict (nothing running), unavailable. */
   "session.interrupt": z.object({ sessionId: z.string() }),
+  /** Stops one background shell from `Session.background` through Claude Code's `/tasks` list at the computer. Result: BackgroundStopResult. Errors: not_found (no such session). */
+  "session.stopBackground": z.object({ sessionId: z.string(), taskId: z.string() }),
   /** Switches the model or effort (exactly one) by typing `/model` or `/effort` into an idle, empty prompt; while Claude works the pick waits (a later one replaces it) and is typed once idle, before queued messages. Result: ModelResult. */
   "session.model": z
     .object({ sessionId: z.string(), model: ModelAlias.optional(), effort: EffortLevel.optional() })
