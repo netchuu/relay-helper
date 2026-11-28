@@ -100,6 +100,8 @@ export function outcomeOf(by: ResolvedBy | null, answer: StoredAnswer | null): s
       return {
         approve: "Approved",
         approve_accept_edits: "Approved, edits auto-accepted",
+        approve_bypass_permissions: "Approved, permissions bypassed",
+        approve_auto: "Approved, auto mode",
         revise: clip(redact(`Revise: ${answer.feedback ?? ""}`.trim())),
         reject: "Rejected",
       }[answer.action];
@@ -126,14 +128,17 @@ export class Broker {
   ) {}
 
   /** Opens a prompt and returns a promise for what the waiting hook should print. */
-  open(input: PermissionRequestInput): { prompt: Prompt; reply: Promise<HookReply> } {
+  open(
+    input: PermissionRequestInput,
+    approvalModes: ("bypassPermissions" | "auto")[] = [],
+  ): { prompt: Prompt; reply: Promise<HookReply> } {
     // Plan feedback at the Mac ("Tell Claude what to change") leaves the old plan's hook running and
     // asks again with the revised plan. A session shows one plan at a time, so the older one is settled.
     if (input.tool_name === "ExitPlanMode")
       for (const p of this.listOpenRows(input.session_id))
         if (p.tool_name === "ExitPlanMode") this.close(p.id, "mac");
     const kind = promptKindFor(input.tool_name);
-    const payload = payloadFor(input);
+    const payload = payloadFor(input, approvalModes);
     const id = `p_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
     const now = Date.now();
     this.db
@@ -324,6 +329,14 @@ export class Broker {
       if (payload.kind === "question") hookChoices = restoreCutChoices(payload.questions, answer.choices);
       const problem = payload.kind === "question" ? validateQuestionAnswer(payload.questions, answers) : null;
       if (problem) return { ok: false, code: "bad_request", message: problem };
+    }
+    if (answer.kind === "plan") {
+      const wanted = { approve_bypass_permissions: "bypassPermissions", approve_auto: "auto" }[
+        answer.action as string
+      ] as "bypassPermissions" | "auto" | undefined;
+      const payload = JSON.parse(row.payload_json) as PromptPayload;
+      if (wanted && !(payload.kind === "plan" && payload.approvalModes?.includes(wanted)))
+        return { ok: false, code: "bad_request", message: "this plan can't be approved that way" };
     }
     let stdout: string;
     try {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { transcriptTurns } from "../mac/src/daemon/transcript.ts";
 import {
+  Answer,
   ATTACHMENT_CHUNK_BYTES,
   AttachmentChunkAck,
   AttachmentData,
@@ -117,6 +118,18 @@ const plan = Prompt.parse({
   createdAt: now,
   resolvedAt: null,
 });
+
+// A plan the session may start with bypass permissions or auto mode (`approvalModes`); answers carry the matching action.
+const planApproval = {
+  prompt: Prompt.parse({
+    ...plan,
+    id: "p_plan_modes",
+    payload: { ...plan.payload, approvalModes: ["bypassPermissions", "auto"] },
+  }),
+  plain: plan,
+  bypass: Answer.parse({ kind: "plan", action: "approve_bypass_permissions" }),
+  auto: Answer.parse({ kind: "plan", action: "approve_auto" }),
+};
 
 const permission = Prompt.parse({
   id: "p_perm",
@@ -1328,6 +1341,7 @@ write("attachments.json", attachments);
 write("sends.json", sends);
 write("model.json", model);
 write("permission-mode.json", permissionMode);
+write("plan-approval.json", planApproval);
 write("commands.json", { ...commandsWithMenus });
 write("command-turns.json", commandTurns);
 write("session-ends.json", sessionEnds);

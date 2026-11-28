@@ -1,0 +1,42 @@
+{
+  "prompt": {
+    "id": "p_plan_modes",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "plan",
+    "payload": {
+      "kind": "plan",
+      "plan": "## Add Stripe checkout\n1. Route\n2. Webhook",
+      "planFilePath": null,
+      "approvalModes": [
+        "bypassPermissions",
+        "auto"
+      ]
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null
+  },
+  "plain": {
+    "id": "p_plan",
+    "sessionId": "4375b77a-1111-2222-3333-444455556666",
+    "kind": "plan",
+    "payload": {
+      "kind": "plan",
+      "plan": "## Add Stripe checkout\n1. Route\n2. Webhook",
+      "planFilePath": null
+    },
+    "status": "open",
+    "resolvedBy": null,
+    "createdAt": 1793620000000,
+    "resolvedAt": null
+  },
+  "bypass": {
+    "kind": "plan",
+    "action": "approve_bypass_permissions"
+  },
+  "auto": {
+    "kind": "plan",
+    "action": "approve_auto"
+  }
+}

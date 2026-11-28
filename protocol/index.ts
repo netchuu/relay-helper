@@ -516,7 +516,13 @@ export type Question = z.infer<typeof Question>;
 
 export const PromptPayload = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("question"), questions: z.array(Question) }),
-  z.object({ kind: z.literal("plan"), plan: z.string(), planFilePath: z.string().nullable() }),
+  z.object({
+    kind: z.literal("plan"),
+    plan: z.string(),
+    planFilePath: z.string().nullable(),
+    /** Extra ways to approve this session's plan, `bypassPermissions` and `auto`, when Claude Code offers them there. Older helpers leave it out: the phone offers none. */
+    approvalModes: z.array(z.enum(["bypassPermissions", "auto"])).optional(),
+  }),
   z.object({
     kind: z.literal("permission"),
     toolName: z.string(),
@@ -568,7 +574,14 @@ export const Answer = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("plan"),
-    action: z.enum(["approve", "approve_accept_edits", "revise", "reject"]),
+    action: z.enum([
+      "approve",
+      "approve_accept_edits",
+      "approve_bypass_permissions",
+      "approve_auto",
+      "revise",
+      "reject",
+    ]),
     feedback: z.string().optional(),
   }),
   z.object({

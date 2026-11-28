@@ -17,7 +17,10 @@ export function promptKindFor(toolName: string): PromptKind {
   return "permission";
 }
 
-export function payloadFor(input: PermissionRequestInput): PromptPayload {
+export function payloadFor(
+  input: PermissionRequestInput,
+  approvalModes: ("bypassPermissions" | "auto")[] = [],
+): PromptPayload {
   const kind = promptKindFor(input.tool_name);
   const ti = input.tool_input ?? {};
   if (kind === "question") {
@@ -29,6 +32,7 @@ export function payloadFor(input: PermissionRequestInput): PromptPayload {
       kind,
       plan: redact(typeof ti.plan === "string" ? ti.plan : ""),
       planFilePath: typeof ti.planFilePath === "string" ? ti.planFilePath : null,
+      ...(approvalModes.length ? { approvalModes } : {}),
     };
   }
   // Shown unredacted: redaction could hide the dangerous part (`TOKEN=$(curl …|sh) npm test`). It goes
@@ -224,6 +228,18 @@ export function hookOutputFor(
           behavior: "allow",
           updatedInput: toolInput,
           updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+        };
+      else if (answer.action === "approve_bypass_permissions" || answer.action === "approve_auto")
+        decision = {
+          behavior: "allow",
+          updatedInput: toolInput,
+          updatedPermissions: [
+            {
+              type: "setMode",
+              mode: answer.action === "approve_auto" ? "auto" : "bypassPermissions",
+              destination: "session",
+            },
+          ],
         };
       else if (answer.action === "revise")
         decision = {

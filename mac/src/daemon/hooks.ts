@@ -17,6 +17,7 @@ import { type HeldReplies, notePermissionMode } from "./held.ts";
 import { clearLeftUnsent, draftSubmitted, splitAttachmentPaths } from "./inject.ts";
 import { finishedMessages, MessageTracker, messagesJson, turnMessageFields } from "./messages.ts";
 import { modelFromTranscript, sessionModels } from "./model.ts";
+import { type ApprovalMode, planApprovalModes, processArgs } from "./planModes.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { notePromptSubmitted } from "./promptLine.ts";
 import { redact } from "./redact.ts";
@@ -814,7 +815,16 @@ export class HookHandler {
   }
 
   private async permissionRequest(input: PermissionRequestInput, signal: AbortSignal): Promise<HookReply> {
-    const { prompt, reply } = this.d.broker.open(input);
+    let approvalModes: ApprovalMode[] = [];
+    if (input.tool_name === "ExitPlanMode") {
+      const known = this.d.registry.get(input.session_id);
+      approvalModes = planApprovalModes({
+        sessionId: input.session_id,
+        cwd: known?.cwd ?? null,
+        args: processArgs(known?.pid ?? null),
+      });
+    }
+    const { prompt, reply } = this.d.broker.open(input, approvalModes);
     this.d.registry.setStatus(input.session_id, "waiting");
     log.info("prompt opened", { promptId: prompt.id, kind: prompt.kind, tool: input.tool_name });
     // The hook ends when the dialog is answered in the terminal; nothing else follows a No or Esc, so close it here.
