@@ -168,6 +168,8 @@ describe("relay wrap", () => {
     expect(await t.ask({ key: "escape", pid: 1 })).toEqual({ ok: true });
     expect(await t.ask({ key: "enter", pid: 1 })).toEqual({ ok: true });
     expect(await t.waitFor(() => t.keys().endsWith("\x1b\r"))).toBe(true);
+    expect(await t.ask({ key: "shiftTab", pid: 1 })).toEqual({ ok: true });
+    expect(await t.waitFor(() => t.keys().endsWith("\x1b\r\x1b[Z"))).toBe(true);
     const screen = (await t.ask({ op: "screen" })) as { ok: boolean; screen: string };
     expect(screen.screen).toContain("❯");
     expect(await t.ask({ text: "x", pid: 1, token: "wrong" })).toEqual({ ok: false, reason: "auth" });

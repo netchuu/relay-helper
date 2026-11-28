@@ -17,6 +17,7 @@ import {
   HostInfo,
   InterruptResult,
   ModelResult,
+  PermissionModeResult,
   Presence,
   Prompt,
   RelayEvent,
@@ -1005,6 +1006,45 @@ const model = {
   },
 };
 
+// Switching the permission mode from the phone (session.permissionMode): the pill shows `permissionMode`, the menu `permissionModes`.
+const permissionMode = {
+  session: Session.parse({
+    ...session,
+    permissionMode: "plan",
+    permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
+  }),
+  // No `permissionModes`: the phone only shows the mode.
+  sessionReadOnly: Session.parse({ ...session, permissionMode: "acceptEdits" }),
+  set: RpcSchemas["session.permissionMode"].parse({ sessionId: session.id, mode: "acceptEdits" }),
+  setBypass: RpcSchemas["session.permissionMode"].parse({
+    sessionId: session.id,
+    mode: "bypassPermissions",
+  }),
+  result: PermissionModeResult.parse({ mode: "acceptEdits" }),
+  errors: [
+    {
+      type: "rpc",
+      id: 90,
+      error: {
+        code: "unavailable",
+        message: "Claude Code didn't switch to Plan mode. Press Shift+Tab at the computer.",
+      },
+    },
+    {
+      type: "rpc",
+      id: 91,
+      error: { code: "unavailable", message: "This session's mode can't be changed from the phone." },
+    },
+    { type: "rpc", id: 92, error: { code: "not_found", message: "This session has ended." } },
+  ],
+  // An older helper, without `session.permissionMode`.
+  olderHelper: {
+    type: "rpc",
+    id: 93,
+    error: { code: "bad_request", message: "unknown method session.permissionMode" },
+  },
+};
+
 // `session.commands`: one command of each source, then the same session when a typed `/name` only arrives as a note.
 const commands = {
   params: RpcSchemas["session.commands"].parse({ sessionId: session.id }),
@@ -1287,6 +1327,7 @@ write("background.json", background);
 write("attachments.json", attachments);
 write("sends.json", sends);
 write("model.json", model);
+write("permission-mode.json", permissionMode);
 write("commands.json", { ...commandsWithMenus });
 write("command-turns.json", commandTurns);
 write("session-ends.json", sessionEnds);

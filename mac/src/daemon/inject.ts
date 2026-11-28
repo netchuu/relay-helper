@@ -161,6 +161,8 @@ export interface TypeOps {
   tmuxArrow?(socket: string, pane: string, key: "up" | "down"): Promise<void>;
   paneArrow?(target: PaneTarget, key: "up" | "down"): Promise<void>;
   arrow?(route: TypingRoute, tty: string, key: "up" | "down"): Promise<boolean>;
+  /** Shift+Tab, which cycles Claude Code's permission mode. Absent: the mode can't be switched. */
+  ptyShiftTab?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   /** Esc, to close a dialog. Absent: the route can't close one. */
   ptyEscape?(socketPath: string, token: string, pid: number): Promise<TypeReply>;
   tmuxEscape?(socket: string, pane: string): Promise<void>;
@@ -240,6 +242,7 @@ export const defaultTypeOps: TypeOps = {
   ptyArrow: (socketPath, token, pid, key) => requestPty(socketPath, { token, pid, key }),
   tmuxArrow,
   ptyEscape: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "escape" }),
+  ptyShiftTab: (socketPath, token, pid) => requestPty(socketPath, { token, pid, key: "shiftTab" }),
   tmuxEscape,
   paneEscape,
   escape: (route, tty) => platform.typing.key(route, tty, "escape"),

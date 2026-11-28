@@ -10,6 +10,8 @@ export const HOLD_EXPIRE_MS = 5 * 60_000;
 const heldSessions = new Set<string>();
 /** The permission mode each session's hooks report ("default", "acceptEdits", "plan", "bypassPermissions"...). */
 const modes = new Map<string, string>();
+/** Every mode a session has been in: the ones beyond the usual three show up in the phone's menu once seen. */
+const seen = new Map<string, Set<string>>();
 
 /** The session's `heldAtMac` field: present only while a reply to it waits at the Mac. */
 export function heldField(sessionId: string): { heldAtMac?: true } {
@@ -25,15 +27,27 @@ export function permissionModeField(sessionId: string): { permissionMode?: strin
 /** Remembers the mode a hook reported; true when it changed. */
 export function notePermissionMode(sessionId: string, mode: unknown): boolean {
   if (typeof mode !== "string" || mode === "" || mode.length > 40) return false;
+  noteSeenModes(sessionId, mode);
   if (modes.get(sessionId) === mode) return false;
   modes.set(sessionId, mode);
   return true;
+}
+
+export function noteSeenModes(sessionId: string, mode: string): void {
+  const set = seen.get(sessionId) ?? new Set<string>();
+  set.add(mode);
+  seen.set(sessionId, set);
+}
+
+export function seenModesOf(sessionId: string): ReadonlySet<string> {
+  return seen.get(sessionId) ?? new Set();
 }
 
 /** A session that is gone holds nothing and has no mode. */
 export function forgetHeld(sessionId: string): void {
   heldSessions.delete(sessionId);
   modes.delete(sessionId);
+  seen.delete(sessionId);
 }
 
 /** Zero-width characters, CR and trailing blanks gone; the line breaks stay, they end the text in `seen`. */

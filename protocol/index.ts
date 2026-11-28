@@ -356,6 +356,8 @@ export const Session = z.object({
   heldAtMac: z.literal(true).optional(),
   /** Claude Code's permission mode from the last hook; a session that skips prompts may need approval at the Mac for inbox replies. */
   permissionMode: z.string().optional(),
+  /** The permission modes `session.permissionMode` can switch this session to; absent when the phone can only show the mode. */
+  permissionModes: z.array(z.string()).optional(),
   /** Only with status `ended`: why it ended. */
   endReason: z.string().optional(),
   /** The session that took over after this one ended (`/clear`, `/resume`). */
@@ -487,6 +489,15 @@ export type ModelAlias = z.infer<typeof ModelAlias>;
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max", "auto"] as const;
 export const EffortLevel = z.enum(EFFORT_LEVELS);
 export type EffortLevel = z.infer<typeof EffortLevel>;
+
+/** The permission modes the phone can ask for; Claude Code's Shift+Tab cycle reaches each of them. */
+export const PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"] as const;
+export const PermissionModeName = z.enum(PERMISSION_MODES);
+export type PermissionModeName = z.infer<typeof PermissionModeName>;
+
+/** `session.permissionMode`'s result: the mode the terminal showed once Claude Code switched. */
+export const PermissionModeResult = z.object({ mode: z.string() });
+export type PermissionModeResult = z.infer<typeof PermissionModeResult>;
 
 /** `session.model`'s result: the command that was typed, or `queued` while Claude works (the session then carries `pendingModel` or `pendingEffort`). The new model shows in the session once Claude Code reports it. */
 export const ModelResult = z.object({
@@ -827,6 +838,8 @@ export const RpcSchemas = {
       (p) => (p.model === undefined) !== (p.effort === undefined),
       "give a model or an effort, not both",
     ),
+  /** Presses Shift+Tab in the session's terminal until Claude Code shows `mode`, and gives up after a full turn of the cycle. Result: PermissionModeResult. Errors: not_found, unavailable (this session can't be switched, or the mode never came). */
+  "session.permissionMode": z.object({ sessionId: z.string(), mode: PermissionModeName }),
   "prompt.answer": z.object({ promptId: z.string(), answer: Answer }),
   "prompts.open": z.object({}),
   /** Recently settled prompts, newest first: the Inbox history. */

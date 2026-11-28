@@ -23,6 +23,7 @@ import { terminalRoutesOf } from "./inject.ts";
 import { sessionModels } from "./model.ts";
 import { paneTargetOf } from "./paneTerminals.ts";
 import { pendingPicks } from "./pendingPick.ts";
+import { offeredModes } from "./permissionMode.ts";
 import { withoutIdeContext } from "./render.ts";
 import { liveStep } from "./steps.ts";
 import { suggestionOf } from "./suggestion.ts";
@@ -241,6 +242,8 @@ export function publicSession(s: SessionRecord): Session {
     ...(s.movedAt != null && s.status !== "ended" && !s.runsInHelper
       ? { movedToTerminal: true as const }
       : {}),
+    // The menu of modes the phone can switch to: only where the helper can press Shift+Tab in the session's terminal.
+    ...(s.status === "ended" || !modeChangeable(s) ? {} : { permissionModes: offeredModes(s.id) }),
     // Model and effort as Claude Code reports them; left out for app sessions, which get no model picker.
     ...(s.status === "ended" || !modelChangeable(s) ? {} : { ...modelOf(s.id), ...pickFields(s.id) }),
     // What is left of the limits (usage-left); an ended session shows none.
@@ -335,6 +338,11 @@ function modelChangeable(s: SessionRecord): boolean {
   if (s.runsInHelper || s.idleStopped) return false;
   // An app session that names no terminal has none to find a tab in.
   return terminalRoutesOf(s, { promised: isAppSession(s) }).length > 0;
+}
+
+/** Whether Shift+Tab can reach the session: its own terminal is a Relay host or `relay wrap`, which also read the screen. */
+function modeChangeable(s: SessionRecord): boolean {
+  return !s.runsInHelper && !s.idleStopped && !!s.ptySocket && !!s.ptyToken && !!s.pid;
 }
 
 /** What still runs in the background (background-work); left out when nothing does. */

@@ -2,6 +2,7 @@ import type { z } from "zod";
 import {
   type DeliveryCheck,
   type ModelResult,
+  type PermissionModeResult,
   REPLY_DATA_BYTES,
   type RpcError,
   type RpcMethod,
@@ -41,6 +42,7 @@ import {
   DeliveryError,
   DialogOpen,
   DraftInPrompt,
+  defaultTypeOps,
   deliver,
   modelResultsOnScreen,
   PHONE_PREFIX,
@@ -49,6 +51,7 @@ import {
 import { liveActions, liveMessages, parseMessagesJson } from "./messages.ts";
 import type { Notifier } from "./notifier.ts";
 import { pendingPicks } from "./pendingPick.ts";
+import { ModeSwitchError, offeredModes, switchPermissionMode } from "./permissionMode.ts";
 import type { PresenceMonitor } from "./presence.ts";
 import { fitEvent, fitPrompts } from "./promptFit.ts";
 import {
@@ -553,6 +556,26 @@ export function createRpc(d: RpcDeps): DaemonRpc {
       } catch (err) {
         if (err instanceof StillBusy) return queue();
         throw err;
+      }
+    },
+
+    "session.permissionMode": async ({ sessionId, mode }, actor) => {
+      const session = d.registry.get(sessionId);
+      if (!session || session.status === "ended")
+        throw new RpcFailure("not_found", "This session has ended.");
+      if (!offeredModes(sessionId).includes(mode))
+        throw new RpcFailure("unavailable", "This session can't switch to that mode.");
+      try {
+        const shown = await inOrder(sessionId, () =>
+          switchPermissionMode(session, mode, d.typeOps ?? defaultTypeOps),
+        );
+        audit(d.db, actor, "session.permissionMode", { sessionId, mode: shown });
+        return { mode: shown } satisfies PermissionModeResult;
+      } catch (err) {
+        if (err instanceof ModeSwitchError) throw new RpcFailure("unavailable", err.message);
+        throw err;
+      } finally {
+        d.registry.publish(sessionId);
       }
     },
 
